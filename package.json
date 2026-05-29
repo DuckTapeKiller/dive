@@ -1,6 +1,6 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Ollama Pi Chat desktop wrapper (local-only)",
   "author": "DuckTapeKiller",
