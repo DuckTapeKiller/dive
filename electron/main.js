@@ -113,7 +113,9 @@ function copyIfExists(srcPath, dstPath, options = {}) {
     fs.copyFileSync(srcPath, dstPath);
   } catch (error) {
     if (required) throw error;
-    console.warn(`Ollama Pi Chat runtime sync skipped for ${srcPath}: ${error.message}`);
+    console.warn(
+      `Ollama Pi Chat runtime sync skipped for ${srcPath}: ${error.message}`,
+    );
   }
 }
 
@@ -125,13 +127,24 @@ function syncRuntimeFiles(runtimeDir) {
     }
   } catch (_error) {}
   fs.mkdirSync(runtimeDir, { recursive: true });
-  copyIfExists(path.join(appRoot, "server.js"), path.join(runtimeDir, "server.js"), {
-    required: true,
-  });
-  copyIfExists(path.join(appRoot, "index.html"), path.join(runtimeDir, "index.html"), {
-    required: true,
-  });
-  copyIfExists(path.join(appRoot, "prompts.json"), path.join(runtimeDir, "prompts.json"));
+  copyIfExists(
+    path.join(appRoot, "server.js"),
+    path.join(runtimeDir, "server.js"),
+    {
+      required: true,
+    },
+  );
+  copyIfExists(
+    path.join(appRoot, "index.html"),
+    path.join(runtimeDir, "index.html"),
+    {
+      required: true,
+    },
+  );
+  copyIfExists(
+    path.join(appRoot, "prompts.json"),
+    path.join(runtimeDir, "prompts.json"),
+  );
   copyIfExists(
     path.join(appRoot, "font_faces.css"),
     path.join(runtimeDir, "font_faces.css"),
@@ -140,9 +153,13 @@ function syncRuntimeFiles(runtimeDir) {
   copyIfExists(path.join(appRoot, "fonts"), path.join(runtimeDir, "fonts"), {
     recursive: true,
   });
-  copyIfExists(path.join(appRoot, "security"), path.join(runtimeDir, "security"), {
-    recursive: true,
-  });
+  copyIfExists(
+    path.join(appRoot, "security"),
+    path.join(runtimeDir, "security"),
+    {
+      recursive: true,
+    },
+  );
 }
 
 function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
@@ -231,7 +248,12 @@ async function bootLocalServer() {
 }
 
 function createMainWindow() {
-  const iconPath = path.join(app.getAppPath(), "assets", "icons", "icon-1024.png");
+  const iconPath = path.join(
+    app.getAppPath(),
+    "assets",
+    "icons",
+    "icon-1024.png",
+  );
   const windowIcon = process.platform === "darwin" ? undefined : iconPath;
 
   mainWindow = new BrowserWindow({
@@ -280,7 +302,10 @@ if (!singleLock) {
       await bootLocalServer();
       createMainWindow();
     } catch (error) {
-      dialog.showErrorBox("Ollama Pi Chat Startup Error", String(error?.message || error));
+      dialog.showErrorBox(
+        "Ollama Pi Chat Startup Error",
+        String(error?.message || error),
+      );
       app.quit();
     }
   });

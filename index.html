@@ -1197,7 +1197,9 @@
           stroke-linejoin="round"
           class="lucide lucide-pyramid-icon lucide-pyramid"
         >
-          <path d="M2.5 16.88a1 1 0 0 1-.32-1.43l9-13.02a1 1 0 0 1 1.64 0l9 13.01a1 1 0 0 1-.32 1.44l-8.51 4.86a2 2 0 0 1-1.98 0Z" />
+          <path
+            d="M2.5 16.88a1 1 0 0 1-.32-1.43l9-13.02a1 1 0 0 1 1.64 0l9 13.01a1 1 0 0 1-.32 1.44l-8.51 4.86a2 2 0 0 1-1.98 0Z"
+          />
           <path d="M12 2v20" />
         </svg>
       </span>
@@ -1213,7 +1215,9 @@
         onchange="selectActivePrompt(this.value)"
         title="Active System Prompt"
       ></select>
-      <span id="tokenCounter" class="token-counter" title="Token Usage">Tokens: 0 / ?</span>
+      <span id="tokenCounter" class="token-counter" title="Token Usage"
+        >Tokens: 0 / ?</span
+      >
       <input
         type="file"
         id="fileInput"
@@ -1377,7 +1381,11 @@
       <div id="chatWrap">
         <div id="chat"></div>
         <div id="bottom">
-          <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="Type a message..."
+          ></textarea>
           <button
             id="uploadBtn"
             onclick="document.getElementById('fileInput').click()"
@@ -1534,7 +1542,8 @@
                   </div>
                 </div>
                 <div class="setting-help">
-                  Controls randomness. Lower = more deterministic, higher = more creative.
+                  Controls randomness. Lower = more deterministic, higher = more
+                  creative.
                 </div>
                 <div class="setting-help">Default: 0.3</div>
               </div>
@@ -1569,7 +1578,8 @@
                   </div>
                 </div>
                 <div class="setting-help">
-                  Nucleus sampling. Limits token choices to a cumulative probability mass.
+                  Nucleus sampling. Limits token choices to a cumulative
+                  probability mass.
                 </div>
                 <div class="setting-help">Default: 0.6</div>
               </div>
@@ -1675,7 +1685,8 @@
                   </div>
                 </div>
                 <div class="setting-help">
-                  Context window size in tokens used by the model for this chat request.
+                  Context window size in tokens used by the model for this chat
+                  request.
                 </div>
                 <div class="setting-help">Default: 32768</div>
               </div>
@@ -1708,7 +1719,8 @@
                   </div>
                 </div>
                 <div class="setting-help">
-                  Random seed for reproducibility. Same prompt + same seed helps repeat outputs.
+                  Random seed for reproducibility. Same prompt + same seed helps
+                  repeat outputs.
                 </div>
                 <div class="setting-help">Default: 42</div>
               </div>
@@ -1779,7 +1791,8 @@
                   </div>
                 </div>
                 <div class="setting-help">
-                  Number of recent tokens checked by repetition penalty. `-1` uses full context.
+                  Number of recent tokens checked by repetition penalty. `-1`
+                  uses full context.
                 </div>
                 <div class="setting-help">Default: 128</div>
               </div>
@@ -1795,9 +1808,12 @@
                 onchange="saveOllamaOptionsFromForm()"
               ></textarea>
               <div class="setting-help">
-                Optional hard stop strings. Separate with `||` or new lines (one sequence per line).
+                Optional hard stop strings. Separate with `||` or new lines (one
+                sequence per line).
               </div>
-              <div class="setting-help">Leave empty to disable stop sequences.</div>
+              <div class="setting-help">
+                Leave empty to disable stop sequences.
+              </div>
             </div>
             <div class="setting-row-inline" style="margin-top: 6px">
               <button
@@ -2086,7 +2102,10 @@
             >
             <div id="ollamaPiChatFolderPath"></div>
             <div class="setting-row-inline">
-              <button class="settings-action-btn" onclick="openOllamaPiChatFolder()">
+              <button
+                class="settings-action-btn"
+                onclick="openOllamaPiChatFolder()"
+              >
                 OPEN FOLDER
               </button>
               <button
@@ -2097,7 +2116,8 @@
               </button>
             </div>
             <div class="setting-help">
-              Quick access to the active Ollama Pi Chat project folder shown above.
+              Quick access to the active Ollama Pi Chat project folder shown
+              above.
             </div>
           </div>
 
@@ -2288,8 +2308,20 @@
       let history = [];
       // Stores the active session state per mode so switching modes preserves progress
       const modeSession = {
-        ollama: { convId: null, history: [], lastUserMessage: null, lastSentMessage: null, lastExchangePersisted: true },
-        pi:     { convId: null, history: [], lastUserMessage: null, lastSentMessage: null, lastExchangePersisted: true },
+        ollama: {
+          convId: null,
+          history: [],
+          lastUserMessage: null,
+          lastSentMessage: null,
+          lastExchangePersisted: true,
+        },
+        pi: {
+          convId: null,
+          history: [],
+          lastUserMessage: null,
+          lastSentMessage: null,
+          lastExchangePersisted: true,
+        },
       };
       let pendingFile = null;
       let lastUserMessage = null;
@@ -2583,7 +2615,10 @@
       // THEMES AND PALETTES
       function toggleTheme() {
         isDark = !isDark;
-        localStorage.setItem("ollama-pi-chat-dark-mode", isDark ? "true" : "false");
+        localStorage.setItem(
+          "ollama-pi-chat-dark-mode",
+          isDark ? "true" : "false",
+        );
         updateThemeUI();
       }
 
@@ -2663,8 +2698,9 @@
       function renderOllamaOptionsForm() {
         const options = normalizeOllamaOptions(ollamaOptions);
         ollamaOptions = options;
-        document.getElementById("ollamaTemperatureInput").value =
-          String(options.temperature);
+        document.getElementById("ollamaTemperatureInput").value = String(
+          options.temperature,
+        );
         document.getElementById("ollamaTopPInput").value = String(options.topP);
         document.getElementById("ollamaTopKInput").value = String(options.topK);
         document.getElementById("ollamaRepeatPenaltyInput").value = String(
@@ -2680,9 +2716,8 @@
           options.numCtx,
         );
         document.getElementById("ollamaSeedInput").value = String(options.seed);
-        document.getElementById("ollamaStopInput").value = options.stop.join(
-          "\n",
-        );
+        document.getElementById("ollamaStopInput").value =
+          options.stop.join("\n");
       }
 
       function collectOllamaOptionsFromForm() {
@@ -2711,7 +2746,10 @@
         renderOllamaOptionsForm();
         // Update the token counter total immediately so it reflects the new num_ctx
         if (mode === "ollama") {
-          ollamaTokenState = { ...ollamaTokenState, total: ollamaOptions.numCtx };
+          ollamaTokenState = {
+            ...ollamaTokenState,
+            total: ollamaOptions.numCtx,
+          };
           updateTokenCounter("ollama");
         }
       }
@@ -2915,7 +2953,8 @@
         currentConvId = saved.convId || null;
         lastUserMessage = saved.lastUserMessage || null;
         lastSentMessage = saved.lastSentMessage || null;
-        lastExchangePersisted = saved.lastExchangePersisted !== false ? true : false;
+        lastExchangePersisted =
+          saved.lastExchangePersisted !== false ? true : false;
 
         chat.innerHTML = "";
         // Rebuild chat DOM from saved history
@@ -2974,7 +3013,13 @@
           piTokenState = { used: null, total: null };
         }
         // Wipe the saved session for this mode so switching back doesn't restore it
-        modeSession[mode] = { convId: null, history: [], lastUserMessage: null, lastSentMessage: null, lastExchangePersisted: true };
+        modeSession[mode] = {
+          convId: null,
+          history: [],
+          lastUserMessage: null,
+          lastSentMessage: null,
+          lastExchangePersisted: true,
+        };
         chat.innerHTML = "";
         history = [];
         currentConvId = null;
@@ -3438,7 +3483,15 @@
             const dateSpan = document.createElement("span");
             dateSpan.className = "history-item-date";
             const ts = conv.updatedAt || conv.createdAt;
-            dateSpan.textContent = ts ? new Date(ts).toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+            dateSpan.textContent = ts
+              ? new Date(ts).toLocaleString([], {
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "";
             text.appendChild(titleSpan);
             text.appendChild(dateSpan);
             text.title = conv.title;
@@ -3471,7 +3524,10 @@
         if (conv.mode === "pi" && conv.piSessionFile) {
           fetch(apiUrl("/api/pi/load-session"), {
             method: "POST",
-            body: JSON.stringify({ saveConv: conv.id, sessionFile: conv.piSessionFile })
+            body: JSON.stringify({
+              saveConv: conv.id,
+              sessionFile: conv.piSessionFile,
+            }),
           }).catch(console.error);
         }
         toggleHistory();
@@ -3810,7 +3866,8 @@
               : "disabled";
             const configuredServerPort =
               Number(piRuntimeInfo.configuredServerPort) || 8080;
-            const activeServerPort = Number(piRuntimeInfo.activeServerPort) || 8080;
+            const activeServerPort =
+              Number(piRuntimeInfo.activeServerPort) || 8080;
             runtimeSummary.textContent =
               `Server port (configured/active): ${configuredServerPort}/${activeServerPort}\n` +
               `Resolved command: ${resolvedCommand}\n` +
@@ -3820,7 +3877,8 @@
         }
 
         const folderPath = piRuntimeInfo?.projectDir || "";
-        document.getElementById("ollamaPiChatFolderPath").textContent = folderPath;
+        document.getElementById("ollamaPiChatFolderPath").textContent =
+          folderPath;
       }
 
       function collectPiSettingsFromForm() {
@@ -4175,7 +4233,9 @@
         }
 
         if (evt.type === "compaction_end") {
-          const tokens = evt.tokensBefore ? ` (tokens before: ${evt.tokensBefore})` : "";
+          const tokens = evt.tokensBefore
+            ? ` (tokens before: ${evt.tokensBefore})`
+            : "";
           thinking.addTraceLine(`Compaction completed${tokens}`);
           return;
         }
@@ -4221,7 +4281,14 @@
         if (evt.type === "trace") {
           const label = evt.label || "event";
           // Filter out low-value structural noise
-          const skipLabels = new Set(["turn_start", "turn_end", "message_start", "message_end", "agent_start", "queue_update"]);
+          const skipLabels = new Set([
+            "turn_start",
+            "turn_end",
+            "message_start",
+            "message_end",
+            "agent_start",
+            "queue_update",
+          ]);
           if (skipLabels.has(label)) return;
           // For agent_end, just show a summary line
           if (label === "agent_end") {
@@ -4236,7 +4303,8 @@
               // tool execution events - show tool name and key info
               if (parsed.toolName) {
                 detail = ` ${parsed.toolName}`;
-                if (parsed.args) detail += ` ${JSON.stringify(parsed.args).slice(0, 80)}`;
+                if (parsed.args)
+                  detail += ` ${JSON.stringify(parsed.args).slice(0, 80)}`;
               } else if (parsed.model) {
                 detail = ` model=${parsed.model}`;
               } else {
@@ -4397,7 +4465,11 @@
                 }
               },
               (evt) => {
-                if (evt.type === "done" && evt.promptTokens !== undefined && evt.evalTokens !== undefined) {
+                if (
+                  evt.type === "done" &&
+                  evt.promptTokens !== undefined &&
+                  evt.evalTokens !== undefined
+                ) {
                   const used = evt.promptTokens + evt.evalTokens;
                   // Total is exactly what we sent as num_ctx — the real active
                   // context window for this session, not Ollama's architectural max.
@@ -4549,7 +4621,11 @@
                 }
               },
               (evt) => {
-                if (evt.type === "done" && evt.promptTokens !== undefined && evt.evalTokens !== undefined) {
+                if (
+                  evt.type === "done" &&
+                  evt.promptTokens !== undefined &&
+                  evt.evalTokens !== undefined
+                ) {
                   const used = evt.promptTokens + evt.evalTokens;
                   updateTokenCounter("ollama", used, ollamaOptions.numCtx);
                 }
@@ -4647,7 +4723,11 @@
         }
       }
 
-      async function updateTokenCounter(modeOverride = null, used = null, total = null) {
+      async function updateTokenCounter(
+        modeOverride = null,
+        used = null,
+        total = null,
+      ) {
         const counterEl = document.getElementById("tokenCounter");
         if (!counterEl) return;
 
@@ -4656,9 +4736,15 @@
         // If called with explicit data, save it to the right mode's state
         if (typeof used === "number") {
           if (m === "ollama") {
-            ollamaTokenState = { used, total: typeof total === "number" ? total : null };
+            ollamaTokenState = {
+              used,
+              total: typeof total === "number" ? total : null,
+            };
           } else {
-            piTokenState = { used, total: typeof total === "number" ? total : null };
+            piTokenState = {
+              used,
+              total: typeof total === "number" ? total : null,
+            };
           }
         }
 
@@ -4671,11 +4757,14 @@
             const res = await fetch(apiUrl("/api/pi/stats"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ saveConv: currentConvId })
+              body: JSON.stringify({ saveConv: currentConvId }),
             });
             const data = await res.json();
             if (data.contextUsage) {
-              piTokenState = { used: data.contextUsage.used || 0, total: data.contextUsage.total || null };
+              piTokenState = {
+                used: data.contextUsage.used || 0,
+                total: data.contextUsage.total || null,
+              };
               const t = piTokenState.total != null ? piTokenState.total : "?";
               counterEl.textContent = `Tokens: ${piTokenState.used} / ${t}`;
               return;
@@ -4884,12 +4973,14 @@
 
         ollamaPalette =
           localStorage.getItem("ollama-pi-chat-ollama-palette") || "solarised";
-        piPalette = localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
+        piPalette =
+          localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
         ollamaFont =
           localStorage.getItem("ollama-pi-chat-ollama-font") ||
           '"Space Mono", monospace';
         piFont =
-          localStorage.getItem("ollama-pi-chat-pi-font") || '"Space Mono", monospace';
+          localStorage.getItem("ollama-pi-chat-pi-font") ||
+          '"Space Mono", monospace';
         loadOllamaOptionsFromStorage();
         document.getElementById("settingOllamaPalette").value = ollamaPalette;
         document.getElementById("settingPiPalette").value = piPalette;
@@ -4901,7 +4992,8 @@
         setMode(mode);
         renderPiSettingsForm();
 
-        activePromptId = localStorage.getItem("ollama-pi-chat-active-prompt") || "";
+        activePromptId =
+          localStorage.getItem("ollama-pi-chat-active-prompt") || "";
         updateSendButtonState();
 
         // 2. Load models & Prompts

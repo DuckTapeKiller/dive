@@ -25,7 +25,6 @@ try {
   console.error("Failed to create storage directory:", e);
 }
 
-
 // Prefer local index.html if it exists (for self-contained runs), fall back to storage directory
 const INDEX = fs.existsSync(path.join(__dirname, "index.html"))
   ? path.join(__dirname, "index.html")
@@ -165,8 +164,18 @@ function saveConversations(convs) {
   }
 }
 
-function upsertConversation(saveConv, convTitle, message, messages, response, mode = "ollama") {
-  const piSessionFile = mode === "pi" && saveConv && piConvProcesses.has(saveConv) ? piConvProcesses.get(saveConv).sessionFile : null;
+function upsertConversation(
+  saveConv,
+  convTitle,
+  message,
+  messages,
+  response,
+  mode = "ollama",
+) {
+  const piSessionFile =
+    mode === "pi" && saveConv && piConvProcesses.has(saveConv)
+      ? piConvProcesses.get(saveConv).sessionFile
+      : null;
   if (!saveConv) return;
   const convs = loadConversations();
   const newHistory = [...messages, { role: "assistant", content: response }];
@@ -457,7 +466,11 @@ function parseMultipart(buffer, boundary) {
 
     // Trim trailing line ending before next boundary
     let partEnd = next;
-    if (partEnd >= 2 && buffer[partEnd - 2] === 0x0d && buffer[partEnd - 1] === 0x0a) {
+    if (
+      partEnd >= 2 &&
+      buffer[partEnd - 2] === 0x0d &&
+      buffer[partEnd - 1] === 0x0a
+    ) {
       partEnd -= 2;
     } else if (partEnd >= 1 && buffer[partEnd - 1] === 0x0a) {
       partEnd -= 1;
@@ -819,8 +832,6 @@ function cleanupPiSession(sessionId, reason = "session_closed") {
   notifyPiSession(session);
   piRpcSessions.delete(sessionId);
 
-  
-
   appendSecurityEvent("pi_session_cleanup", {
     sessionId,
     reason,
@@ -840,7 +851,8 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
   }
 
   const settings = sanitizePiSettings(piSettings || loadPiSettings());
-  const configuredCommand = typeof settings.commandPath === "string" ? settings.commandPath.trim() : "";
+  const configuredCommand =
+    typeof settings.commandPath === "string" ? settings.commandPath.trim() : "";
   const cmd = configuredCommand || getPiCommand();
   const proc = spawn(cmd, ["--mode", "rpc"], {
     cwd: settings.workingDirectory || DATA_DIR,
@@ -882,11 +894,12 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
         continue;
       }
 
-      if ((evt.type === "response" && evt.command === "get_session_stats") || 
-          evt.type === "session_stats" || 
-          evt.type === "get_session_stats_response" || 
-          evt.contextUsage) {
-        
+      if (
+        (evt.type === "response" && evt.command === "get_session_stats") ||
+        evt.type === "session_stats" ||
+        evt.type === "get_session_stats_response" ||
+        evt.contextUsage
+      ) {
         const statsData = evt.data || evt;
         if (convProc.pendingStatsResolver && statsData.contextUsage) {
           convProc.pendingStatsResolver(statsData);
@@ -898,7 +911,7 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       if (!convProc.activeRequestId) continue;
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (!session) continue;
-      
+
       session.lastActivityAt = Date.now();
 
       if (evt.type === "compaction_start") {
@@ -923,63 +936,117 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       if (evt.type === "message_update") {
         const delta = evt.assistantMessageEvent;
         if (delta?.type === "thinking_start") {
-          emitPiSessionEvent(session, { type: "thinking_start", sessionId: session.id });
+          emitPiSessionEvent(session, {
+            type: "thinking_start",
+            sessionId: session.id,
+          });
           continue;
         }
         if (delta?.type === "thinking_delta") {
           const chunk = typeof delta.delta === "string" ? delta.delta : "";
           if (chunk) session.thinking += chunk;
-          emitPiSessionEvent(session, { type: "thinking_delta", delta: chunk, thinking: session.thinking, sessionId: session.id });
+          emitPiSessionEvent(session, {
+            type: "thinking_delta",
+            delta: chunk,
+            thinking: session.thinking,
+            sessionId: session.id,
+          });
           continue;
         }
         if (delta?.type === "thinking_end") {
-          emitPiSessionEvent(session, { type: "thinking_end", thinking: session.thinking, sessionId: session.id });
+          emitPiSessionEvent(session, {
+            type: "thinking_end",
+            thinking: session.thinking,
+            sessionId: session.id,
+          });
           continue;
         }
         if (delta?.type === "text_delta") {
           session.response += delta.delta;
-          emitPiSessionEvent(session, { type: "delta", delta: delta.delta, response: session.response, sessionId: session.id });
+          emitPiSessionEvent(session, {
+            type: "delta",
+            delta: delta.delta,
+            response: session.response,
+            sessionId: session.id,
+          });
         }
         continue;
       }
 
       if (evt.type === "tool_execution_start") {
-        emitPiSessionEvent(session, { type: "tool_start", sessionId: session.id, toolName: evt.toolName || null, toolCallId: evt.toolCallId || null, argsPreview: clampText(JSON.stringify(evt.args || {}), 400) });
+        emitPiSessionEvent(session, {
+          type: "tool_start",
+          sessionId: session.id,
+          toolName: evt.toolName || null,
+          toolCallId: evt.toolCallId || null,
+          argsPreview: clampText(JSON.stringify(evt.args || {}), 400),
+        });
         continue;
       }
 
       if (evt.type === "tool_execution_update") {
         const output = extractToolTextPayload(evt.partialResult);
-        emitPiSessionEvent(session, { type: "tool_update", sessionId: session.id, toolName: evt.toolName || null, toolCallId: evt.toolCallId || null, outputPreview: clampText(output, 1500) });
+        emitPiSessionEvent(session, {
+          type: "tool_update",
+          sessionId: session.id,
+          toolName: evt.toolName || null,
+          toolCallId: evt.toolCallId || null,
+          outputPreview: clampText(output, 1500),
+        });
         continue;
       }
 
       if (evt.type === "tool_execution_end") {
         const output = extractToolTextPayload(evt.result);
-        emitPiSessionEvent(session, { type: "tool_end", sessionId: session.id, toolName: evt.toolName || null, toolCallId: evt.toolCallId || null, isError: evt.isError === true, outputPreview: clampText(output, 1500) });
+        emitPiSessionEvent(session, {
+          type: "tool_end",
+          sessionId: session.id,
+          toolName: evt.toolName || null,
+          toolCallId: evt.toolCallId || null,
+          isError: evt.isError === true,
+          outputPreview: clampText(output, 1500),
+        });
         continue;
       }
 
       if (isPiDialogRequest(evt)) {
         session.pendingDialog = evt;
-        emitPiSessionEvent(session, { type: "needs_ui", sessionId: session.id, request: formatPiUiRequest(evt) });
+        emitPiSessionEvent(session, {
+          type: "needs_ui",
+          sessionId: session.id,
+          request: formatPiUiRequest(evt),
+        });
         notifyPiSession(session);
         continue;
       }
 
       if (evt.type === "agent_end") {
         session.done = true;
-        emitPiSessionEvent(session, { type: "done", response: session.response || "", sessionId: session.id });
+        emitPiSessionEvent(session, {
+          type: "done",
+          response: session.response || "",
+          sessionId: session.id,
+        });
         notifyPiSession(session);
         continue;
       }
 
       if (evt.type === "extension_error") {
-        emitPiSessionEvent(session, { type: "trace", sessionId: session.id, label: "extension_error", detail: clampText(JSON.stringify(evt), 1500) });
+        emitPiSessionEvent(session, {
+          type: "trace",
+          sessionId: session.id,
+          label: "extension_error",
+          detail: clampText(JSON.stringify(evt), 1500),
+        });
         continue;
       }
 
-      emitPiSessionEvent(session, { type: "trace", sessionId: session.id, label: evt.type || "event", detail: clampText(JSON.stringify(evt), 1200) });
+      emitPiSessionEvent(session, {
+        type: "trace",
+        sessionId: session.id,
+        label: evt.type || "event",
+        detail: clampText(JSON.stringify(evt), 1200),
+      });
     }
   });
 
@@ -989,7 +1056,11 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
     if (convProc.activeRequestId) {
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (session) {
-        emitPiSessionEvent(session, { type: "stderr", sessionId: session.id, chunk: clampText(text, 1500) });
+        emitPiSessionEvent(session, {
+          type: "stderr",
+          sessionId: session.id,
+          chunk: clampText(text, 1500),
+        });
       }
     }
   });
@@ -999,13 +1070,18 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
   proc.on("error", (error) => {
     let errMsg = error instanceof Error ? error.message : String(error);
     if (error.code === "ENOENT") {
-      errMsg = "Pi command not found. Please install Pi and ensure it is in your PATH, or configure its path in Settings.";
+      errMsg =
+        "Pi command not found. Please install Pi and ensure it is in your PATH, or configure its path in Settings.";
     }
     if (convProc.activeRequestId) {
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (session) {
         session.error = new Error(errMsg);
-        emitPiSessionEvent(session, { type: "error", error: session.error.message, sessionId: session.id });
+        emitPiSessionEvent(session, {
+          type: "error",
+          error: session.error.message,
+          sessionId: session.id,
+        });
         notifyPiSession(session);
       }
     }
@@ -1017,11 +1093,21 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (session && !session.done) {
         if (code !== 0) {
-          session.error = new Error(`Pi process exited with code ${code}. Stderr: ${convProc.stderrData.trim() || "none"}`);
-          emitPiSessionEvent(session, { type: "error", error: session.error.message, sessionId: session.id });
+          session.error = new Error(
+            `Pi process exited with code ${code}. Stderr: ${convProc.stderrData.trim() || "none"}`,
+          );
+          emitPiSessionEvent(session, {
+            type: "error",
+            error: session.error.message,
+            sessionId: session.id,
+          });
         } else {
           session.done = true;
-          emitPiSessionEvent(session, { type: "done", response: session.response || "", sessionId: session.id });
+          emitPiSessionEvent(session, {
+            type: "done",
+            response: session.response || "",
+            sessionId: session.id,
+          });
         }
         notifyPiSession(session);
       }
@@ -1036,7 +1122,7 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
 function sendPiPrompt(convProc, message, source = "manual") {
   const id = createPiSessionId();
   convProc.activeRequestId = id;
-  
+
   const session = {
     id,
     proc: convProc.proc,
@@ -1357,7 +1443,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const deleteMatch = req.method === "DELETE" && req.url.match(/^\/api\/conversations\/id\/([^/]+)$/);
+  const deleteMatch =
+    req.method === "DELETE" &&
+    req.url.match(/^\/api\/conversations\/id\/([^/]+)$/);
   if (deleteMatch) {
     const encodedId = deleteMatch[1];
     const convId = decodeURIComponent(encodedId || "");
@@ -1376,8 +1464,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "DELETE" && (req.url === "/api/conversations/id" || req.url === "/api/conversations/id/")) {
-    send(400, { error: "Conversation id is required in the URL path, e.g. /api/conversations/id/{id}" });
+  if (
+    req.method === "DELETE" &&
+    (req.url === "/api/conversations/id" ||
+      req.url === "/api/conversations/id/")
+  ) {
+    send(400, {
+      error:
+        "Conversation id is required in the URL path, e.g. /api/conversations/id/{id}",
+    });
     return;
   }
 
@@ -1433,7 +1528,9 @@ const server = http.createServer(async (req, res) => {
       const convId = body.saveConv || body.convId || "default";
       const convProc = piConvProcesses.get(convId);
       if (convProc && !convProc.closed) {
-        convProc.proc.stdin.write(JSON.stringify({ type: "new_session" }) + "\\n");
+        convProc.proc.stdin.write(
+          JSON.stringify({ type: "new_session" }) + "\\n",
+        );
       }
       send(200, { ok: true });
     } catch (e) {
@@ -1448,7 +1545,10 @@ const server = http.createServer(async (req, res) => {
       const convId = body.saveConv || body.convId || "default";
       const { sessionFile } = body;
       const convProc = getOrCreatePiConvProcess(convId);
-      convProc.proc.stdin.write(JSON.stringify({ type: "switch_session", sessionPath: sessionFile }) + "\\n");
+      convProc.proc.stdin.write(
+        JSON.stringify({ type: "switch_session", sessionPath: sessionFile }) +
+          "\\n",
+      );
       send(200, { ok: true });
     } catch (e) {
       send(500, { error: e.message });
@@ -1465,10 +1565,12 @@ const server = http.createServer(async (req, res) => {
         send(404, { error: "No active Pi process" });
         return;
       }
-      
+
       const stats = await new Promise((resolve) => {
         convProc.pendingStatsResolver = resolve;
-        convProc.proc.stdin.write(JSON.stringify({ type: "get_session_stats" }) + "\n");
+        convProc.proc.stdin.write(
+          JSON.stringify({ type: "get_session_stats" }) + "\n",
+        );
         setTimeout(() => resolve(null), 5000);
       });
 
@@ -1478,7 +1580,10 @@ const server = http.createServer(async (req, res) => {
           contextUsage: {
             used: cu.tokens,
             total: cu.contextWindow,
-            percent: cu.percent != null ? cu.percent : Math.round((cu.tokens / cu.contextWindow) * 100),
+            percent:
+              cu.percent != null
+                ? cu.percent
+                : Math.round((cu.tokens / cu.contextWindow) * 100),
           },
         });
       } else {
@@ -1547,14 +1652,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if ((req.method === "PUT" || req.method === "POST") && req.url === "/api/notes") {
+  if (
+    (req.method === "PUT" || req.method === "POST") &&
+    req.url === "/api/notes"
+  ) {
     try {
       const body = await parseJsonBody(req);
       if (!body || typeof body.text !== "string") {
         send(400, { error: "text field required" });
         return;
       }
-      const text = body.text.length > 200000 ? body.text.slice(0, 200000) : body.text;
+      const text =
+        body.text.length > 200000 ? body.text.slice(0, 200000) : body.text;
       const saved = saveNotes(text);
       send(200, saved);
     } catch (e) {
@@ -1624,7 +1733,13 @@ const server = http.createServer(async (req, res) => {
           output,
           mode,
         );
-        emit({ type: "done", response: output, thinking, promptTokens: promptEvalCount, evalTokens: evalCount });
+        emit({
+          type: "done",
+          response: output,
+          thinking,
+          promptTokens: promptEvalCount,
+          evalTokens: evalCount,
+        });
         if (!res.writableEnded) res.end();
       };
 
@@ -1664,8 +1779,12 @@ const server = http.createServer(async (req, res) => {
             }
 
             if (evt.done === true) {
-              promptEvalCount = typeof evt.prompt_eval_count === "number" ? evt.prompt_eval_count : 0;
-              evalCount = typeof evt.eval_count === "number" ? evt.eval_count : 0;
+              promptEvalCount =
+                typeof evt.prompt_eval_count === "number"
+                  ? evt.prompt_eval_count
+                  : 0;
+              evalCount =
+                typeof evt.eval_count === "number" ? evt.eval_count : 0;
               if (emittedThinkingStart) {
                 emit({ type: "thinking_end", thinking });
               }
@@ -2034,14 +2153,26 @@ const server = http.createServer(async (req, res) => {
         }
       } else {
         const ALLOWED_TEXT_EXTENSIONS = new Set([
-          ".txt", ".md", ".js", ".ts", ".py", ".html", ".css", ".json",
+          ".txt",
+          ".md",
+          ".js",
+          ".ts",
+          ".py",
+          ".html",
+          ".css",
+          ".json",
         ]);
         const ext = path.extname(file.filename || "").toLowerCase();
         if (!ext || !ALLOWED_TEXT_EXTENSIONS.has(ext)) {
-          send(415, { error: `Unsupported file type${ext ? ": " + ext : ""}. Allowed: .txt, .md, .js, .ts, .py, .html, .css, .json, .pdf` });
+          send(415, {
+            error: `Unsupported file type${ext ? ": " + ext : ""}. Allowed: .txt, .md, .js, .ts, .py, .html, .css, .json, .pdf`,
+          });
           return;
         }
-        send(200, { text: file.body.toString("utf8"), filename: file.filename });
+        send(200, {
+          text: file.body.toString("utf8"),
+          filename: file.filename,
+        });
       }
     } catch (e) {
       send(e.statusCode || 500, { error: e.message });
