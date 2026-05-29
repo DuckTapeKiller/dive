@@ -6,6 +6,10 @@ Welcome to **Ollama Pi Chat**! This is a local-only desktop wrapper and web appl
 
 Everything runs directly on your macOS machine. **No data ever leaves your computer, and no internet connection is required to chat.** It is 100% private, secure, and under your control.
 
+> [!IMPORTANT]
+> **macOS Gatekeeper Warning**: The developer of this project does not have a paid Apple Developer Account, so the pre-built desktop applications and binaries are not digitally signed.
+> When running the packaged app for the first time, macOS Gatekeeper will block execution or show a warning. Please refer to the [Troubleshooting Common Issues](#-troubleshooting-common-issues) section for simple, standard instructions on how to bypass this.
+
 ---
 
 ## 📖 Table of Contents
@@ -280,6 +284,17 @@ The local Node.js server implements active security headers to protect your loca
 - **How to fix it**:
   1. Confirm the Pi tool is available by running `which pi` in terminal. If missing, check your Pi CLI setup path.
   2. Ensure the permissions extension (`@gotgenes/pi-permission-system`) is properly registered in your Pi runtime configurations.
+
+### ❌ "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
+
+- **What it means**: The developer of this project does not have a paid Apple Developer Account, so the packaged applications and binaries are unsigned. On newer macOS versions, Gatekeeper will automatically flag and block unsigned apps downloaded from the internet.
+- **How to fix it**:
+  1. Open your terminal application.
+  2. Strip the quarantine attribute from the app (replace the path with where you moved the app, typically in Applications):
+     ```bash
+     xattr -cr "/Applications/Ollama Pi Chat.app"
+     ```
+  3. Alternatively, right-click (or Control-click) the application icon in Finder, select **Open**, and click **Open** on the dialog to confirm the exception.
 
 ---
 
