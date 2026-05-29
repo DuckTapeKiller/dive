@@ -3,12 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "description": "Ollama Pi Chat desktop wrapper (local-only)",
+  "author": "DuckTapeKiller",
   "main": "electron/main.js",
   "scripts": {
     "dev:web": "node server.js",
     "dev:app": "electron .",
     "build:app": "electron-builder --mac dir",
-    "build:dmg": "electron-builder --mac dmg"
+    "build:dmg": "electron-builder --mac dmg",
+    "build:arm64": "electron-builder --mac dir --arm64",
+    "build:dmg:arm64": "electron-builder --mac dmg --arm64",
+    "build:universal": "electron-builder --mac dir --universal",
+    "build:dmg:universal": "electron-builder --mac dmg --universal"
   },
   "devDependencies": {
     "electron": "^31.7.7",
