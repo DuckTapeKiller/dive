@@ -1,4 +1,6 @@
-# 🦙 Ollama Pi Chat
+# Ollama Pi Chat
+
+![Project cover](images/cover.png)
 
 ## A Beautiful, Secure, & Local-First Web Interface for Ollama and the Pi Agent
 
