@@ -1,0 +1,106 @@
+{
+  // Copy to: ~/.pi/agent/pi-permissions.jsonc
+  "defaultPolicy": {
+    "tools": "ask",
+    "bash": "ask",
+    "mcp": "ask",
+    "skills": "ask",
+    "special": "ask",
+  },
+
+  "tools": {
+    "*": "ask",
+
+    // read-only local ops
+    "read": "allow",
+    "grep": "allow",
+    "find": "allow",
+    "ls": "allow",
+
+    // web intel
+    "web_search": "allow",
+    "get_search_content": "allow",
+    "fetch_content": "ask",
+
+    // mutating tools
+    "write": "ask",
+    "edit": "ask",
+    "bash": "ask",
+    "mcp": "ask",
+
+    // side-effect classes
+    "send_email": "ask",
+    "mail_send": "ask",
+    "automation_update": "ask",
+  },
+
+  "bash": {
+    "*": "ask",
+
+    // hard deny dangerous remote/script execution
+    "sudo *": "deny",
+    "su *": "deny",
+    "doas *": "deny",
+    "curl *|*sh*": "deny",
+    "curl *|*bash*": "deny",
+    "wget *|*sh*": "deny",
+    "wget *|*bash*": "deny",
+    "bash <(*": "deny",
+    "sh <(*": "deny",
+
+    // destructive commands
+    "rm -rf *": "deny",
+    "mkfs *": "deny",
+    "dd *": "deny",
+
+    // installs and automation runners -> ask
+    "npm install *": "ask",
+    "pnpm add *": "ask",
+    "yarn add *": "ask",
+    "pip install *": "ask",
+    "brew install *": "ask",
+    "osascript *": "ask",
+    "launchctl *": "ask",
+    "crontab *": "ask",
+
+    // network submit/upload -> ask
+    "curl * -X POST *": "ask",
+    "curl * --request POST *": "ask",
+    "curl * --data *": "ask",
+    "curl * --data-binary *": "ask",
+    "curl * -F *": "ask",
+  },
+
+  // protect secrets and identity stores globally
+  "path": {
+    "*.env": "deny",
+    "*.env.*": "deny",
+    "**/.env": "deny",
+    "**/.env.*": "deny",
+    "**/*.pem": "deny",
+    "**/*.key": "deny",
+    "~/.ssh/*": "deny",
+    "~/.gnupg/*": "deny",
+    "~/.aws/*": "deny",
+    "~/.config/gcloud/*": "deny",
+    "~/.config/gh/*": "deny",
+    "~/.config/openai/*": "deny",
+    "~/Library/Keychains/*": "deny",
+    "~/Library/Application Support/Google/Chrome/*": "deny",
+    "~/Library/Application Support/Firefox/Profiles/*": "deny",
+    "~/Library/Application Support/BraveSoftware/*": "deny",
+  },
+
+  "special": {
+    "external_directory": "ask",
+    "doom_loop": "deny",
+  },
+
+  "mcp": {
+    "*": "ask",
+  },
+
+  "skills": {
+    "*": "ask",
+  },
+}
