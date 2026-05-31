@@ -69,6 +69,7 @@ In Pi Mode, the app acts as a secure bridge to the **Pi agent command-line tool*
 Ollama Pi Chat is packed with premium, user-friendly utilities:
 
 - 📱 **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
+- 🔌 **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models!
 - 📝 **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
 - 📁 **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
 - 📋 **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
@@ -223,8 +224,14 @@ Ollama Pi Chat comes with a suite of native tools that you can toggle on or off 
 - **Web Scraper**: Extracts raw, readable text content from any provided web URL.
 - **Calculator**: Securely evaluates complex mathematical expressions.
 - **Time & Date**: Retrieves the current local time, date, and day of the week, with support for global IANA timezones (e.g., `Australia/Sydney`).
+- **Fact Check**: Fact-checks specific claims against multiple sources.
 - **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety).
 - **Local Notes**: Allows the model to directly read from or append text to your persistent local notes file.
+
+### 5. MCP (Model Context Protocol) Integration
+
+Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models. 
+Click the **Plug Icon** in the top title bar to open the MCP Panel. You can paste standard `mcpServers` JSON configuration directly into the box. The app will automatically parse your config, spin up the external servers in the background, map their tools, and dynamically render sleek plain-English badges (like `MEMORY`, `FILESYSTEM`) below the editor so you always know what tools are locked and loaded.
 
 ---
 
