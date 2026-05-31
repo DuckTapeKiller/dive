@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFile, spawn, spawnSync } = require("child_process");
 const os = require("os");
+const { ALL_SKILLS, executeSkill } = require("./skills");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -42,6 +43,8 @@ try {
 
 const HISTORY_FILE = path.join(DATA_DIR, "conversations.json");
 const PROMPTS_FILE = path.join(DATA_DIR, "prompts.json");
+const CUSTOM_SKILLS_FILE = path.join(DATA_DIR, "custom_skills.json");
+const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
@@ -50,6 +53,7 @@ const SECURITY_EVENTS_FILE = path.join(DATA_DIR, "security-events.jsonl");
 const DAEMON_LOG_FILE = path.join(DATA_DIR, "daemon.log");
 const DAEMON_ERROR_LOG_FILE = path.join(DATA_DIR, "daemon.error.log");
 const LOG_ROTATION_STATE = new Map();
+const ollamaToolRequests = new Map();
 const PI_MIN_TIMEOUT_MS = 15 * 1000;
 const PI_MAX_TIMEOUT_MS = 30 * 60 * 1000;
 const PI_MIN_PERMISSION_TIMEOUT_MS = 0;
@@ -152,7 +156,9 @@ function loadConversations() {
     if (fs.existsSync(HISTORY_FILE)) {
       return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("Failed to load conversations:", e.message || e);
+  }
   return [];
 }
 
@@ -228,7 +234,9 @@ function loadPrompts() {
       }
       return normalized;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("Failed to load prompts:", e.message || e);
+  }
 
   savePrompts([]);
   return [];
@@ -239,6 +247,61 @@ function savePrompts(prompts) {
     fs.writeFileSync(PROMPTS_FILE, JSON.stringify(prompts, null, 2));
   } catch (e) {
     console.error("Failed to save prompts:", e);
+  }
+}
+
+function loadCustomSkills() {
+  try {
+    if (fs.existsSync(CUSTOM_SKILLS_FILE)) {
+      return JSON.parse(fs.readFileSync(CUSTOM_SKILLS_FILE, "utf8"));
+    }
+  } catch (e) {
+    console.warn("Failed to load custom skills:", e.message || e);
+  }
+  return [];
+}
+
+function defaultSkillsConfig() {
+  return {
+    shell_command: false,
+    wikipedia: true,
+    britannica: true,
+    wiktionary: true,
+    deep_etymology: true,
+    duckduckgo: true,
+    web_scraper: true,
+    calculator: true,
+    time_and_date: true,
+    fact_check: true,
+    local_notes: true,
+  };
+}
+
+function loadSkillsConfig() {
+  try {
+    if (fs.existsSync(SKILLS_CONFIG_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(SKILLS_CONFIG_FILE, "utf8"));
+      return { ...defaultSkillsConfig(), ...raw };
+    }
+  } catch (e) {
+    console.warn("Failed to load skills config:", e.message || e);
+  }
+  return defaultSkillsConfig();
+}
+
+function saveSkillsConfig(cfg) {
+  try {
+    fs.writeFileSync(SKILLS_CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  } catch (e) {
+    console.error("Failed to save skills config:", e.message || e);
+  }
+}
+
+function saveCustomSkills(skills) {
+  try {
+    fs.writeFileSync(CUSTOM_SKILLS_FILE, JSON.stringify(skills, null, 2));
+  } catch (e) {
+    console.error("Failed to save custom skills:", e);
   }
 }
 
@@ -393,7 +456,9 @@ function loadPiSettings() {
       }
       return sanitized;
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn("Failed to load Pi settings:", e.message || e);
+  }
 
   const defaults = defaultPiSettings();
   savePiSettings(defaults);
@@ -641,12 +706,15 @@ function extractOllamaContextLength(showPayload) {
   return null;
 }
 
-function ollamaChat(model, messages, options) {
+function ollamaChat(model, messages, options, tools = null) {
   let clientReq = null;
   const promise = new Promise((resolve, reject) => {
     const payloadObject = { model, messages, stream: false };
     if (options && typeof options === "object") {
       payloadObject.options = options;
+    }
+    if (tools && Array.isArray(tools) && tools.length > 0) {
+      payloadObject.tools = tools;
     }
     const payload = JSON.stringify(payloadObject);
     const opts = {
@@ -661,7 +729,7 @@ function ollamaChat(model, messages, options) {
       res.on("data", (c) => (data += c));
       res.on("end", () => {
         try {
-          resolve(JSON.parse(data).message.content);
+          resolve(JSON.parse(data).message);
         } catch (e) {
           reject(new Error("Ollama parse error: " + data));
         }
@@ -1317,6 +1385,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/version") {
+    try {
+      const pkgPath = path.join(__dirname, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+        send(200, { version: pkg.version || "unknown" });
+      } else {
+        send(200, { version: "unknown" });
+      }
+    } catch (error) {
+      send(200, { version: "unknown" });
+    }
+    return;
+  }
+
   if (req.method === "GET" && req.url.startsWith("/fonts/")) {
     try {
       const filename = req.url.slice("/fonts/".length);
@@ -1522,6 +1605,88 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/custom-skills") {
+    send(200, loadCustomSkills());
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/custom-skills") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!Array.isArray(body)) {
+        send(400, { error: "Custom skills must be an array" });
+        return;
+      }
+      const valid = body.every(
+        (s) =>
+          s &&
+          typeof s.name === "string" &&
+          typeof s.description === "string" &&
+          typeof s.type === "string" &&
+          typeof s.code === "string",
+      );
+      if (!valid) {
+        send(400, { error: "Invalid custom skill structure" });
+        return;
+      }
+      saveCustomSkills(body);
+      send(200, { ok: true });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/api/ollama/skills/settings") {
+    send(200, loadSkillsConfig());
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/ollama/skills/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const nextSettings = { ...loadSkillsConfig(), ...body };
+      saveSkillsConfig(nextSettings);
+      send(200, { ok: true, settings: nextSettings });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/ollama/tool-respond") {
+    try {
+      const body = await parseJsonBody(req);
+      const { sessionId, uiResponse } = body || {};
+      if (typeof sessionId !== "string" || !sessionId) {
+        send(400, { error: "sessionId is required" });
+        return;
+      }
+
+      const resolve = ollamaToolRequests.get(sessionId);
+      if (!resolve) {
+        send(404, { error: "Ollama tool request not found or expired" });
+        return;
+      }
+
+      const approved =
+        typeof uiResponse.confirmed === "boolean"
+          ? uiResponse.confirmed
+          : false;
+      resolve(approved);
+      ollamaToolRequests.delete(sessionId);
+
+      send(200, { ok: true });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/api/pi/new-session") {
     try {
       const body = await parseJsonBody(req);
@@ -1529,7 +1694,7 @@ const server = http.createServer(async (req, res) => {
       const convProc = piConvProcesses.get(convId);
       if (convProc && !convProc.closed) {
         convProc.proc.stdin.write(
-          JSON.stringify({ type: "new_session" }) + "\\n",
+          JSON.stringify({ type: "new_session" }) + "\n",
         );
       }
       send(200, { ok: true });
@@ -1547,7 +1712,7 @@ const server = http.createServer(async (req, res) => {
       const convProc = getOrCreatePiConvProcess(convId);
       convProc.proc.stdin.write(
         JSON.stringify({ type: "switch_session", sessionPath: sessionFile }) +
-          "\\n",
+          "\n",
       );
       send(200, { ok: true });
     } catch (e) {
@@ -1698,9 +1863,6 @@ const server = http.createServer(async (req, res) => {
         "X-Accel-Buffering": "no",
       });
 
-      const payloadObject = { model, messages, stream: true };
-      if (safeOptions) payloadObject.options = safeOptions;
-      const payload = JSON.stringify(payloadObject);
       const opts = {
         hostname: "localhost",
         port: 11434,
@@ -1712,9 +1874,6 @@ const server = http.createServer(async (req, res) => {
       let output = "";
       let thinking = "";
       let emittedThinkingStart = false;
-      let lineBuffer = "";
-      let promptEvalCount = 0;
-      let evalCount = 0;
 
       const emit = (event) => {
         if (!res.writableEnded) {
@@ -1722,86 +1881,41 @@ const server = http.createServer(async (req, res) => {
         }
       };
 
-      const finalize = () => {
-        if (finished) return;
-        finished = true;
-        upsertConversation(
-          saveConv,
-          convTitle,
-          message,
-          messages,
-          output,
-          mode,
-        );
-        emit({
-          type: "done",
-          response: output,
-          thinking,
-          promptTokens: promptEvalCount,
-          evalTokens: evalCount,
-        });
-        if (!res.writableEnded) res.end();
-      };
+      const startStream = () => {
+        const payloadObject = { model, messages, stream: true };
+        if (safeOptions) payloadObject.options = safeOptions;
+        const payload = JSON.stringify(payloadObject);
 
-      upstreamReq = http.request(opts, (ollamaRes) => {
-        upstreamRes = ollamaRes;
-        ollamaRes.on("data", (chunk) => {
-          lineBuffer += chunk.toString();
-          const lines = lineBuffer.split("\n");
-          lineBuffer = lines.pop() || "";
+        let lineBuffer = "";
+        let promptEvalCount = 0;
+        let evalCount = 0;
+        let outputToolCalls = [];
 
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
-            let evt;
-            try {
-              evt = JSON.parse(line);
-            } catch (_e) {
-              continue;
-            }
+        upstreamReq = http.request(opts, (ollamaRes) => {
+          upstreamRes = ollamaRes;
+          ollamaRes.on("data", (chunk) => {
+            lineBuffer += chunk.toString();
+            const lines = lineBuffer.split("\n");
+            lineBuffer = lines.pop() || "";
 
-            const msg = evt?.message || {};
-            const thinkingDelta =
-              typeof msg.thinking === "string" ? msg.thinking : "";
-            if (thinkingDelta) {
-              if (!emittedThinkingStart) {
-                emittedThinkingStart = true;
-                emit({ type: "thinking_start" });
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line) continue;
+              let evt;
+              try {
+                evt = JSON.parse(line);
+              } catch (_e) {
+                continue;
               }
-              thinking += thinkingDelta;
-              emit({ type: "thinking_delta", delta: thinkingDelta, thinking });
-            }
 
-            const delta = typeof msg.content === "string" ? msg.content : "";
-            if (delta) {
-              output += delta;
-              emit({ type: "delta", delta, response: output });
-            }
-
-            if (evt.done === true) {
-              promptEvalCount =
-                typeof evt.prompt_eval_count === "number"
-                  ? evt.prompt_eval_count
-                  : 0;
-              evalCount =
-                typeof evt.eval_count === "number" ? evt.eval_count : 0;
-              if (emittedThinkingStart) {
-                emit({ type: "thinking_end", thinking });
-              }
-              finalize();
-            }
-          }
-        });
-
-        ollamaRes.on("end", () => {
-          if (finished) return;
-          if (lineBuffer.trim()) {
-            try {
-              const evt = JSON.parse(lineBuffer.trim());
               const msg = evt?.message || {};
+
+              if (msg.tool_calls) {
+                outputToolCalls = msg.tool_calls;
+              }
+
               const thinkingDelta =
                 typeof msg.thinking === "string" ? msg.thinking : "";
-              const delta = typeof msg.content === "string" ? msg.content : "";
               if (thinkingDelta) {
                 if (!emittedThinkingStart) {
                   emittedThinkingStart = true;
@@ -1814,30 +1928,164 @@ const server = http.createServer(async (req, res) => {
                   thinking,
                 });
               }
+
+              const delta = typeof msg.content === "string" ? msg.content : "";
               if (delta) {
                 output += delta;
-                emit({ type: "delta", delta, response: output });
+                if (!output.includes("<call:")) {
+                  emit({ type: "delta", delta, response: output });
+                }
               }
-            } catch (_e) {}
-          }
-          if (emittedThinkingStart) {
-            emit({ type: "thinking_end", thinking });
-          }
-          finalize();
+
+              if (evt.done === true) {
+                const xmlMatch = output.match(/<call:([^>]+)>(.*?)<\/call>/is);
+                if (xmlMatch) {
+                  outputToolCalls.push({
+                    function: {
+                      name: xmlMatch[1].trim(),
+                      arguments: xmlMatch[2].trim(),
+                    },
+                  });
+                  output = output.replace(xmlMatch[0], "").trim();
+                }
+
+                if (outputToolCalls.length > 0) {
+                  messages.push({ role: "assistant", content: output });
+                  (async () => {
+                    for (const tc of outputToolCalls) {
+                      if (!emittedThinkingStart) {
+                        emittedThinkingStart = true;
+                        emit({ type: "thinking_start" });
+                      }
+                      const startMsg = `\n\n[Running tool: ${tc.function.name}...]\n`;
+                      thinking += startMsg;
+                      emit({
+                        type: "thinking_delta",
+                        delta: startMsg,
+                        thinking,
+                      });
+
+                      let executeAllowed = true;
+                      if (tc.function.name === "shell_command") {
+                        executeAllowed = await new Promise((resolve) => {
+                          const reqId =
+                            "ollama_req_" +
+                            Date.now() +
+                            "_" +
+                            Math.floor(Math.random() * 1000);
+                          ollamaToolRequests.set(reqId, resolve);
+                          emit({
+                            type: "needs_ui",
+                            sessionId: reqId,
+                            request: {
+                              method: "confirm",
+                              title: "Shell Command Execution Request",
+                              message: `The AI wants to run the following shell command:\n\n${tc.function.arguments}\n\nDo you want to allow this?`,
+                              requireUserInteraction: true,
+                              danger: true,
+                            },
+                          });
+                        });
+                      }
+
+                      let result;
+                      if (executeAllowed) {
+                        appendSecurityEvent("shell_command_executed", {
+                          command: tc.function.arguments,
+                        });
+                        result = await executeSkill(tc, { dataDir: DATA_DIR });
+                      } else {
+                        appendSecurityEvent("shell_command_denied", {
+                          command: tc.function.arguments,
+                        });
+                        result =
+                          "User denied permission to execute this shell command.";
+                      }
+
+                      messages.push({
+                        role: "user",
+                        content: `[SKILL RESULT: ${tc.function.name}]\n\n${result}\n\nPlease continue your response based on this result.`,
+                      });
+
+                      const endMsg = `[Finished tool: ${tc.function.name}]\n`;
+                      thinking += endMsg;
+                      emit({ type: "thinking_delta", delta: endMsg, thinking });
+                    }
+                    startStream();
+                  })();
+                  return;
+                }
+
+                promptEvalCount =
+                  typeof evt.prompt_eval_count === "number"
+                    ? evt.prompt_eval_count
+                    : 0;
+                evalCount =
+                  typeof evt.eval_count === "number" ? evt.eval_count : 0;
+                if (emittedThinkingStart) {
+                  emit({ type: "thinking_end", thinking });
+                }
+
+                if (finished) return;
+                finished = true;
+                upsertConversation(
+                  saveConv,
+                  convTitle,
+                  message,
+                  messages,
+                  output,
+                  mode,
+                );
+                emit({
+                  type: "done",
+                  response: output,
+                  thinking,
+                  promptTokens: promptEvalCount,
+                  evalTokens: evalCount,
+                });
+                if (!res.writableEnded) res.end();
+              }
+            }
+          });
+
+          ollamaRes.on("end", () => {
+            if (!finished && outputToolCalls.length === 0) {
+              finished = true;
+              upsertConversation(
+                saveConv,
+                convTitle,
+                message,
+                messages,
+                output,
+                mode,
+              );
+              emit({ type: "done", response: output, thinking });
+              if (!res.writableEnded) res.end();
+            }
+          });
+
+          ollamaRes.on("error", (e) => {
+            if (!finished) {
+              finished = true;
+              emit({ type: "error", error: e.message });
+              if (!res.writableEnded) res.end();
+            }
+          });
         });
-      });
 
-      upstreamReq.on("error", (e) => {
-        if (finished) return;
-        finished = true;
-        if (!res.writableEnded) {
-          res.write(JSON.stringify({ type: "error", error: e.message }) + "\n");
-          res.end();
-        }
-      });
+        upstreamReq.on("error", (e) => {
+          if (!finished) {
+            finished = true;
+            emit({ type: "error", error: e.message });
+            if (!res.writableEnded) res.end();
+          }
+        });
 
-      upstreamReq.write(payload);
-      upstreamReq.end();
+        upstreamReq.write(payload);
+        upstreamReq.end();
+      };
+
+      startStream();
 
       req.on("close", () => {
         if (!finished) {
@@ -1875,7 +2123,7 @@ const server = http.createServer(async (req, res) => {
       const messages = [...history, { role: "user", content: message }];
       const safeOptions = sanitizeOllamaOptions(options);
 
-      const { promise, abort } = ollamaChat(model, messages, safeOptions);
+      let { promise, abort } = ollamaChat(model, messages, safeOptions);
       cancel = abort;
 
       req.on("close", () => {
@@ -1885,7 +2133,55 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      const response = await promise;
+      let messageObj = await promise;
+
+      if (messageObj && typeof messageObj.content === "string") {
+        const xmlMatch = messageObj.content.match(
+          /<call:([^>]+)>(.*?)<\/call>/is,
+        );
+        if (xmlMatch) {
+          if (!messageObj.tool_calls) messageObj.tool_calls = [];
+          messageObj.tool_calls.push({
+            function: {
+              name: xmlMatch[1].trim(),
+              arguments: xmlMatch[2].trim(),
+            },
+          });
+          messageObj.content = messageObj.content
+            .replace(xmlMatch[0], "")
+            .trim();
+        }
+      }
+
+      if (
+        messageObj &&
+        messageObj.tool_calls &&
+        messageObj.tool_calls.length > 0
+      ) {
+        messages.push(messageObj);
+        for (const toolCall of messageObj.tool_calls) {
+          let result;
+          if (toolCall.function.name === "shell_command") {
+            appendSecurityEvent("shell_command_denied_non_stream", {
+              command: toolCall.function.arguments,
+            });
+            result =
+              "Error: shell_command requires interactive confirmation, which is not supported in the non-streaming API.";
+          } else {
+            result = await executeSkill(toolCall, { dataDir: DATA_DIR });
+          }
+          messages.push({
+            role: "tool",
+            content: result,
+          });
+        }
+
+        const secondCall = ollamaChat(model, messages, safeOptions);
+        cancel = secondCall.abort;
+        messageObj = await secondCall.promise;
+      }
+
+      const response = messageObj ? messageObj.content || "" : "";
       finished = true;
 
       upsertConversation(

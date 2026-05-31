@@ -142,6 +142,13 @@ function syncRuntimeFiles(runtimeDir) {
     },
   );
   copyIfExists(
+    path.join(appRoot, "package.json"),
+    path.join(runtimeDir, "package.json"),
+    {
+      required: false,
+    },
+  );
+  copyIfExists(
     path.join(appRoot, "prompts.json"),
     path.join(runtimeDir, "prompts.json"),
   );

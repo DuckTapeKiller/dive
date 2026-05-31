@@ -1,6 +1,4 @@
-# Ollama Pi Chat
-
-![Project cover](images/cover.png)
+# 🦙 Ollama Pi Chat
 
 ## A Beautiful, Secure, & Local-First Web Interface for Ollama and the Pi Agent
 
@@ -212,6 +210,21 @@ These parameters let you control the "personality" and behavior of the local Oll
 - **Permission Policy**:
   - **Normal**: Prompts you for critical operations but automates standard lookups.
   - **Strict**: Hard-blocks root access, shortens decision timers, and prompts you for everything to ensure maximum security.
+
+### 4. Built-in Agent Skills (Ollama)
+
+Ollama Pi Chat comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
+
+- **Wikipedia**: Searches Wikipedia for factual information and summaries.
+- **Britannica**: Searches the Encyclopedia Britannica for curated facts.
+- **Wiktionary**: Looks up deep dictionary definitions.
+- **Deep Etymology**: Cross-references multiple multilingual etymological dictionaries (Etymonline, RAE, CNRTL, DeChile) to find word origins, cognates, and false friends.
+- **DuckDuckGo**: Performs general, privacy-respecting web searches for recent news and events.
+- **Web Scraper**: Extracts raw, readable text content from any provided web URL.
+- **Calculator**: Securely evaluates complex mathematical expressions.
+- **Time & Date**: Retrieves the current local time, date, and day of the week, with support for global IANA timezones (e.g., `Australia/Sydney`).
+- **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety).
+- **Local Notes**: Allows the model to directly read from or append text to your persistent local notes file.
 
 ---
 

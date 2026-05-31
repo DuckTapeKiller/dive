@@ -1,6 +1,6 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Ollama Pi Chat desktop wrapper (local-only)",
   "author": "DuckTapeKiller",
@@ -20,6 +20,7 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
+    "publish": null,
     "appId": "local.ollamapichat.app",
     "productName": "Ollama Pi Chat",
     "files": [
@@ -29,6 +30,7 @@
       "security/**/*",
       "index.html",
       "server.js",
+      "skills.js",
       "prompts.json",
       "font_faces.css",
       "LICENSE",
@@ -48,5 +50,8 @@
       "title": "Ollama Pi Chat",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0"
   }
 }
