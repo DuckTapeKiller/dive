@@ -31,6 +31,22 @@ else
     STDERR_PATH="/dev/null"
 fi
 
+# 2b. Read the configured server port from pi-settings.json (fallback: 8080)
+SETTINGS_FILE="$LOG_DIR/pi-settings.json"
+SERVER_PORT=8080
+if [ -f "$SETTINGS_FILE" ]; then
+    EXTRACTED=$(node -e "
+      try {
+        const s = JSON.parse(require('fs').readFileSync('$SETTINGS_FILE','utf8'));
+        const p = parseInt(s.serverPort, 10);
+        if (!isNaN(p) && p > 0 && p < 65536) process.stdout.write(String(p));
+      } catch(_) {}
+    " 2>/dev/null)
+    if [ -n "$EXTRACTED" ]; then
+        SERVER_PORT="$EXTRACTED"
+    fi
+fi
+
 # Ensure the log/data directory exists
 mkdir -p "$LOG_DIR"
 
@@ -62,24 +78,25 @@ cat <<EOF > "$PLIST_PATH"
 </plist>
 EOF
 
-# 4. Load and start the launchd service
+# 4. Load and start the launchd service using the modern bootstrap/bootout API
+# (launchctl load/unload were deprecated in macOS 10.10)
 echo "Unregistering any existing service..."
-launchctl unload "$PLIST_PATH" 2>/dev/null
+launchctl bootout "gui/$UID/$PLIST_LABEL" 2>/dev/null || true
 
 echo "Registering and starting the service..."
-launchctl load "$PLIST_PATH"
+launchctl bootstrap "gui/$UID" "$PLIST_PATH"
 
 if [ $? -eq 0 ]; then
     echo "============================================="
     echo "SUCCESS: Background service installed & running!"
     echo "The server will now start automatically whenever you log in."
-    echo "It is running securely on http://127.0.0.1:8080."
+    echo "It is running securely on http://127.0.0.1:${SERVER_PORT}."
     echo ""
     echo "To stop the service, run:"
-    echo "  launchctl unload \"$PLIST_PATH\""
+    echo "  launchctl bootout gui/\$UID/$PLIST_LABEL"
     echo ""
     echo "To start the service again, run:"
-    echo "  launchctl load \"$PLIST_PATH\""
+    echo "  launchctl bootstrap gui/\$UID \"$PLIST_PATH\""
     echo ""
     if [ "$KEEP_DAEMON_LOGS" = "1" ]; then
         echo "Daemon logs are enabled:"

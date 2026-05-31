@@ -25,7 +25,7 @@ jobs:
       - run: npx electron-builder --mac dmg --x64 --arm64 --publish never
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.2
         with:
           files: |
             release/*.dmg

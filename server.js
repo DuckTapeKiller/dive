@@ -3,11 +3,14 @@ const fs = require("fs");
 const path = require("path");
 const { execFile, spawn, spawnSync } = require("child_process");
 const os = require("os");
+const { randomUUID, randomBytes } = require("crypto");
 const { ALL_SKILLS, executeSkill } = require("./skills");
+const { initMcpServers, getMcpOllamaTools, executeMcpTool } = require("./mcp");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
-const MAX_CONVERSATIONS = 10; // Increased default slightly for better UX
+const MAX_CONVERSATIONS = 10;
+const MAX_HISTORY_MESSAGES = 200; // max messages stored per conversation
 const PI_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const PI_SESSION_SWEEP_INTERVAL_MS = 15 * 1000;
 const MAX_JSON_PAYLOAD_SIZE = 2 * 1024 * 1024; // 2MB for JSON API requests
@@ -99,10 +102,29 @@ function rotateFileIfNeeded(filePath, maxBytes = MAX_LOG_FILE_SIZE) {
     console.error("Failed to rotate log file:", filePath, e.message || e);
   }
 }
+// SV-15: Async write queue for appendFileWithRotation
+const fileWriteQueues = new Map();
 
 function appendFileWithRotation(filePath, content) {
-  rotateFileIfNeeded(filePath);
-  fs.appendFileSync(filePath, content);
+  let queue = fileWriteQueues.get(filePath);
+  if (!queue) {
+    queue = Promise.resolve();
+  }
+  queue = queue.then(() => {
+    return new Promise((resolve) => {
+      try {
+        rotateFileIfNeeded(filePath);
+        fs.appendFile(filePath, content, (err) => {
+          if (err) console.error("Async append error:", err);
+          resolve();
+        });
+      } catch (e) {
+        console.error("Sync pre-append error:", e);
+        resolve();
+      }
+    });
+  });
+  fileWriteQueues.set(filePath, queue);
 }
 
 function getFileHealth(filePath) {
@@ -162,12 +184,25 @@ function loadConversations() {
   return [];
 }
 
+// SV-16: Mutex for conversation history
+let isSavingConversations = false;
+let pendingSaveConversations = null;
+
 function saveConversations(convs) {
-  try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(convs, null, 2));
-  } catch (e) {
-    console.error("Failed to save conversations:", e);
+  if (isSavingConversations) {
+    pendingSaveConversations = convs;
+    return;
   }
+  isSavingConversations = true;
+  fs.writeFile(HISTORY_FILE, JSON.stringify(convs, null, 2), (err) => {
+    if (err) console.error("Failed to save conversations:", err);
+    isSavingConversations = false;
+    if (pendingSaveConversations) {
+      const next = pendingSaveConversations;
+      pendingSaveConversations = null;
+      saveConversations(next);
+    }
+  });
 }
 
 function upsertConversation(
@@ -187,6 +222,13 @@ function upsertConversation(
   const newHistory = [...messages, { role: "assistant", content: response }];
   const title = convTitle || message.slice(0, 40);
   const existing = convs.findIndex((c) => c.id === saveConv);
+  
+  // Cap the size of the conversation history array
+  if (newHistory.length > MAX_HISTORY_MESSAGES) {
+    const spliceCount = newHistory.length - MAX_HISTORY_MESSAGES;
+    newHistory.splice(0, spliceCount);
+  }
+
   if (existing >= 0) {
     convs[existing].history = newHistory;
     convs[existing].updatedAt = Date.now();
@@ -626,6 +668,9 @@ async function parseJsonBody(req, maxPayloadSize = MAX_JSON_PAYLOAD_SIZE) {
   }
 }
 
+// clampOllamaNumber and clampOllamaInteger are kept as thin wrappers for
+// call-site compatibility. They differ from clampNumber in that they do not
+// round to integer (Number) vs parseInt respectively.
 function clampOllamaNumber(value, fallback, min, max) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -665,46 +710,6 @@ function sanitizeOllamaOptions(raw) {
   return options;
 }
 
-function extractOllamaContextLength(showPayload) {
-  if (!showPayload || typeof showPayload !== "object") return null;
-
-  const modelInfo =
-    showPayload.model_info && typeof showPayload.model_info === "object"
-      ? showPayload.model_info
-      : null;
-
-  if (modelInfo) {
-    for (const [key, value] of Object.entries(modelInfo)) {
-      if (
-        key &&
-        typeof key === "string" &&
-        key.endsWith(".context_length") &&
-        Number.isFinite(Number(value))
-      ) {
-        return Number(value);
-      }
-    }
-  }
-
-  const details =
-    showPayload.details && typeof showPayload.details === "object"
-      ? showPayload.details
-      : null;
-  if (details && Number.isFinite(Number(details.context_length))) {
-    return Number(details.context_length);
-  }
-
-  const paramsText =
-    typeof showPayload.parameters === "string" ? showPayload.parameters : "";
-  if (paramsText) {
-    const numCtxMatch = paramsText.match(/\bnum_ctx\s+(\d+)/i);
-    if (numCtxMatch && Number.isFinite(Number(numCtxMatch[1]))) {
-      return Number(numCtxMatch[1]);
-    }
-  }
-
-  return null;
-}
 
 function ollamaChat(model, messages, options, tools = null) {
   let clientReq = null;
@@ -713,9 +718,17 @@ function ollamaChat(model, messages, options, tools = null) {
     if (options && typeof options === "object") {
       payloadObject.options = options;
     }
-    if (tools && Array.isArray(tools) && tools.length > 0) {
-      payloadObject.tools = tools;
+
+    const mcpTools = getMcpOllamaTools();
+    let finalTools = tools ? [...tools] : [];
+    if (mcpTools.length > 0) {
+      finalTools = [...finalTools, ...mcpTools];
     }
+
+    if (finalTools.length > 0) {
+      payloadObject.tools = finalTools;
+    }
+
     const payload = JSON.stringify(payloadObject);
     const opts = {
       hostname: "localhost",
@@ -819,7 +832,7 @@ const PI_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 const piRpcSessions = new Map();
 
 function createPiSessionId() {
-  return `pi_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return `pi_${randomUUID()}`;
 }
 
 function buildPiEnv() {
@@ -916,6 +929,26 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       return existing;
     }
     piConvProcesses.delete(convId);
+  }
+
+  // Cap number of running Pi processes
+  const MAX_PI_CONV_PROCESSES = 20;
+  if (piConvProcesses.size >= MAX_PI_CONV_PROCESSES) {
+    let oldest = null, oldestTime = Infinity;
+    for (const [id, proc] of piConvProcesses.entries()) {
+      if (proc.closed) {
+        piConvProcesses.delete(id);
+        break; // we just need to free up one slot
+      }
+      if (proc.lastActivityAt < oldestTime) {
+        oldest = id;
+        oldestTime = proc.lastActivityAt;
+      }
+    }
+    if (piConvProcesses.size >= MAX_PI_CONV_PROCESSES && oldest) {
+      try { piConvProcesses.get(oldest).proc.kill(); } catch (_) {}
+      piConvProcesses.delete(oldest);
+    }
   }
 
   const settings = sanitizePiSettings(piSettings || loadPiSettings());
@@ -1120,7 +1153,8 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
 
   proc.stderr.on("data", (chunk) => {
     const text = chunk.toString();
-    convProc.stderrData += text;
+    // Ring-buffer: keep only the last 50KB to prevent memory exhaustion
+    convProc.stderrData = (convProc.stderrData + text).slice(-50_000);
     if (convProc.activeRequestId) {
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (session) {
@@ -1299,6 +1333,13 @@ setInterval(() => {
       cleanupPiSession(sessionId, "stale_timeout");
     }
   }
+  
+  // Sweep closed piConvProcesses
+  for (const [convId, proc] of piConvProcesses.entries()) {
+    if (proc.closed) {
+      piConvProcesses.delete(convId);
+    }
+  }
 }, PI_SESSION_SWEEP_INTERVAL_MS).unref();
 
 function isRequestAllowed(req) {
@@ -1332,13 +1373,19 @@ const server = http.createServer(async (req, res) => {
     res.end("Forbidden: Cross-Origin request blocked.");
     return;
   }
+  
+  // SV-14: Normalize URL path by stripping query strings
+  const urlPath = req.url.split("?")[0];
+  
+  // SV-17: Generate a nonce for CSP
+  const cspNonce = randomBytes(16).toString("base64");
 
   // Add robust HTTP security headers
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
+    `default-src 'self'; script-src 'self' 'nonce-${cspNonce}' https://cdn.jsdelivr.net; style-src 'self' 'nonce-${cspNonce}'; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
   );
 
   console.log("Incoming request:", req.method, req.url);
@@ -1348,25 +1395,26 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(obj));
   };
 
-  if (req.method === "GET" && req.url.split("?")[0] === "/") {
+  if (req.method === "GET" && urlPath === "/") {
+    const injectNonce = (html) => html.replace(/<script /g, `<script nonce="${cspNonce}" `).replace(/<style /g, `<style nonce="${cspNonce}" `).replace(/<style>/g, `<style nonce="${cspNonce}">`);
     if (EMBEDDED_INDEX) {
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(EMBEDDED_INDEX);
+      res.end(injectNonce(EMBEDDED_INDEX));
       return;
     }
-    fs.readFile(INDEX, (err, data) => {
+    fs.readFile(INDEX, "utf8", (err, data) => {
       if (err) {
         res.writeHead(500);
         res.end("Error loading index.html");
         return;
       }
       res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(data);
+      res.end(injectNonce(data));
     });
     return;
   }
 
-  if (req.method === "GET" && req.url === "/fonts/pi-font-faces.css") {
+  if (req.method === "GET" && urlPath === "/fonts/pi-font-faces.css") {
     try {
       if (!fs.existsSync(FONT_FACES_FILE)) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1385,7 +1433,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/version") {
+  if (req.method === "GET" && urlPath === "/api/version") {
     try {
       const pkgPath = path.join(__dirname, "package.json");
       if (fs.existsSync(pkgPath)) {
@@ -1400,9 +1448,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url.startsWith("/fonts/")) {
+  if (req.method === "GET" && urlPath.startsWith("/fonts/")) {
     try {
-      const filename = req.url.slice("/fonts/".length);
+      const filename = urlPath.slice("/fonts/".length);
       if (!/^[a-z0-9._-]+\.woff2$/i.test(filename)) {
         res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Invalid font filename.");
@@ -1426,7 +1474,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/models") {
+  if (req.method === "GET" && urlPath === "/api/models") {
     try {
       send(200, await getModels());
     } catch (e) {
@@ -1435,7 +1483,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/pi/settings") {
+  if (req.method === "GET" && urlPath === "/api/pi/settings") {
     const settings = loadPiSettings();
     send(200, {
       settings,
@@ -1444,7 +1492,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/settings") {
+  if (req.method === "POST" && urlPath === "/api/pi/settings") {
     try {
       const body = await parseJsonBody(req);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -1468,7 +1516,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/settings/reset") {
+  if (req.method === "POST" && urlPath === "/api/pi/settings/reset") {
     const defaults = defaultPiSettings();
     savePiSettings(defaults);
     send(200, {
@@ -1479,7 +1527,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/open-project-folder") {
+  if (req.method === "POST" && urlPath === "/api/pi/open-project-folder") {
     execFile("open", [__dirname], (error) => {
       if (error) {
         send(500, {
@@ -1492,7 +1540,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/health/logs") {
+  if (req.method === "GET" && urlPath === "/api/health/logs") {
     send(200, {
       dataDir: DATA_DIR,
       maxLogFileSizeBytes: MAX_LOG_FILE_SIZE,
@@ -1515,12 +1563,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/conversations") {
+  if (req.method === "GET" && urlPath === "/api/conversations") {
     send(200, loadConversations());
     return;
   }
 
-  if (req.method === "DELETE" && req.url === "/api/conversations") {
+  if (req.method === "DELETE" && urlPath === "/api/conversations") {
     saveConversations([]);
     send(200, { ok: true });
     return;
@@ -1528,7 +1576,7 @@ const server = http.createServer(async (req, res) => {
 
   const deleteMatch =
     req.method === "DELETE" &&
-    req.url.match(/^\/api\/conversations\/id\/([^/]+)$/);
+    urlPath.match(/^\/api\/conversations\/id\/([^/]+)$/);
   if (deleteMatch) {
     const encodedId = deleteMatch[1];
     const convId = decodeURIComponent(encodedId || "");
@@ -1549,8 +1597,8 @@ const server = http.createServer(async (req, res) => {
 
   if (
     req.method === "DELETE" &&
-    (req.url === "/api/conversations/id" ||
-      req.url === "/api/conversations/id/")
+    (urlPath === "/api/conversations/id" ||
+      urlPath === "/api/conversations/id/")
   ) {
     send(400, {
       error:
@@ -1559,8 +1607,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "DELETE" && req.url.startsWith("/api/conversations/")) {
-    const parts = req.url.split("/");
+  if (req.method === "DELETE" && urlPath.startsWith("/api/conversations/")) {
+    const parts = urlPath.split("/");
     const idxStr = parts.pop();
     const idx = parseInt(idxStr, 10);
     const convs = loadConversations();
@@ -1574,12 +1622,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/prompts") {
+  if (req.method === "GET" && urlPath === "/api/prompts") {
     send(200, loadPrompts());
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/prompts") {
+  if (req.method === "POST" && urlPath === "/api/prompts") {
     try {
       const body = await parseJsonBody(req);
       if (!Array.isArray(body)) {
@@ -1605,12 +1653,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/custom-skills") {
+  if (req.method === "GET" && urlPath === "/api/custom-skills") {
     send(200, loadCustomSkills());
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/custom-skills") {
+  if (req.method === "POST" && urlPath === "/api/mcp/config") {
+    try {
+      const body = await parseJsonBody(req);
+      await initMcpServers(body.config);
+      send(200, { success: true });
+    } catch (e) {
+      send(500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/custom-skills") {
     try {
       const body = await parseJsonBody(req);
       if (!Array.isArray(body)) {
@@ -1637,19 +1696,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/ollama/skills/settings") {
+  if (req.method === "GET" && urlPath === "/api/ollama/skills/settings") {
     send(200, loadSkillsConfig());
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/ollama/skills/settings") {
+  if (req.method === "POST" && urlPath === "/api/ollama/skills/settings") {
     try {
       const body = await parseJsonBody(req);
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         send(400, { error: "Settings object is required" });
         return;
       }
-      const nextSettings = { ...loadSkillsConfig(), ...body };
+      
+      const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
+      const filtered = Object.fromEntries(
+        Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k))
+      );
+      const nextSettings = { ...loadSkillsConfig(), ...filtered };
+      
       saveSkillsConfig(nextSettings);
       send(200, { ok: true, settings: nextSettings });
     } catch (e) {
@@ -1658,7 +1723,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/ollama/tool-respond") {
+  if (req.method === "POST" && urlPath === "/api/ollama/tool-respond") {
     try {
       const body = await parseJsonBody(req);
       const { sessionId, uiResponse } = body || {};
@@ -1667,8 +1732,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const resolve = ollamaToolRequests.get(sessionId);
-      if (!resolve) {
+      const entry = ollamaToolRequests.get(sessionId);
+      if (!entry) {
         send(404, { error: "Ollama tool request not found or expired" });
         return;
       }
@@ -1677,7 +1742,9 @@ const server = http.createServer(async (req, res) => {
         typeof uiResponse.confirmed === "boolean"
           ? uiResponse.confirmed
           : false;
-      resolve(approved);
+          
+      clearTimeout(entry.timer);
+      entry.resolve(approved);
       ollamaToolRequests.delete(sessionId);
 
       send(200, { ok: true });
@@ -1704,14 +1771,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/load-session") {
+  if (req.method === "POST" && urlPath === "/api/pi/load-session") {
     try {
       const body = await parseJsonBody(req);
       const convId = body.saveConv || body.convId || "default";
       const { sessionFile } = body;
+      
+      if (typeof sessionFile !== "string" || !sessionFile.trim()) {
+        send(400, { error: "sessionFile must be a non-empty string" });
+        return;
+      }
+      const resolvedPath = path.resolve(sessionFile.trim());
+      
       const convProc = getOrCreatePiConvProcess(convId);
       convProc.proc.stdin.write(
-        JSON.stringify({ type: "switch_session", sessionPath: sessionFile }) +
+        JSON.stringify({ type: "switch_session", sessionPath: resolvedPath }) +
           "\n",
       );
       send(200, { ok: true });
@@ -1721,13 +1795,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/stats") {
+  if (req.method === "POST" && urlPath === "/api/pi/stats") {
     try {
       const body = await parseJsonBody(req);
       const convId = body.saveConv || body.convId || "default";
       const convProc = piConvProcesses.get(convId);
       if (!convProc || convProc.closed) {
         send(404, { error: "No active Pi process" });
+        return;
+      }
+
+      if (convProc.pendingStatsResolver) {
+        send(409, { error: "Stats request already in progress" });
         return;
       }
 
@@ -1760,7 +1839,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url.startsWith("/api/models/info")) {
+  if (req.method === "GET" && urlPath.startsWith("/api/models/info")) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const modelName = url.searchParams.get("model");
     if (!modelName) {
@@ -1811,7 +1890,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/api/notes") {
+  if (req.method === "GET" && urlPath === "/api/notes") {
     const notes = loadNotes();
     send(200, notes);
     return;
@@ -1838,7 +1917,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/chat/stream") {
+  if (req.method === "POST" && urlPath === "/api/chat/stream") {
     let finished = false;
     let upstreamReq = null;
     let upstreamRes = null;
@@ -1881,9 +1960,20 @@ const server = http.createServer(async (req, res) => {
         }
       };
 
-      const startStream = () => {
+      const startStream = (depth = 0) => {
+        if (depth > 10) {
+          emit({ type: "error", error: "Tool call recursion limit exceeded." });
+          if (!res.writableEnded) res.end();
+          return;
+        }
         const payloadObject = { model, messages, stream: true };
         if (safeOptions) payloadObject.options = safeOptions;
+
+        const mcpTools = getMcpOllamaTools();
+        if (mcpTools.length > 0) {
+          payloadObject.tools = mcpTools;
+        }
+
         const payload = JSON.stringify(payloadObject);
 
         let lineBuffer = "";
@@ -1973,7 +2063,14 @@ const server = http.createServer(async (req, res) => {
                             Date.now() +
                             "_" +
                             Math.floor(Math.random() * 1000);
-                          ollamaToolRequests.set(reqId, resolve);
+                          const denialTimer = setTimeout(() => {
+                            if (ollamaToolRequests.has(reqId)) {
+                              ollamaToolRequests.delete(reqId);
+                              resolve(false);
+                              appendSecurityEvent("shell_command_timeout_denied", { reqId });
+                            }
+                          }, 5 * 60 * 1000); // 5 minute auto-deny timeout
+                          ollamaToolRequests.set(reqId, { resolve, timer: denialTimer });
                           emit({
                             type: "needs_ui",
                             sessionId: reqId,
@@ -1989,7 +2086,9 @@ const server = http.createServer(async (req, res) => {
                       }
 
                       let result;
-                      if (executeAllowed) {
+                      if (tc.function.name.startsWith("mcp__")) {
+                        result = await executeMcpTool(tc);
+                      } else if (executeAllowed) {
                         appendSecurityEvent("shell_command_executed", {
                           command: tc.function.arguments,
                         });
@@ -2011,7 +2110,7 @@ const server = http.createServer(async (req, res) => {
                       thinking += endMsg;
                       emit({ type: "thinking_delta", delta: endMsg, thinking });
                     }
-                    startStream();
+                    startStream(depth + 1);
                   })();
                   return;
                 }
@@ -2085,7 +2184,7 @@ const server = http.createServer(async (req, res) => {
         upstreamReq.end();
       };
 
-      startStream();
+      startStream(0);
 
       req.on("close", () => {
         if (!finished) {
@@ -2106,7 +2205,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/chat") {
+  if (req.method === "POST" && urlPath === "/api/chat") {
     let finished = false;
     let cancel = null;
     try {
@@ -2167,6 +2266,8 @@ const server = http.createServer(async (req, res) => {
             });
             result =
               "Error: shell_command requires interactive confirmation, which is not supported in the non-streaming API.";
+          } else if (toolCall.function.name.startsWith("mcp__")) {
+            result = await executeMcpTool(toolCall);
           } else {
             result = await executeSkill(toolCall, { dataDir: DATA_DIR });
           }
@@ -2205,13 +2306,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/security-event") {
+  if (req.method === "POST" && urlPath === "/api/security-event") {
     try {
       const body = await parseJsonBody(req);
       if (!body || typeof body.event !== "string" || !body.event.trim()) {
         send(400, { error: "event is required" });
         return;
       }
+      
+      const ALLOWED_SECURITY_EVENTS = new Set([
+        "user_action", "settings_changed", "conversation_cleared",
+        "file_uploaded", "pi_mode_entered", "ollama_mode_entered",
+      ]);
+      if (!ALLOWED_SECURITY_EVENTS.has(body.event.trim())) {
+        send(400, { error: "Unknown security event type" });
+        return;
+      }
+      
       appendSecurityEvent(body.event.trim(), {
         ...(body.details && typeof body.details === "object"
           ? body.details
@@ -2224,7 +2335,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/pi/stream") {
+  if (req.method === "POST" && urlPath === "/api/pi/stream") {
     let session = null;
     let unsubscribe = null;
     const writeStreamEvent = (evt) => {
@@ -2403,7 +2514,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/api/upload") {
+  if (req.method === "POST" && urlPath === "/api/upload") {
     try {
       const buf = await readBody(req, MAX_UPLOAD_PAYLOAD_SIZE);
       const ct = req.headers["content-type"] || "";
@@ -2420,7 +2531,7 @@ const server = http.createServer(async (req, res) => {
       }
       const isPdf = file.filename.toLowerCase().endsWith(".pdf");
       if (isPdf) {
-        const tmp = path.join(os.tmpdir(), "upload_" + Date.now() + ".pdf");
+        const tmp = path.join(os.tmpdir(), "upload_" + randomBytes(8).toString("hex") + ".pdf");
         try {
           fs.writeFileSync(tmp, file.body);
           execFile(
@@ -2483,3 +2594,28 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () =>
   console.log("Running securely on http://127.0.0.1:" + PORT),
 );
+
+// SV-18: Graceful shutdown handler
+function gracefulShutdown(signal) {
+  console.log(`Received ${signal}. Shutting down gracefully...`);
+  
+  // Clean up all Pi processes
+  for (const [convId, procObj] of piConvProcesses.entries()) {
+    try {
+      procObj.proc.kill("SIGTERM");
+    } catch (e) {}
+  }
+  piConvProcesses.clear();
+
+  // Shut down server
+  server.close(() => {
+    console.log("Server stopped.");
+    process.exit(0);
+  });
+  
+  // Force exit after 5 seconds
+  setTimeout(() => process.exit(1), 5000).unref();
+}
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

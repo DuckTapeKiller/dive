@@ -225,6 +225,12 @@
         border-color: var(--bg-inverse);
         border-radius: 0 !important;
       }
+      ::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+      ::-webkit-resizer {
+        background: transparent;
+      }
 
       /* TOPBAR */
       #topbar {
@@ -255,7 +261,8 @@
         margin-top: -4px;
       }
       /* Hide file label completely in Pi mode (upload not available there) */
-      [data-mode="pi"] #fileLabel {
+      [data-mode="pi"] #fileLabel,
+      [data-mode="pi"] #mcpBtn {
         display: none !important;
       }
       #windowDragBar {
@@ -352,7 +359,8 @@
       #historyBtn,
       #clearBtn,
       #notesBtn,
-      #settingsBtn {
+      #settingsBtn,
+      #mcpBtn {
         padding: 5px 10px;
         background: transparent;
         color: var(--text-inverse);
@@ -371,7 +379,8 @@
       #historyBtn:hover,
       #clearBtn:hover,
       #notesBtn:hover,
-      #settingsBtn:hover {
+      #settingsBtn:hover,
+      #mcpBtn:hover {
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
@@ -430,7 +439,8 @@
 
       /* RESIZERS */
       #notesResizer,
-      #settingsResizer {
+      #settingsResizer,
+      #mcpResizer {
         width: 5px;
         background: var(--bg-secondary);
         cursor: col-resize;
@@ -438,7 +448,8 @@
         transition: background 0.1s;
       }
       #notesResizer:hover,
-      #settingsResizer:hover {
+      #settingsResizer:hover,
+      #mcpResizer:hover {
         background: var(--bg-inverse);
       }
 
@@ -529,8 +540,9 @@
           border-color 0.2s;
       }
 
-      /* SETTINGS PANEL */
-      #settingsPanel {
+      /* SETTINGS & MCP PANELS */
+      #settingsPanel,
+      #mcpPanel {
         width: 50vw;
         background: var(--bg-inverse);
         border-left: var(--border-width) solid var(--border-color);
@@ -542,10 +554,12 @@
           border-color 0.2s;
         overflow-y: auto;
       }
-      #settingsPanel.open {
+      #settingsPanel.open,
+      #mcpPanel.open {
         display: flex;
       }
-      #settingsHeader {
+      #settingsHeader,
+      #mcpHeader {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -554,14 +568,16 @@
         flex-shrink: 0;
         transition: border-color 0.2s;
       }
-      #settingsHeader span {
+      #settingsHeader span,
+      #mcpHeader span {
         color: var(--text-inverse);
         font-size: 11px;
         font-weight: 700;
         letter-spacing: 1px;
         transition: color 0.2s;
       }
-      #closeSettingsBtn {
+      #closeSettingsBtn,
+      #closeMcpBtn {
         padding: 4px 10px;
         background: transparent;
         color: var(--text-inverse);
@@ -575,12 +591,14 @@
           color 0.1s,
           border-color 0.2s;
       }
-      #closeSettingsBtn:hover {
+      #closeSettingsBtn:hover,
+      #closeMcpBtn:hover {
         background: #ff4444;
         border-color: #ff4444;
         color: #fff;
       }
-      #settingsBody {
+      #settingsBody,
+      #mcpBody {
         flex: 1;
         padding: 14px;
         display: flex;
@@ -771,7 +789,8 @@
         opacity: 0.8;
       }
 
-      .settings-action-btn {
+      .settings-action-btn,
+      .mcp-action-btn {
         padding: 5px 10px;
         background: transparent;
         color: var(--text-inverse);
@@ -787,7 +806,8 @@
         width: 100%;
         text-align: center;
       }
-      .settings-action-btn:hover {
+      .settings-action-btn:hover,
+      .mcp-action-btn:hover {
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
@@ -810,18 +830,17 @@
         border-top: 1px dashed var(--bg-primary);
         text-align: left;
         font-style: normal;
-        opacity: 0.8;
-        color: var(--bg-primary);
+        color: var(--text-inverse);
       }
       .about-label {
         font-weight: bold;
         text-transform: uppercase;
       }
       .about-value a {
-        color: var(--bg-primary);
+        color: var(--text-inverse);
         text-decoration: none;
-        border-bottom: var(--border-width) solid var(--bg-primary);
-        transition: color 0.2s;
+        border-bottom: var(--border-width) solid var(--text-inverse);
+        transition: color 0.2s, border-bottom-color 0.2s;
       }
       .about-value a:hover {
         color: var(--accent);
@@ -1537,6 +1556,29 @@
         </svg>
       </button>
       <button
+        id="mcpBtn"
+        class="topbar-icon-btn"
+        onclick="toggleMcp()"
+        title="MCP Servers"
+        aria-label="MCP"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="lucide lucide-plug-icon lucide-plug"
+        >
+          <path d="M12 22v-5" />
+          <path d="M15 8V2" />
+          <path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z" />
+          <path d="M9 8V2" />
+        </svg>
+      </button>
+      <button
         id="notesBtn"
         class="topbar-icon-btn"
         onclick="toggleNotes()"
@@ -1694,6 +1736,68 @@
           placeholder="Write your notes here..."
         ></textarea>
         <div id="notesSaved"></div>
+      </div>
+
+      <div id="mcpResizer" style="display: none"></div>
+      <div id="mcpPanel">
+        <div id="mcpHeader">
+          <span>MCP PLUGINS</span>
+          <button id="closeMcpBtn" onclick="toggleMcp()">✕</button>
+        </div>
+        <div id="mcpBody">
+          <div class="setting-section">
+            <h3 class="setting-title">MCP SERVERS CONFIGURATION</h3>
+            <div class="setting-help" style="margin-bottom: 8px">
+              Configure external Model Context Protocol servers (like Postgres,
+              Github, etc.) in JSON format to grant Ollama access to external
+              tools.
+            </div>
+            <textarea
+              id="mcpConfigArea"
+              placeholder='{\n  "mcpServers": {\n    "sqlite": {\n      "command": "uvx",\n      "args": ["mcp-server-sqlite", "--db-path", "~/test.db"]\n    }\n  }\n}'
+              style="
+                width: 100%;
+                height: 350px;
+                background: var(--bg-inverse);
+                color: var(--text-inverse);
+                border: var(--border-width) solid var(--text-inverse);
+                font-family: var(--ui-font);
+                font-size: 11px;
+                padding: 10px;
+                resize: vertical;
+                outline: none;
+                white-space: pre;
+                border-radius: 0;
+              "
+            ></textarea>
+            <div id="mcpActiveList" style="margin-top: 15px; display: flex; gap: 8px; flex-wrap: wrap;"></div>
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 10px;
+              "
+            >
+              <button
+                id="saveMcpBtn"
+                class="mcp-action-btn"
+                onclick="saveMcpConfig()"
+                style="width: auto"
+              >
+                SAVE & RESTART SERVERS
+              </button>
+              <div
+                id="mcpStatus"
+                style="
+                  font-size: 10px;
+                  color: var(--text-inverse);
+                  font-weight: bold;
+                "
+              ></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div id="settingsResizer" style="display: none"></div>
@@ -2706,6 +2810,7 @@
       let notesSaveInFlight = null;
       let notesPendingSaveText = null;
       let settingsOpen = false;
+      let mcpOpen = false;
       let isDark = false;
       let ollamaPalette = "solarised";
       let piPalette = "orange";
@@ -2788,6 +2893,18 @@
         shell_command: {
           desc: "Executes a terminal command.",
           example: '{"command": "ls"}',
+        },
+        web_scraper: {
+          desc: "Reads and extracts text content from a given URL.",
+          example: '{"url": "https://example.com"}',
+        },
+        fact_check: {
+          desc: "Fact-checks a specific claim against multiple sources.",
+          example: '{"claim": "The moon is made of cheese"}',
+        },
+        local_notes: {
+          desc: "Reads and writes plain-text notes to the local system.",
+          example: '{"action": "write", "content": "My new note"}',
         },
       };
 
@@ -3918,8 +4035,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         historyOpen = !historyOpen;
         const panel = document.getElementById("historyPanel");
         if (historyOpen) {
-          if (notesOpen) toggleNotes();
           if (settingsOpen) toggleSettings();
+          if (notesOpen) toggleNotes();
+          if (mcpOpen) toggleMcp();
           panel.classList.add("open");
           loadHistoryPanel();
         } else {
@@ -5529,6 +5647,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (notesOpen) {
           if (historyOpen) toggleHistory();
           if (settingsOpen) toggleSettings();
+          if (mcpOpen) toggleMcp();
           panel.classList.add("open");
           resizerEl.style.display = "block";
           const { area } = getNotesElements();
@@ -5550,12 +5669,94 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (settingsOpen) {
           if (historyOpen) toggleHistory();
           if (notesOpen) toggleNotes();
+          if (mcpOpen) toggleMcp();
           panel.classList.add("open");
           resizerEl.style.display = "block";
           closePromptEditor();
         } else {
           panel.classList.remove("open");
           resizerEl.style.display = "none";
+        }
+      }
+
+      function renderMcpList(jsonString) {
+        const listDiv = document.getElementById("mcpActiveList");
+        if (!listDiv) return;
+        listDiv.innerHTML = "";
+        try {
+          if (!jsonString) return;
+          const config = JSON.parse(jsonString);
+          if (config && config.mcpServers) {
+            const servers = Object.keys(config.mcpServers);
+            if (servers.length > 0) {
+              servers.forEach(name => {
+                const badge = document.createElement("div");
+                badge.textContent = name.toUpperCase();
+                badge.style.cssText = "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                listDiv.appendChild(badge);
+              });
+            } else {
+              listDiv.innerHTML = "<span style='font-size: 10px; opacity: 0.5;'>No active servers</span>";
+            }
+          }
+        } catch (e) {
+          // invalid json, just ignore
+        }
+      }
+
+      function toggleMcp() {
+        mcpOpen = !mcpOpen;
+        const panel = document.getElementById("mcpPanel");
+        const resizerEl = document.getElementById("mcpResizer");
+        if (mcpOpen) {
+          if (historyOpen) toggleHistory();
+          if (notesOpen) toggleNotes();
+          if (settingsOpen) toggleSettings();
+          panel.classList.add("open");
+          resizerEl.style.display = "block";
+          const configArea = document.getElementById("mcpConfigArea");
+          const saved = localStorage.getItem("mcpConfig");
+          if (saved) {
+            configArea.value = saved;
+            renderMcpList(saved);
+          } else {
+            renderMcpList("");
+          }
+        } else {
+          panel.classList.remove("open");
+          resizerEl.style.display = "none";
+        }
+      }
+
+      async function saveMcpConfig() {
+        const area = document.getElementById("mcpConfigArea");
+        const status = document.getElementById("mcpStatus");
+        try {
+          const raw = area.value.trim();
+          if (raw) {
+            JSON.parse(raw); // validate
+          }
+          localStorage.setItem("mcpConfig", raw);
+          renderMcpList(raw);
+          status.textContent = "SAVED!";
+          status.style.color = "var(--accent)";
+
+          await fetch("/api/mcp/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: raw }),
+          });
+
+          status.textContent = "RESTARTED";
+          setTimeout(() => {
+            status.textContent = "";
+          }, 2000);
+        } catch (e) {
+          status.textContent = "INVALID JSON";
+          status.style.color = "#ff4444";
+          setTimeout(() => {
+            status.textContent = "";
+          }, 2000);
         }
       }
 
@@ -5581,6 +5782,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       const settingsPanel = document.getElementById("settingsPanel");
       let isSettingsResizing = false;
 
+      const mcpResizer = document.getElementById("mcpResizer");
+      const mcpPanelEl = document.getElementById("mcpPanel");
+      let isMcpResizing = false;
+
       notesResizer.addEventListener("mousedown", (e) => {
         if (!notesOpen) return;
         isResizing = true;
@@ -5591,6 +5796,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       settingsResizer.addEventListener("mousedown", (e) => {
         if (!settingsOpen) return;
         isSettingsResizing = true;
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      });
+
+      mcpResizer.addEventListener("mousedown", (e) => {
+        if (!mcpOpen) return;
+        isMcpResizing = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
       });
@@ -5608,13 +5820,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           if (newWidth > 200 && newWidth < mainRect.width - 200) {
             settingsPanel.style.width = newWidth + "px";
           }
+        } else if (isMcpResizing) {
+          const newWidth = mainRect.right - e.clientX;
+          if (newWidth > 300 && newWidth < mainRect.width - 200) {
+            mcpPanelEl.style.width = newWidth + "px";
+          }
         }
       });
 
       document.addEventListener("mouseup", () => {
-        if (isResizing || isSettingsResizing) {
+        if (isResizing || isSettingsResizing || isMcpResizing) {
           isResizing = false;
           isSettingsResizing = false;
+          isMcpResizing = false;
           document.body.style.cursor = "";
           document.body.style.userSelect = "";
         }
@@ -5688,6 +5906,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (el) el.textContent = data.version;
           })
           .catch((err) => console.error("Could not fetch version:", err));
+
+        // 5. Initialize MCP Servers if configured
+        const savedMcpConfig = localStorage.getItem("mcpConfig");
+        if (savedMcpConfig) {
+          fetch("/api/mcp/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: savedMcpConfig }),
+          }).catch((err) => console.error("Could not init MCP:", err));
+        }
       });
       function syncCustomSelect(selectEl) {
         if (!selectEl) return;

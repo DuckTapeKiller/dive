@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { exec } = require("child_process");
-const vm = require("vm");
+const { Worker } = require("worker_threads");
 const cheerio = require("cheerio");
 const { TextDecoder } = require("util");
 
@@ -200,7 +200,11 @@ async function executeBritannica({ query }) {
       return `No Britannica article found for "${query}".`;
     }
 
-    const articleUrl = "https://www.britannica.com" + match[1];
+    const href = match[1];
+    if (typeof href !== "string" || !href.startsWith("/") || href.startsWith("//")) {
+      return `No valid Britannica article link found for "${query}".`;
+    }
+    const articleUrl = "https://www.britannica.com" + href;
     const articleHtml = await fetchText(articleUrl);
 
     const pRegex = /<p[^>]*>(.*?)<\/p>/gi;
@@ -244,6 +248,23 @@ async function executeFactCheck({ claim, language = "en" }) {
 
 async function executeWebScraper({ url }) {
   try {
+    // --- SSRF / local-file-read guard ---
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return "Web Scraper Error: Invalid URL.";
+    }
+    if (![ "http:", "https:" ].includes(parsed.protocol)) {
+      return "Web Scraper Error: Only http and https URLs are allowed.";
+    }
+    const h = parsed.hostname.toLowerCase();
+    const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+    const PRIVATE_RANGES = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
+    if (BLOCKED_HOSTS.has(h) || PRIVATE_RANGES.test(h)) {
+      return "Web Scraper Error: Access to local or private network addresses is not allowed.";
+    }
+    // ------------------------------------
     const html = await fetchText(url);
     const $ = cheerio.load(html);
     const text = $("body").text().replace(/\s+/g, " ").trim();
@@ -722,7 +743,67 @@ When asked about these relationships, ALWAYS query both words and explain the di
   },
 ];
 
+/**
+ * Runs a custom JavaScript skill in an isolated worker_threads Worker.
+ *
+ * SECURITY NOTE: worker_threads provides memory/CPU isolation and a hard
+ * timeout, but is NOT a complete security sandbox — the worker can still
+ * require Node.js built-in modules. Only execute code from sources you fully
+ * trust. Do NOT run untrusted third-party custom skill code here.
+ */
+function runCustomJsSkill(code, args, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    // Inline worker code as a string evaluated with eval:true
+    const workerSrc = `
+      const { parentPort, workerData } = require('worker_threads');
+      (async () => {
+        const args = workerData.args;
+        ${code}
+      })()
+        .then(result => parentPort.postMessage({ ok: true, result }))
+        .catch(err => parentPort.postMessage({ ok: false, error: err.message || String(err) }));
+    `;
+    let worker;
+    try {
+      worker = new Worker(workerSrc, {
+        eval: true,
+        workerData: { args },
+        resourceLimits: {
+          maxOldGenerationSizeMb: 64,
+          maxYoungGenerationSizeMb: 16,
+        },
+      });
+    } catch (e) {
+      return reject(new Error(`Failed to start worker: ${e.message}`));
+    }
+
+    const timer = setTimeout(() => {
+      worker.terminate();
+      reject(new Error("Custom JS skill timed out after " + timeoutMs + "ms"));
+    }, timeoutMs);
+
+    worker.on("message", ({ ok, result, error }) => {
+      clearTimeout(timer);
+      worker.terminate();
+      if (ok) {
+        resolve(typeof result === "object" ? JSON.stringify(result) : String(result ?? ""));
+      } else {
+        reject(new Error(error || "Custom JS skill failed"));
+      }
+    });
+    worker.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    worker.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) reject(new Error(`Custom JS skill worker exited with code ${code}`));
+    });
+  });
+}
+
 async function executeSkill(toolCall, context) {
+
   const name = toolCall.function.name;
   let args = {};
   try {
@@ -752,7 +833,7 @@ async function executeSkill(toolCall, context) {
       return await executeTimeAndDate(args);
     case "shell_command":
       return await executeShellCommand(args);
-    default:
+    default: {
       const customSkillsFile = path.join(context.dataDir, "custom_skills.json");
       try {
         if (fs.existsSync(customSkillsFile)) {
@@ -762,19 +843,17 @@ async function executeSkill(toolCall, context) {
             if (skill.type === "shell") {
               let cmd = skill.code;
               for (const [key, value] of Object.entries(args)) {
-                cmd = cmd.replace(new RegExp(`{{${key}}}`, "g"), String(value));
+                // Shell-escape each substituted value to prevent injection
+                const escaped = "'" + String(value).replace(/'/g, "'\\''" ) + "'";
+                cmd = cmd.replace(new RegExp(`{{${key}}}`, "g"), escaped);
               }
               return await executeShellCommand({ command: cmd });
             } else if (skill.type === "javascript") {
-              const sandbox = { args, console, Buffer };
-              vm.createContext(sandbox);
-              const script = new vm.Script(`(async () => { ${skill.code} })()`);
-              const result = await script.runInContext(sandbox, {
-                timeout: 10000,
-              });
-              return typeof result === "object"
-                ? JSON.stringify(result)
-                : String(result);
+              // WARNING: Custom JavaScript skills run in a worker_threads Worker.
+              // worker_threads provides memory/CPU isolation but is NOT a full
+              // security sandbox — the worker has access to Node.js built-ins.
+              // Only use custom JS skills with code you fully trust.
+              return await runCustomJsSkill(skill.code, args);
             }
           }
         }
@@ -782,6 +861,7 @@ async function executeSkill(toolCall, context) {
         return `Custom Skill Error (${name}): ${e.message}`;
       }
       return `Unknown skill: ${name}`;
+    }
   }
 }
 

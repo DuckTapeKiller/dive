@@ -13,6 +13,17 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
+# 1b. Check node_modules — install if missing
+if [ ! -d "$DIR/node_modules" ]; then
+    echo "Dependencies not found. Running npm install..."
+    cd "$DIR" && npm install
+    if [ $? -ne 0 ]; then
+        echo "ERROR: npm install failed. Please check your network connection and try again."
+        exit 1
+    fi
+fi
+
+
 # 2. Check Ollama running locally (Warning only)
 curl -s -m 2 http://localhost:11434 &> /dev/null
 if [ $? -ne 0 ]; then

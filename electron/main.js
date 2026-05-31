@@ -277,7 +277,7 @@ function createMainWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      devTools: true,
+      devTools: process.env.NODE_ENV === "development" || !app.isPackaged,
     },
   });
 
