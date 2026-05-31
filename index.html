@@ -840,7 +840,9 @@
         color: var(--text-inverse);
         text-decoration: none;
         border-bottom: var(--border-width) solid var(--text-inverse);
-        transition: color 0.2s, border-bottom-color 0.2s;
+        transition:
+          color 0.2s,
+          border-bottom-color 0.2s;
       }
       .about-value a:hover {
         color: var(--accent);
@@ -1489,15 +1491,13 @@
         </svg>
       </span>
       <div class="toggle">
-        <button id="btnOllama" class="active" onclick="setMode('ollama')">
-          OLLAMA
-        </button>
-        <button id="btnPi" onclick="setMode('pi')">PI</button>
+        <button id="btnOllama" class="active">OLLAMA</button>
+        <button id="btnPi">PI</button>
       </div>
       <select id="modelSelect"></select>
       <select
         id="topbarPromptSelect"
-        onchange="selectActivePrompt(this.value)"
+        
         title="Active System Prompt"
       ></select>
       <span id="tokenCounter" class="token-counter" title="Token Usage"
@@ -1511,7 +1511,6 @@
       <button
         id="clearBtn"
         class="topbar-icon-btn"
-        onclick="clearChat()"
         title="Clear chat"
         aria-label="Clear chat"
       >
@@ -1537,7 +1536,6 @@
       <button
         id="historyBtn"
         class="topbar-icon-btn"
-        onclick="toggleHistory()"
         title="History"
         aria-label="History"
       >
@@ -1558,7 +1556,6 @@
       <button
         id="mcpBtn"
         class="topbar-icon-btn"
-        onclick="toggleMcp()"
         title="MCP Servers"
         aria-label="MCP"
       >
@@ -1574,14 +1571,15 @@
         >
           <path d="M12 22v-5" />
           <path d="M15 8V2" />
-          <path d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z" />
+          <path
+            d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
+          />
           <path d="M9 8V2" />
         </svg>
       </button>
       <button
         id="notesBtn"
         class="topbar-icon-btn"
-        onclick="toggleNotes()"
         title="Notes"
         aria-label="Notes"
       >
@@ -1607,7 +1605,6 @@
       <button
         id="settingsBtn"
         class="topbar-icon-btn"
-        onclick="toggleSettings()"
         title="Settings"
         aria-label="Settings"
       >
@@ -1631,11 +1628,7 @@
           <line x1="16" x2="16" y1="18" y2="22" />
         </svg>
       </button>
-      <button
-        id="themeBtn"
-        onclick="toggleTheme()"
-        title="Toggle light/dark mode"
-      >
+      <button id="themeBtn" title="Toggle light/dark mode">
         <svg
           id="iconSun"
           style="display: none"
@@ -1679,9 +1672,7 @@
       <div id="historyPanel">
         <div id="historyHeader">
           <span>HISTORY</span>
-          <button id="deleteAllBtn" onclick="deleteAllHistory()">
-            DELETE ALL
-          </button>
+          <button id="deleteAllBtn">DELETE ALL</button>
         </div>
         <div id="historyList"></div>
       </div>
@@ -1693,12 +1684,7 @@
             rows="1"
             placeholder="Type a message..."
           ></textarea>
-          <button
-            id="uploadBtn"
-            onclick="document.getElementById('fileInput').click()"
-            aria-label="Upload file"
-            title="Upload file"
-          >
+          <button id="uploadBtn" aria-label="Upload file" title="Upload file">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               viewBox="0 0 24 24"
@@ -1727,8 +1713,8 @@
         <div id="notesHeader">
           <span>NOTES</span>
           <div id="notesActions">
-            <button id="saveNotesBtn" onclick="saveNotes()">SAVE</button>
-            <button id="closeNotesBtn" onclick="toggleNotes()">✕</button>
+            <button id="saveNotesBtn">SAVE</button>
+            <button id="closeNotesBtn">✕</button>
           </div>
         </div>
         <textarea
@@ -1742,7 +1728,7 @@
       <div id="mcpPanel">
         <div id="mcpHeader">
           <span>MCP PLUGINS</span>
-          <button id="closeMcpBtn" onclick="toggleMcp()">✕</button>
+          <button id="closeMcpBtn">✕</button>
         </div>
         <div id="mcpBody">
           <div class="setting-section">
@@ -1770,7 +1756,10 @@
                 border-radius: 0;
               "
             ></textarea>
-            <div id="mcpActiveList" style="margin-top: 15px; display: flex; gap: 8px; flex-wrap: wrap;"></div>
+            <div
+              id="mcpActiveList"
+              style="margin-top: 15px; display: flex; gap: 8px; flex-wrap: wrap"
+            ></div>
             <div
               style="
                 display: flex;
@@ -1782,7 +1771,6 @@
               <button
                 id="saveMcpBtn"
                 class="mcp-action-btn"
-                onclick="saveMcpConfig()"
                 style="width: auto"
               >
                 SAVE & RESTART SERVERS
@@ -1804,14 +1792,14 @@
       <div id="settingsPanel">
         <div id="settingsHeader">
           <span>SETTINGS</span>
-          <button id="closeSettingsBtn" onclick="toggleSettings()">✕</button>
+          <button id="closeSettingsBtn">✕</button>
         </div>
         <div id="settingsBody">
           <div id="ollamaPaletteGroup" class="setting-group">
             <label>OLLAMA COLOR PALETTE</label>
             <select
               id="settingOllamaPalette"
-              onchange="changeOllamaPalette(this.value)"
+              
             >
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
@@ -1829,7 +1817,7 @@
             <label>PI COLOR PALETTE</label>
             <select
               id="settingPiPalette"
-              onchange="changePiPalette(this.value)"
+              
             >
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
@@ -1847,7 +1835,7 @@
             <label>OLLAMA FONT FAMILY</label>
             <select
               id="settingOllamaFontPreset"
-              onchange="onOllamaFontPresetChange(this.value)"
+              
             >
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
@@ -1865,7 +1853,7 @@
               id="settingOllamaFontCustom"
               type="text"
               placeholder='"Space Mono", monospace'
-              onchange="changeOllamaFont(this.value)"
+              
               style="display: none"
             />
             <div class="setting-help">
@@ -1889,7 +1877,7 @@
                     min="0"
                     max="2"
                     step="0.1"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -1925,7 +1913,7 @@
                     min="0"
                     max="1"
                     step="0.01"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -1962,7 +1950,7 @@
                     type="number"
                     min="1"
                     step="1"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -1996,7 +1984,7 @@
                     type="number"
                     min="-1"
                     step="1"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2032,7 +2020,7 @@
                     type="number"
                     min="256"
                     step="256"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2066,7 +2054,7 @@
                     id="ollamaSeedInput"
                     type="number"
                     step="1"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2104,7 +2092,7 @@
                     min="0"
                     max="2"
                     step="0.05"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2138,7 +2126,7 @@
                     type="number"
                     min="-1"
                     step="1"
-                    onchange="saveOllamaOptionsFromForm()"
+                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2174,7 +2162,6 @@
                 id="ollamaStopInput"
                 placeholder="</s> || user:"
                 style="height: 64px"
-                onchange="saveOllamaOptionsFromForm()"
               ></textarea>
               <div class="setting-help">
                 Optional hard stop strings. Separate with `||` or new lines (one
@@ -2185,16 +2172,10 @@
               </div>
             </div>
             <div class="setting-row-inline" style="margin-top: 6px">
-              <button
-                class="settings-action-btn"
-                onclick="saveOllamaOptionsFromForm()"
-              >
+              <button id="refactored_btn_1" class="settings-action-btn">
                 SAVE OLLAMA OPTIONS
               </button>
-              <button
-                class="settings-action-btn"
-                onclick="resetOllamaOptionsToDefaults()"
-              >
+              <button id="refactored_btn_2" class="settings-action-btn">
                 RESET OLLAMA OPTIONS
               </button>
             </div>
@@ -2203,7 +2184,7 @@
             <label>PI FONT FAMILY</label>
             <select
               id="settingPiFontPreset"
-              onchange="onPiFontPresetChange(this.value)"
+              
             >
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
@@ -2221,7 +2202,7 @@
               id="settingPiFontCustom"
               type="text"
               placeholder='"Space Mono", monospace'
-              onchange="changePiFont(this.value)"
+              
               style="display: none"
             />
             <div class="setting-help">
@@ -2446,18 +2427,15 @@
             </div>
             <div class="setting-help">Default: Disabled.</div>
             <div class="setting-row-inline" style="margin-top: 6px">
-              <button class="settings-action-btn" onclick="savePiSettingsUi()">
+              <button id="refactored_btn_3" class="settings-action-btn">
                 SAVE PI SETTINGS
               </button>
-              <button class="settings-action-btn" onclick="loadPiSettings()">
+              <button id="refactored_btn_4" class="settings-action-btn">
                 RELOAD
               </button>
             </div>
             <div class="setting-row-inline">
-              <button
-                class="settings-action-btn"
-                onclick="resetPiSettingsToDefaults()"
-              >
+              <button id="refactored_btn_5" class="settings-action-btn">
                 RESET PI SETTINGS TO DEFAULTS
               </button>
             </div>
@@ -2471,16 +2449,10 @@
             >
             <div id="ollamaPiChatFolderPath"></div>
             <div class="setting-row-inline">
-              <button
-                class="settings-action-btn"
-                onclick="openOllamaPiChatFolder()"
-              >
+              <button id="refactored_btn_6" class="settings-action-btn">
                 OPEN FOLDER
               </button>
-              <button
-                class="settings-action-btn"
-                onclick="copyOllamaPiChatFolderPath()"
-              >
+              <button id="refactored_btn_7" class="settings-action-btn">
                 COPY PATH
               </button>
             </div>
@@ -2494,7 +2466,7 @@
             <label>CUSTOM OVERLAY PROMPT</label>
             <select
               id="settingActivePrompt"
-              onchange="selectActivePrompt(this.value)"
+              
             >
               <option value="">None (Built-in Default)</option>
             </select>
@@ -2503,7 +2475,7 @@
               Ollama policy for normal chats.
             </div>
             <div style="margin-top: 8px">
-              <button class="settings-action-btn" onclick="openPromptEditor()">
+              <button id="refactored_btn_8" class="settings-action-btn">
                 + NEW PROMPT
               </button>
             </div>
@@ -2552,15 +2524,15 @@
               ></textarea>
               <div style="display: flex; gap: 6px; margin-top: 4px">
                 <button
+                  id="refactored_btn_9"
                   class="settings-action-btn"
-                  onclick="saveCustomPrompt()"
                   style="flex: 1"
                 >
                   SAVE
                 </button>
                 <button
+                  id="refactored_btn_10"
                   class="settings-action-btn"
-                  onclick="closePromptEditor()"
                   style="flex: 1; border-color: #ff4444; color: #ff4444"
                 >
                   CANCEL
@@ -2604,8 +2576,8 @@
               JS.
             </div>
             <button
+              id="refactored_btn_11"
               class="settings-action-btn"
-              onclick="openSkillEditor()"
               style="margin-top: 6px"
             >
               ADD NEW SKILL
@@ -2638,15 +2610,15 @@
               ></textarea>
               <div style="display: flex; gap: 8px">
                 <button
+                  id="refactored_btn_12"
                   class="settings-action-btn"
-                  onclick="saveCustomSkill()"
                   style="flex: 1"
                 >
                   SAVE
                 </button>
                 <button
+                  id="refactored_btn_13"
                   class="settings-action-btn"
-                  onclick="closeSkillEditor()"
                   style="flex: 1; border-color: #ff4444; color: #ff4444"
                 >
                   CANCEL
@@ -4610,7 +4582,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 <strong>${skill}</strong>
                 <div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">${info.desc}</div>
               </div>
-              <input type="checkbox" class="brutalist-toggle" ${enabled ? "checked" : ""} onchange="toggleBuiltinSkill('${skill}', this.checked)">
+              <input type="checkbox" class="brutalist-toggle" ${enabled ? "checked" : ""} >
             </div>
           `;
         }
@@ -5019,7 +4991,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           div.innerHTML = `
             <div class="prompt-item-header">
               <span class="prompt-item-name">${escapeHTML(skill.name)} (${skill.type})</span>
-              <button class="prompt-item-delete" onclick="deleteCustomSkill(${idx})">×</button>
+              <button class="prompt-item-delete" data-idx="${idx}">×</button>
             </div>
             <div class="prompt-item-content">${escapeHTML(skill.description)}</div>
           `;
@@ -5689,14 +5661,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           if (config && config.mcpServers) {
             const servers = Object.keys(config.mcpServers);
             if (servers.length > 0) {
-              servers.forEach(name => {
+              servers.forEach((name) => {
                 const badge = document.createElement("div");
                 badge.textContent = name.toUpperCase();
-                badge.style.cssText = "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                badge.style.cssText =
+                  "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
                 listDiv.appendChild(badge);
               });
             } else {
-              listDiv.innerHTML = "<span style='font-size: 10px; opacity: 0.5;'>No active servers</span>";
+              listDiv.innerHTML =
+                "<span style='font-size: 10px; opacity: 0.5;'>No active servers</span>";
             }
           }
         } catch (e) {
@@ -6032,6 +6006,231 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       // Initialize static selects
       document.querySelectorAll("select").forEach(syncCustomSelect);
+
+      // --- REFACTORED ONCLICK LISTENERS ---
+      document.addEventListener("DOMContentLoaded", function () {
+        document.addEventListener("click", function (e) {
+          if (e.target && e.target.classList.contains("prompt-item-delete")) {
+            const idx = e.target.getAttribute("data-idx");
+            if (idx !== null) {
+              if (typeof deleteCustomSkill === "function")
+                deleteCustomSkill(idx);
+              else if (typeof deleteCustomPrompt === "function")
+                deleteCustomPrompt(idx);
+            }
+          }
+        });
+
+        const btn_btnOllama = document.getElementById("btnOllama");
+        if (btn_btnOllama) {
+          btn_btnOllama.addEventListener("click", function (event) {
+            setMode("ollama");
+          });
+        }
+
+        const btn_btnPi = document.getElementById("btnPi");
+        if (btn_btnPi) {
+          btn_btnPi.addEventListener("click", function (event) {
+            setMode("pi");
+          });
+        }
+
+        const btn_clearBtn = document.getElementById("clearBtn");
+        if (btn_clearBtn) {
+          btn_clearBtn.addEventListener("click", function (event) {
+            clearChat();
+          });
+        }
+
+        const btn_historyBtn = document.getElementById("historyBtn");
+        if (btn_historyBtn) {
+          btn_historyBtn.addEventListener("click", function (event) {
+            toggleHistory();
+          });
+        }
+
+        const btn_mcpBtn = document.getElementById("mcpBtn");
+        if (btn_mcpBtn) {
+          btn_mcpBtn.addEventListener("click", function (event) {
+            toggleMcp();
+          });
+        }
+
+        const btn_notesBtn = document.getElementById("notesBtn");
+        if (btn_notesBtn) {
+          btn_notesBtn.addEventListener("click", function (event) {
+            toggleNotes();
+          });
+        }
+
+        const btn_settingsBtn = document.getElementById("settingsBtn");
+        if (btn_settingsBtn) {
+          btn_settingsBtn.addEventListener("click", function (event) {
+            toggleSettings();
+          });
+        }
+
+        const btn_themeBtn = document.getElementById("themeBtn");
+        if (btn_themeBtn) {
+          btn_themeBtn.addEventListener("click", function (event) {
+            toggleTheme();
+          });
+        }
+
+        const btn_deleteAllBtn = document.getElementById("deleteAllBtn");
+        if (btn_deleteAllBtn) {
+          btn_deleteAllBtn.addEventListener("click", function (event) {
+            deleteAllHistory();
+          });
+        }
+
+        const btn_uploadBtn = document.getElementById("uploadBtn");
+        if (btn_uploadBtn) {
+          btn_uploadBtn.addEventListener("click", function (event) {
+            document.getElementById("fileInput").click();
+          });
+        }
+
+        const btn_saveNotesBtn = document.getElementById("saveNotesBtn");
+        if (btn_saveNotesBtn) {
+          btn_saveNotesBtn.addEventListener("click", function (event) {
+            saveNotes();
+          });
+        }
+
+        const btn_closeNotesBtn = document.getElementById("closeNotesBtn");
+        if (btn_closeNotesBtn) {
+          btn_closeNotesBtn.addEventListener("click", function (event) {
+            toggleNotes();
+          });
+        }
+
+        const btn_closeMcpBtn = document.getElementById("closeMcpBtn");
+        if (btn_closeMcpBtn) {
+          btn_closeMcpBtn.addEventListener("click", function (event) {
+            toggleMcp();
+          });
+        }
+
+        const btn_saveMcpBtn = document.getElementById("saveMcpBtn");
+        if (btn_saveMcpBtn) {
+          btn_saveMcpBtn.addEventListener("click", function (event) {
+            saveMcpConfig();
+          });
+        }
+
+        const btn_closeSettingsBtn =
+          document.getElementById("closeSettingsBtn");
+        if (btn_closeSettingsBtn) {
+          btn_closeSettingsBtn.addEventListener("click", function (event) {
+            toggleSettings();
+          });
+        }
+
+        const btn_refactored_btn_1 =
+          document.getElementById("refactored_btn_1");
+        if (btn_refactored_btn_1) {
+          btn_refactored_btn_1.addEventListener("click", function (event) {
+            saveOllamaOptionsFromForm();
+          });
+        }
+
+        const btn_refactored_btn_2 =
+          document.getElementById("refactored_btn_2");
+        if (btn_refactored_btn_2) {
+          btn_refactored_btn_2.addEventListener("click", function (event) {
+            resetOllamaOptionsToDefaults();
+          });
+        }
+
+        const btn_refactored_btn_3 =
+          document.getElementById("refactored_btn_3");
+        if (btn_refactored_btn_3) {
+          btn_refactored_btn_3.addEventListener("click", function (event) {
+            savePiSettingsUi();
+          });
+        }
+
+        const btn_refactored_btn_4 =
+          document.getElementById("refactored_btn_4");
+        if (btn_refactored_btn_4) {
+          btn_refactored_btn_4.addEventListener("click", function (event) {
+            loadPiSettings();
+          });
+        }
+
+        const btn_refactored_btn_5 =
+          document.getElementById("refactored_btn_5");
+        if (btn_refactored_btn_5) {
+          btn_refactored_btn_5.addEventListener("click", function (event) {
+            resetPiSettingsToDefaults();
+          });
+        }
+
+        const btn_refactored_btn_6 =
+          document.getElementById("refactored_btn_6");
+        if (btn_refactored_btn_6) {
+          btn_refactored_btn_6.addEventListener("click", function (event) {
+            openOllamaPiChatFolder();
+          });
+        }
+
+        const btn_refactored_btn_7 =
+          document.getElementById("refactored_btn_7");
+        if (btn_refactored_btn_7) {
+          btn_refactored_btn_7.addEventListener("click", function (event) {
+            copyOllamaPiChatFolderPath();
+          });
+        }
+
+        const btn_refactored_btn_8 =
+          document.getElementById("refactored_btn_8");
+        if (btn_refactored_btn_8) {
+          btn_refactored_btn_8.addEventListener("click", function (event) {
+            openPromptEditor();
+          });
+        }
+
+        const btn_refactored_btn_9 =
+          document.getElementById("refactored_btn_9");
+        if (btn_refactored_btn_9) {
+          btn_refactored_btn_9.addEventListener("click", function (event) {
+            saveCustomPrompt();
+          });
+        }
+
+        const btn_refactored_btn_10 =
+          document.getElementById("refactored_btn_10");
+        if (btn_refactored_btn_10) {
+          btn_refactored_btn_10.addEventListener("click", function (event) {
+            closePromptEditor();
+          });
+        }
+
+        const btn_refactored_btn_11 =
+          document.getElementById("refactored_btn_11");
+        if (btn_refactored_btn_11) {
+          btn_refactored_btn_11.addEventListener("click", function (event) {
+            openSkillEditor();
+          });
+        }
+
+        const btn_refactored_btn_12 =
+          document.getElementById("refactored_btn_12");
+        if (btn_refactored_btn_12) {
+          btn_refactored_btn_12.addEventListener("click", function (event) {
+            saveCustomSkill();
+          });
+        }
+
+        const btn_refactored_btn_13 =
+          document.getElementById("refactored_btn_13");
+        if (btn_refactored_btn_13) {
+          btn_refactored_btn_13.addEventListener("click", function (event) {
+            closeSkillEditor();
+          });
+        }
+      });
     </script>
   </body>
 </html>
