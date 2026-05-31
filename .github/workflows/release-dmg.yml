@@ -22,7 +22,7 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: npm run build:dmg -- --publish never
+      - run: npx electron-builder --mac dmg --x64 --arm64 --publish never
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
