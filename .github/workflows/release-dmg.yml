@@ -1,0 +1,32 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npx electron-builder --mac dmg --x64 --arm64 --publish never
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.2
+        with:
+          files: |
+            release/*.dmg
+            release/*.dmg.blockmap

@@ -1,0 +1,8 @@
+dist/
+release/
+*.log
+*.pid
+.DS_Store
+conversations.json
+security-events.jsonl
+node_modules/
