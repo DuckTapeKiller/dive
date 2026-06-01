@@ -1,5 +1,8 @@
 module.exports = [
   {
+    ignores: ["dist/**", "release/**", "node_modules/**"],
+  },
+  {
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "commonjs",
@@ -18,10 +21,15 @@ module.exports = [
         clearTimeout: "readonly",
         URL: "readonly",
         URLSearchParams: "readonly",
+        fetch: "readonly",
+        AbortController: "readonly",
       },
     },
     rules: {
-      "no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+      "no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", caughtErrors: "none" },
+      ],
       "no-undef": "error",
       "no-constant-condition": ["error", { checkLoops: false }],
     },

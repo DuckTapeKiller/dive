@@ -3,6 +3,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const vm = require("vm");
 const { exec } = require("child_process");
 const { Worker } = require("worker_threads");
 const cheerio = require("cheerio");
@@ -201,7 +202,11 @@ async function executeBritannica({ query }) {
     }
 
     const href = match[1];
-    if (typeof href !== "string" || !href.startsWith("/") || href.startsWith("//")) {
+    if (
+      typeof href !== "string" ||
+      !href.startsWith("/") ||
+      href.startsWith("//")
+    ) {
       return `No valid Britannica article link found for "${query}".`;
     }
     const articleUrl = "https://www.britannica.com" + href;
@@ -255,7 +260,7 @@ async function executeWebScraper({ url }) {
     } catch {
       return "Web Scraper Error: Invalid URL.";
     }
-    if (![ "http:", "https:" ].includes(parsed.protocol)) {
+    if (!["http:", "https:"].includes(parsed.protocol)) {
       return "Web Scraper Error: Only http and https URLs are allowed.";
     }
     const h = parsed.hostname.toLowerCase();
@@ -540,6 +545,24 @@ async function executeShellCommand({ command }) {
   });
 }
 
+function findCustomSkill(name, dataDir) {
+  if (!dataDir) return null;
+  const customSkillsFile = path.join(dataDir, "custom_skills.json");
+  if (!fs.existsSync(customSkillsFile)) return null;
+  const skills = JSON.parse(fs.readFileSync(customSkillsFile, "utf8"));
+  if (!Array.isArray(skills)) return null;
+  return skills.find((skill) => skill && skill.name === name) || null;
+}
+
+function skillRequiresShellConfirmation(name, dataDir) {
+  if (name === "shell_command") return true;
+  try {
+    return findCustomSkill(name, dataDir)?.type === "shell";
+  } catch (_error) {
+    return false;
+  }
+}
+
 const ALL_SKILLS = [
   {
     type: "function",
@@ -786,7 +809,11 @@ function runCustomJsSkill(code, args, timeoutMs = 10000) {
       clearTimeout(timer);
       worker.terminate();
       if (ok) {
-        resolve(typeof result === "object" ? JSON.stringify(result) : String(result ?? ""));
+        resolve(
+          typeof result === "object"
+            ? JSON.stringify(result)
+            : String(result ?? ""),
+        );
       } else {
         reject(new Error(error || "Custom JS skill failed"));
       }
@@ -797,13 +824,13 @@ function runCustomJsSkill(code, args, timeoutMs = 10000) {
     });
     worker.on("exit", (code) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new Error(`Custom JS skill worker exited with code ${code}`));
+      if (code !== 0)
+        reject(new Error(`Custom JS skill worker exited with code ${code}`));
     });
   });
 }
 
-async function executeSkill(toolCall, context) {
-
+async function executeSkill(toolCall, context = {}) {
   const name = toolCall.function.name;
   let args = {};
   try {
@@ -832,29 +859,31 @@ async function executeSkill(toolCall, context) {
     case "time_and_date":
       return await executeTimeAndDate(args);
     case "shell_command":
+      if (!context.allowShellCommand) {
+        return "Error: shell command execution requires explicit user confirmation.";
+      }
       return await executeShellCommand(args);
     default: {
-      const customSkillsFile = path.join(context.dataDir, "custom_skills.json");
       try {
-        if (fs.existsSync(customSkillsFile)) {
-          const skills = JSON.parse(fs.readFileSync(customSkillsFile, "utf8"));
-          const skill = skills.find((s) => s.name === name);
-          if (skill) {
-            if (skill.type === "shell") {
-              let cmd = skill.code;
-              for (const [key, value] of Object.entries(args)) {
-                // Shell-escape each substituted value to prevent injection
-                const escaped = "'" + String(value).replace(/'/g, "'\\''" ) + "'";
-                cmd = cmd.replace(new RegExp(`{{${key}}}`, "g"), escaped);
-              }
-              return await executeShellCommand({ command: cmd });
-            } else if (skill.type === "javascript") {
-              // WARNING: Custom JavaScript skills run in a worker_threads Worker.
-              // worker_threads provides memory/CPU isolation but is NOT a full
-              // security sandbox — the worker has access to Node.js built-ins.
-              // Only use custom JS skills with code you fully trust.
-              return await runCustomJsSkill(skill.code, args);
+        const skill = findCustomSkill(name, context.dataDir);
+        if (skill) {
+          if (skill.type === "shell") {
+            if (!context.allowShellCommand) {
+              return "Error: shell command execution requires explicit user confirmation.";
             }
+            let cmd = skill.code;
+            for (const [key, value] of Object.entries(args)) {
+              // Shell-escape each substituted value to prevent injection
+              const escaped = "'" + String(value).replace(/'/g, "'\\''") + "'";
+              cmd = cmd.replace(new RegExp(`{{${key}}}`, "g"), escaped);
+            }
+            return await executeShellCommand({ command: cmd });
+          } else if (skill.type === "javascript") {
+            // WARNING: Custom JavaScript skills run in a worker_threads Worker.
+            // worker_threads provides memory/CPU isolation but is NOT a full
+            // security sandbox — the worker has access to Node.js built-ins.
+            // Only use custom JS skills with code you fully trust.
+            return await runCustomJsSkill(skill.code, args);
           }
         }
       } catch (e) {
@@ -868,4 +897,5 @@ async function executeSkill(toolCall, context) {
 module.exports = {
   ALL_SKILLS,
   executeSkill,
+  skillRequiresShellConfirmation,
 };

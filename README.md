@@ -1,10 +1,12 @@
-# 🦙 Ollama Pi Chat
+# Ollama Pi Chat
 
-## A Beautiful, Secure, & Local-First Web Interface for Ollama and the Pi Agent
+![Cover Image](promo/cover.png)
 
-Welcome to **Ollama Pi Chat**! This is a local-only desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models and agent systems.
+## A Beautiful, Secure, & Local-First Web Interface for Ollama, Pi, and Cloud Models
 
-Everything runs directly on your macOS machine. **No data ever leaves your computer, and no internet connection is required to chat.** It is 100% private, secure, and under your control.
+Welcome to **Ollama Pi Chat**! This is a local-first desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models, agent systems, and optional cloud model providers.
+
+The core chat server and desktop wrapper run directly on your macOS machine. **Offline Ollama chat does not require an internet connection.** Pi mode runs through your local Pi CLI. Cloud mode is optional and only contacts the provider you configure. Optional web/MCP/shell skills can contact external services or run local commands only when enabled and invoked, so review those settings before using them with sensitive prompts.
 
 > [!IMPORTANT]
 > **macOS Gatekeeper Warning**: The developer of this project does not have a paid Apple Developer Account, so the pre-built desktop applications and binaries are not digitally signed.
@@ -12,10 +14,10 @@ Everything runs directly on your macOS machine. **No data ever leaves your compu
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
 1. [What is Ollama Pi Chat?](#-what-is-ollama-pi-chat)
-2. [The Two Chat Modes Explained](#-the-two-chat-modes-explained)
+2. [The Three Chat Modes Explained](#-the-three-chat-modes-explained)
 3. [Core Features Tour](#-core-features-tour)
 4. [Requirements & Downloads](#-requirements--downloads)
 5. [How to Run & Install (Choose Your Path)](#-how-to-run--install-choose-your-path)
@@ -26,24 +28,25 @@ Everything runs directly on your macOS machine. **No data ever leaves your compu
 
 ---
 
-## 💡 What is Ollama Pi Chat?
+## What is Ollama Pi Chat?
 
-For non-technical users, think of Ollama Pi Chat as a **private control deck for Artificial Intelligence**. Instead of sending your sensitive data, personal notes, or proprietary code to external cloud providers (like OpenAI or Anthropic), Ollama Pi Chat runs models directly on your computer's chip (Mac Apple Silicon or Intel).
+For non-technical users, think of Ollama Pi Chat as a **private control deck for Artificial Intelligence**. You can keep work fully local with Ollama, use Pi for terminal-grade agent tasks, or intentionally switch to Cloud mode when you want to use your own provider API keys.
 
-It combines **two powerful systems** under one beautiful user interface:
+It combines **three powerful systems** under one beautiful user interface:
 
 - **Ollama**: An engine that runs massive AI models on your local hardware.
 - **Pi**: An agent system that can perform actions (like read files, write files, search local directories, and run terminal scripts).
+- **Cloud**: A direct chat mode for provider APIs such as OpenAI, Anthropic Claude, and Mistral.
 
 ---
 
-## 🔄 The Two Chat Modes Explained
+## The Three Chat Modes Explained
 
-You can toggle between the two modes instantly using the switch at the top-left of the application bar.
+You can toggle between the three modes instantly using the icon switch at the top-left of the application bar.
 
 ```
 ┌──────────────────────────────────────────────┐
-│  [ OLLAMA ]  [ PI ]   <-- Toggle here        │
+│  [ Ollama icon ] [ Pi icon ] [ Cloud icon ]  │
 └──────────────────────────────────────────────┘
 ```
 
@@ -61,24 +64,35 @@ In Pi Mode, the app acts as a secure bridge to the **Pi agent command-line tool*
 
 - **Best for**: Complex automation, programming tasks, searching local project folders, reviewing codebase directories, or performing system actions.
 - **Interactive Browser Permissions (The Security Guards)**: When Pi runs a tool to modify files, run command terminal lines, or query sensitive folders, it requests permission. Ollama Pi Chat captures this request and pops up a clear, non-technical interactive dialog in your browser. You can **Allow**, **Deny**, input custom variables, or edit the command before it runs. This prevents the command-line tool from silently hanging or executing unauthorized actions on your machine.
+- **Live Status**: The title bar can show the active Pi model, state, cost label, and thinking level when your Pi CLI exposes those values through RPC.
+
+### 3. Cloud Mode (Bring Your Own API Key)
+
+In Cloud Mode, the app sends chat requests directly from the local server to the cloud provider you configure.
+
+- **Best for**: Using hosted models when you want higher capacity, a specific provider model, or a fallback when local models are not enough.
+- **Supported providers**: OpenAI, Anthropic Claude, and Mistral.
+- **How it works**: Open Settings, choose the Cloud provider, paste your API key, set the model id, and save. Then switch to the Cloud icon in the top-left mode selector and chat normally.
+- **Privacy note**: Cloud prompts and uploaded text are sent to the selected provider. Use Ollama or Pi mode for workflows that must remain fully local.
 
 ---
 
-## 🎨 Core Features Tour
+## Core Features Tour
 
 Ollama Pi Chat is packed with premium, user-friendly utilities:
 
-- 📱 **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
-- 🔌 **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models!
-- 📝 **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
-- 📁 **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
-- 📋 **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
-- 📜 **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
-- 🔒 **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
+- **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
+- **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models.
+- **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
+- **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
+- **Cloud Mode**: Use OpenAI, Anthropic Claude, or Mistral models with your own API keys while keeping the app UI, history, and settings local.
+- **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
+- **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
+- **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
 
 ---
 
-## 📋 Requirements & Downloads
+## Requirements & Downloads
 
 To run this application locally, you will need a few simple components installed on your Mac:
 
@@ -89,14 +103,15 @@ To run this application locally, you will need a few simple components installed
      ollama run llama3
      ```
 3. **Pi CLI (Only required for Pi Mode)**: The agent execution engine. Make sure the `pi` command is installed and accessible in your environment PATH.
-4. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install it via Homebrew:
+4. **Cloud Provider API Key (Only required for Cloud Mode)**: Bring an API key from OpenAI, Anthropic, or Mistral if you want to use hosted models.
+5. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install it via Homebrew:
    ```bash
    brew install poppler
    ```
 
 ---
 
-## 🚀 How to Run & Install (Choose Your Path)
+## How to Run & Install (Choose Your Path)
 
 Depending on your technical comfort level, select one of the following methods to start using the app.
 
@@ -156,11 +171,11 @@ If you want the Ollama Pi Chat server to start automatically whenever you turn o
 - **How it works**: This creates a macOS LaunchAgent plist at `~/Library/LaunchAgents/com.user.ollamapichat.plist`. The server now boots silently at login and listens securely at `http://127.0.0.1:8080`.
 - **To stop the service later**, run:
   ```bash
-  launchctl unload "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
+  launchctl bootout "gui/$UID/com.user.ollamapichat"
   ```
 - **To restart the service later**, run:
   ```bash
-  launchctl load "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
+  launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
   ```
 
 ---
@@ -182,14 +197,14 @@ You can package Node.js, the local server code, and the frontend web pages into 
 
 ---
 
-## ⚙️ Understanding the Settings Panel
+## Understanding the Settings Panel
 
 Click the slider icon (**Settings**) in the top right to configure your system. Here is a breakdown of what these settings mean in plain English:
 
 ### 1. Appearance & Presets
 
-- **Ollama/Pi Color Palette**: Swap between custom-designed color schemes. Different palettes can be set for Ollama and Pi mode so you instantly know which mode is active.
-- **Ollama Font Family**: Change the typography style of the chat messages. You can use standard monospaced fonts, serif fonts, or type in a custom font installed on your system.
+- **Ollama/Pi/Cloud Color Palette**: Swap between custom-designed color schemes. Different palettes can be set for each mode so you instantly know which mode is active.
+- **Ollama/Pi/Cloud Font Family**: Change the typography style of the chat messages. You can use standard monospaced fonts, serif fonts, or type in a custom font installed on your system.
 
 ### 2. AI Sampling Sliders (Ollama Generation Options)
 
@@ -216,26 +231,34 @@ These parameters let you control the "personality" and behavior of the local Oll
 
 Ollama Pi Chat comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
 
-- **Wikipedia**: Searches Wikipedia for factual information and summaries.
-- **Britannica**: Searches the Encyclopedia Britannica for curated facts.
-- **Wiktionary**: Looks up deep dictionary definitions.
-- **Deep Etymology**: Cross-references multiple multilingual etymological dictionaries (Etymonline, RAE, CNRTL, DeChile) to find word origins, cognates, and false friends.
-- **DuckDuckGo**: Performs general, privacy-respecting web searches for recent news and events.
-- **Web Scraper**: Extracts raw, readable text content from any provided web URL.
+- **Wikipedia**: Searches Wikipedia for factual information and summaries. Requires internet access.
+- **Britannica**: Searches the Encyclopedia Britannica for curated facts. Requires internet access.
+- **Wiktionary**: Looks up deep dictionary definitions. Requires internet access.
+- **Deep Etymology**: Cross-references multiple multilingual etymological dictionaries (Etymonline, RAE, CNRTL, DeChile) to find word origins, cognates, and false friends. Requires internet access.
+- **DuckDuckGo**: Performs general, privacy-respecting web searches for recent news and events. Requires internet access.
+- **Web Scraper**: Extracts raw, readable text content from any provided web URL. Requires internet access.
 - **Calculator**: Securely evaluates complex mathematical expressions.
 - **Time & Date**: Retrieves the current local time, date, and day of the week, with support for global IANA timezones (e.g., `Australia/Sydney`).
-- **Fact Check**: Fact-checks specific claims against multiple sources.
-- **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety).
+- **Fact Check**: Fact-checks specific claims against multiple sources. Requires internet access.
+- **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety). Custom shell skills use the same confirmation gate.
 - **Local Notes**: Allows the model to directly read from or append text to your persistent local notes file.
 
-### 5. MCP (Model Context Protocol) Integration
+### 5. Cloud Mode Settings
 
-Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models. 
+- **Provider**: Choose OpenAI, Anthropic Claude, or Mistral.
+- **API Key**: Paste your provider key. Keys are saved on disk by the local server and are never returned to the browser UI after saving.
+- **Model**: Enter the exact model id you want to use for that provider.
+- **Base URL**: Keep the provider default unless you use a compatible gateway or proxy.
+- **Max Output Tokens**: Caps the maximum response length requested from the provider.
+
+### 6. MCP (Model Context Protocol) Integration
+
+Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models.
 Click the **Plug Icon** in the top title bar to open the MCP Panel. You can paste standard `mcpServers` JSON configuration directly into the box. The app will automatically parse your config, spin up the external servers in the background, map their tools, and dynamically render sleek plain-English badges (like `MEMORY`, `FILESYSTEM`) below the editor so you always know what tools are locked and loaded.
 
 ---
 
-## 🔒 Privacy, Security, & Where Data is Stored
+## Privacy, Security, & Where Data is Stored
 
 Ollama Pi Chat is designed from the ground up to respect your digital sovereignty.
 
@@ -248,24 +271,30 @@ Ollama Pi Chat is designed from the ground up to respect your digital sovereignt
   Inside this folder, you will find:
   - `conversations.json`: Your entire chat history, locally cached.
   - `prompts.json`: Your custom overlay prompts.
+  - `ui-settings.json`: Mode-specific palettes and font settings.
+  - `cloud-settings.json`: Cloud provider settings and saved API keys. This file is written with owner-only permissions (`0600`) when possible.
   - `security-events.jsonl`: The security audit trace showing permission requests and execution logs.
   - `daemon.log` / `daemon.error.log`: Output logs when running the LaunchAgent background daemon.
-- **Browser localStorage**: Font preferences, themes, active prompts, and your notes panel text are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage will reset these UI settings.
+- **Browser localStorage**: Browser-side fallbacks, active prompt selection, and some UI state are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage may reset browser-only UI state.
+
+### Cloud Mode Privacy
+
+Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/ollama-pi-chat/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY`).
 
 ### Network Safety Protections
 
 The local Node.js server implements active security headers to protect your local system from web-based attacks:
 
-1. **Origin Verification**: The server automatically rejects any inbound HTTP request whose `Host` or `Origin` header does not match `127.0.0.1:8080` or `localhost:8080`. This prevents malicious websites you visit in other tabs from talking to your local AI server.
+1. **Origin Verification**: The server automatically rejects any inbound HTTP request whose `Host` or `Origin` header does not match the active local server port on `127.0.0.1` or `localhost`. This prevents malicious websites you visit in other tabs from talking to your local AI server.
 2. **CSP (Content Security Policy)**: Blocks execution of injected scripts and strictly restricts style sheet, font, and connect sources.
 3. **MIME Sniffing & Framing Protections**: Anti-clickjacking headers are applied to prevent the local chat interface from being framed by external sites.
 4. **Root Block**: The server will immediately shutdown and refuse to boot if started as the root administrator user (`UID 0`).
 
 ---
 
-## 🛠️ Troubleshooting Common Issues
+## Troubleshooting Common Issues
 
-### ❌ Error: `listen EADDRINUSE 127.0.0.1:8080`
+### Error: `listen EADDRINUSE 127.0.0.1:8080`
 
 - **What it means**: The network port `8080` is already occupied. This usually happens if an old instance of the Ollama Pi Chat server is still running in the background, or another application (like a development project) is using that port.
 - **How to fix it**:
@@ -279,7 +308,7 @@ The local Node.js server implements active security headers to protect your loca
      ```
   3. Alternatively, you can open `server.js` and change `DEFAULT_PORT = 8080` to an open port (e.g., `8082`).
 
-### ❌ Models are not showing up in the selector
+### Models are not showing up in the selector
 
 - **What it means**: Ollama Pi Chat cannot establish a connection with the local Ollama engine.
 - **How to fix it**:
@@ -290,7 +319,7 @@ The local Node.js server implements active security headers to protect your loca
      ollama pull llama3
      ```
 
-### ❌ PDF uploads are failing
+### PDF uploads are failing
 
 - **What it means**: Your system is missing the text extractor utility.
 - **How to fix it**:
@@ -300,14 +329,22 @@ The local Node.js server implements active security headers to protect your loca
     ```
   - Confirm it is installed by running `which pdftotext`.
 
-### ❌ Pi Mode hangs when I run a command
+### Pi Mode hangs when I run a command
 
 - **What it means**: Pi CLI is not installed or the permission prompt is waiting.
 - **How to fix it**:
   1. Confirm the Pi tool is available by running `which pi` in terminal. If missing, check your Pi CLI setup path.
   2. Ensure the permissions extension (`@gotgenes/pi-permission-system`) is properly registered in your Pi runtime configurations.
 
-### ❌ "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
+### Cloud Mode says the API key is missing
+
+- **What it means**: No key is saved for the selected provider, and no matching environment variable is available to the server.
+- **How to fix it**:
+  1. Open **Settings** and switch to the Cloud Mode section.
+  2. Choose your provider, paste the API key, confirm the model id, and click **Save Cloud Settings**.
+  3. Alternatively, start the server with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY` set in the environment.
+
+### "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
 
 - **What it means**: The developer of this project does not have a paid Apple Developer Account, so the packaged applications and binaries are unsigned. On newer macOS versions, Gatekeeper will automatically flag and block unsigned apps downloaded from the internet.
 - **How to fix it**:
@@ -320,7 +357,7 @@ The local Node.js server implements active security headers to protect your loca
 
 ---
 
-## 🛠️ Pre-publishing Checks (For Developers)
+## Pre-publishing Checks (For Developers)
 
 Before committing modifications or publishing this folder to a shared repository:
 

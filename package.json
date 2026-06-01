@@ -1,8 +1,10 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.3",
+  "version": "1.0.1",
   "private": true,
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "description": "Ollama Pi Chat desktop wrapper (local-only)",
   "author": "DuckTapeKiller",
   "main": "electron/main.js",
@@ -16,20 +18,34 @@
     "build:universal": "electron-builder --mac dir --universal",
     "build:dmg:universal": "electron-builder --mac dmg --universal",
     "lint": "eslint .",
-    "test": "node --test test/*.js"
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "electron": "^42.3.0",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.1",
+    "jsdom": "^29.1.1",
+    "postject": "^1.0.0-alpha.6"
   },
   "build": {
     "publish": null,
     "appId": "local.ollamapichat.app",
     "productName": "Ollama Pi Chat",
+    "asarUnpack": [
+      "server.js",
+      "skills.js",
+      "mcp.js",
+      "index.html",
+      "font_faces.css",
+      "prompts.json",
+      "package.json",
+      "node_modules/**/*",
+      "security/**/*"
+    ],
     "files": [
       "electron/**/*",
       "assets/**/*",
-      "fonts/**/*",
       "security/**/*",
       "index.html",
       "server.js",
@@ -58,6 +74,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "cheerio": "^1.2.0"
+    "cheerio": "^1.2.0",
+    "dompurify": "^3.4.7",
+    "marked": "^18.0.4"
   }
 }
