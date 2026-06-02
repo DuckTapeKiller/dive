@@ -77,6 +77,7 @@ const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
+const LIBRARY_INDEX_ERROR_FILE = path.join(DATA_DIR, "library-index-errors.jsonl");
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
 const FONTS_DIR = path.join(__dirname, "fonts");
 const VENDOR_SCRIPT_FILES = {
@@ -1363,6 +1364,7 @@ function publicLibraryIndexJob(job) {
     force: job.force,
     prune: job.prune,
     compact: job.compact,
+    retryEmbeddings: job.retryEmbeddings === true,
     cancelRequested: job.cancelRequested === true,
     pauseRequested: job.pauseRequested === true,
     autoResumed: job.autoResumed === true,
@@ -1371,6 +1373,9 @@ function publicLibraryIndexJob(job) {
     finishedAt: job.finishedAt || null,
     progress: job.progress || null,
     stats: job.stats || null,
+    recentErrors: Array.isArray(job.recentErrors)
+      ? job.recentErrors.slice(-10)
+      : [],
     error: job.error || null,
   };
 }
@@ -1410,6 +1415,39 @@ function persistedJobStartFileIndex(job) {
   return Number.isFinite(processed) && processed > 0 ? Math.floor(processed) : 0;
 }
 
+function appendLibraryIndexError(job, entry) {
+  const record = {
+    timestamp: new Date().toISOString(),
+    jobId: job.id,
+    ...entry,
+  };
+  job.recentErrors = [...(job.recentErrors || []), record].slice(-10);
+  appendFileWithRotation(LIBRARY_INDEX_ERROR_FILE, `${JSON.stringify(record)}\n`);
+}
+
+function readRecentLibraryIndexErrors(limit = 50) {
+  try {
+    if (!fs.existsSync(LIBRARY_INDEX_ERROR_FILE)) return [];
+    const max = Math.min(200, Math.max(1, Number(limit) || 50));
+    return fs
+      .readFileSync(LIBRARY_INDEX_ERROR_FILE, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .slice(-max)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch (_error) {
+          return { timestamp: "", kind: "parse_error", error: line };
+        }
+      });
+  } catch (error) {
+    console.error("Could not read library index error log:", error.message);
+    return [];
+  }
+}
+
 function startLibraryIndexJob(options = {}) {
   if (activeLibraryIndexJob) {
     const error = new Error("A library index job is already running.");
@@ -1432,6 +1470,7 @@ function startLibraryIndexJob(options = {}) {
     force: options.force === true,
     prune: options.prune !== false,
     compact: options.compact !== false,
+    retryEmbeddings: options.retryEmbeddings === true,
     cancelRequested: false,
     pauseRequested: false,
     autoResumed: options.autoResume === true,
@@ -1440,6 +1479,7 @@ function startLibraryIndexJob(options = {}) {
     finishedAt: null,
     progress: resumeProgress,
     stats: null,
+    recentErrors: [],
     error: null,
   };
   activeLibraryIndexJob = job;
@@ -1449,10 +1489,20 @@ function startLibraryIndexJob(options = {}) {
     force: job.force,
     prune: job.prune,
     compact: job.compact,
+    retryEmbeddings: job.retryEmbeddings,
     startFileIndex,
     resumeProgress: startFileIndex > 0 ? resumeProgress : null,
     onProgress: (progress) => {
       job.progress = progress;
+      persistLibraryIndexJob(job);
+    },
+    onError: (entry) => {
+      appendLibraryIndexError(job, entry);
+      job.progress = {
+        ...(job.progress || {}),
+        recentErrors: job.recentErrors.slice(-5),
+        lastEmbeddingError: entry.error || entry.reason || "",
+      };
       persistLibraryIndexJob(job);
     },
     shouldCancel: () => job.cancelRequested === true,
@@ -2536,6 +2586,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath === "/api/library/index/errors") {
+    const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "", 10);
+    send(200, {
+      errors: readRecentLibraryIndexErrors(Number.isFinite(limit) ? limit : 50),
+      path: LIBRARY_INDEX_ERROR_FILE,
+    });
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/library/index") {
     try {
       const body = await parseJsonBody(req);
@@ -2543,6 +2602,7 @@ const server = http.createServer(async (req, res) => {
         force: body?.force === true,
         prune: body?.prune !== false,
         compact: body?.compact !== false,
+        retryEmbeddings: body?.retryEmbeddings === true,
       });
       send(202, { ok: true, running: true, job: publicLibraryIndexJob(job) });
     } catch (e) {

@@ -3001,6 +3001,15 @@
                     --
                   </div>
                 </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">RECENT ISSUES</div>
+                  <div
+                    id="libraryJobRecentIssuesValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
               </div>
             </div>
             <div id="libraryIndexStatusText" class="setting-help">
@@ -3024,6 +3033,9 @@
             <div class="setting-row-inline">
               <button id="runLibraryIndexBtn" class="settings-action-btn">
                 BUILD / UPDATE INDEX
+              </button>
+              <button id="retryLibraryEmbeddingsBtn" class="settings-action-btn">
+                RETRY EMBEDDINGS
               </button>
               <button id="forceLibraryReindexBtn" class="settings-action-btn">
                 REINDEX ALL
@@ -5095,11 +5107,36 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function setLibraryIndexButtons(running) {
         const runButton = document.getElementById("runLibraryIndexBtn");
+        const retryButton = document.getElementById("retryLibraryEmbeddingsBtn");
         const forceButton = document.getElementById("forceLibraryReindexBtn");
         const cancelButton = document.getElementById("cancelLibraryIndexBtn");
         if (runButton) runButton.disabled = running;
+        if (retryButton) retryButton.disabled = running;
         if (forceButton) forceButton.disabled = running;
         if (cancelButton) cancelButton.disabled = !running;
+      }
+
+      function formatIndexIssueKind(kind) {
+        const labels = {
+          embedding_error: "Embedding",
+          document_skipped: "Skipped doc",
+          file_error: "File",
+        };
+        return labels[kind] || "Issue";
+      }
+
+      function formatRecentIndexIssues(issues) {
+        if (!Array.isArray(issues) || !issues.length) return "--";
+        return issues
+          .slice(-3)
+          .reverse()
+          .map((issue) => {
+            const file = basenameFromPath(issue.filePath || issue.path);
+            const detail = issue.error || issue.reason || "unknown";
+            const source = file ? `${file}: ` : "";
+            return `${formatIndexIssueKind(issue.kind)} - ${source}${detail}`;
+          })
+          .join(" | ");
       }
 
       function renderIndexJobGrid(values = {}) {
@@ -5119,6 +5156,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
         setElementText("libraryJobSkippedValue", values.skipped || "--");
         setElementText("libraryJobCurrentFileValue", values.currentFile || "--");
+        setElementText("libraryJobRecentIssuesValue", values.recentIssues || "--");
       }
 
       function renderLibraryIndexJob(payload) {
@@ -5166,6 +5204,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           (Array.isArray(stats.skippedDocuments)
             ? stats.skippedDocuments.length
             : 0);
+        const recentIssues =
+          progress.recentErrors ||
+          job.recentErrors ||
+          stats.recentErrors ||
+          [];
         const skippedUnchanged = progress.skipped ?? stats.skipped ?? 0;
         const phaseText = formatIndexPhase(progress.phase);
         const currentFile = basenameFromPath(progress.currentFile);
@@ -5187,6 +5230,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           embeddingErrors: formatMetricNumber(embeddingErrors),
           skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
           currentFile: currentFile || "--",
+          recentIssues: formatRecentIndexIssues(recentIssues),
         });
         if (job.status === "running") {
           const preflightError =
@@ -5195,7 +5239,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const lastEmbeddingError = progress.lastEmbeddingError
             ? ` Last embedding error: ${progress.lastEmbeddingError}`
             : "";
-          statusEl.textContent = `${job.force ? "Reindexing all sources" : "Indexing changed sources"}: ${phaseText}${currentFileText}.${embeddingText}${lastEmbeddingError}`;
+          const actionText = job.retryEmbeddings
+            ? "Retrying missing embeddings"
+            : job.force
+              ? "Reindexing all sources"
+              : "Indexing changed sources";
+          statusEl.textContent = `${actionText}: ${phaseText}${currentFileText}.${embeddingText}${lastEmbeddingError}`;
           return;
         }
         if (job.status === "completed") {
@@ -5225,6 +5274,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             embeddingErrors: formatMetricNumber(embeddingErrors),
             skipped: `${formatMetricNumber(stats.skipped || skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
             currentFile: "--",
+            recentIssues: formatRecentIndexIssues(recentIssues),
           });
           return;
         }
@@ -5242,6 +5292,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             embeddingErrors: formatMetricNumber(embeddingErrors),
             skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
             currentFile: "--",
+            recentIssues: formatRecentIndexIssues(recentIssues),
           });
           return;
         }
@@ -5258,6 +5309,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             embeddingErrors: formatMetricNumber(embeddingErrors),
             skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
             currentFile: "--",
+            recentIssues: formatRecentIndexIssues(recentIssues),
           });
           return;
         }
@@ -5273,6 +5325,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           embeddingErrors: formatMetricNumber(embeddingErrors),
           skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
           currentFile: "--",
+          recentIssues: formatRecentIndexIssues(recentIssues),
         });
       }
 
@@ -5294,14 +5347,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
       }
 
-      async function startLibraryIndex(force = false) {
+      async function startLibraryIndex(force = false, extraOptions = {}) {
         const saved = await saveLibrarySettingsFromForm();
         if (!saved) return;
         if (libraryIndexPollTimer) clearTimeout(libraryIndexPollTimer);
         try {
           const payload = await postJson(
             "/api/library/index",
-            { force, prune: true, compact: true },
+            { force, prune: true, compact: true, ...extraOptions },
             force ? "Start library reindex" : "Start library index",
           );
           renderLibraryIndexJob(payload);
@@ -5310,6 +5363,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           console.error("Could not start index job", error);
           alert(error.message || "Failed to start index job.");
         }
+      }
+
+      async function retryLibraryEmbeddings() {
+        await startLibraryIndex(false, { retryEmbeddings: true });
       }
 
       async function cancelLibraryIndex() {
@@ -8884,6 +8941,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (btn_runLibraryIndexBtn) {
           btn_runLibraryIndexBtn.addEventListener("click", function () {
             startLibraryIndex(false);
+          });
+        }
+
+        const btn_retryLibraryEmbeddingsBtn = document.getElementById(
+          "retryLibraryEmbeddingsBtn",
+        );
+        if (btn_retryLibraryEmbeddingsBtn) {
+          btn_retryLibraryEmbeddingsBtn.addEventListener("click", function () {
+            retryLibraryEmbeddings();
           });
         }
 

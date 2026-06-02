@@ -19,6 +19,8 @@ parsed in memory. All generated data is written under `~/ollama-pi-chat/`.
 Interrupted index jobs are recorded in `~/ollama-pi-chat/library-index-job.json`
 so the desktop app can resume a running job after reopening. Pressing Pause in
 the app marks the job as paused and prevents automatic resume.
+Embedding failures, skipped documents, and file-level index errors are written
+to `~/ollama-pi-chat/library-index-errors.jsonl` for later inspection.
 
 ## Setup
 

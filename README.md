@@ -235,6 +235,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 - **Source Folders**: Add, remove, and edit folders from the UI. The default Books source indexes EPUB files only, while note sources can index `.md` and `.txt`.
 - **Estimate Index Size**: Samples the configured source folders and estimates final passage count and database size before a full index run.
 - **Build / Update Index**: Scans changed source files and updates `library.sqlite`. It also repairs missing embeddings for unchanged files, so a temporary embedding failure can be retried without re-reading every EPUB.
+- **Retry Embeddings**: Scans the existing index for passages missing embedding/vector rows and retries them. This is useful after Ollama, sqlite-vec, or the embedding model temporarily failed.
 - **Reindex All**: Rebuilds every configured source even if the file did not change.
 - **Pause Index**: Pauses the running index job between files or embedding batches. A paused job will not auto-resume until you start indexing again.
 
@@ -499,11 +500,14 @@ Changing the embedding model requires **Reindex All**. Old embeddings were creat
 
 - **Estimate Index Size**: Samples configured source files and estimates passage count, compressed text size, vector size, and projected total database size. Use this before indexing thousands of books.
 - **Build / Update Index**: Scans configured sources and indexes only new or changed files.
+- **Retry Embeddings**: Retries missing embedding/vector rows without forcing every EPUB to be re-extracted.
 - **Reindex All**: Processes every configured file again. Use this after changing the embedding model, enabling semantic search, changing sqlite-vec, enabling/disabling keyword FTS, or changing chunking/search assumptions.
 - **Refresh Status**: Reloads the database status, including file count, passage count, embedding count, source count, and whether sqlite-vec is active.
 - **Pause Index**: Requests a pause. If the job is compacting SQLite, the pause waits until the current database operation finishes.
 
 Large libraries can take a long time on the first run. A library with thousands of EPUBs may take hours depending on EPUB quality, disk speed, and whether embeddings are enabled. If you close the app while indexing, the local server process stops and the active batch is interrupted. The app writes the job state to `~/ollama-pi-chat/library-index-job.json`, and on the next launch it automatically resumes a job that was still marked as running. If you press **Pause Index**, the job is marked as paused and will not auto-resume until you start indexing again.
+
+**Embed Errors** are final embedding failures after automatic retries. They are separate from **Skipped docs**. Skipped docs are usually files that could not produce enough readable text, such as image-only comics or malformed EPUBs. Embedding errors are written to `~/ollama-pi-chat/library-index-errors.jsonl` with the file path, chunk ids, and error message. The Settings database panel also shows recent issues while the job is running.
 
 ### Asking Questions With Sources
 
@@ -543,6 +547,7 @@ Ollama Pi Chat is designed from the ground up to respect your digital sovereignt
   - `cloud-settings.json`: Cloud provider settings and saved API keys. This file is written with owner-only permissions (`0600`) when possible.
   - `library-config.json`: Local Library Research source paths, search limits, and optional embedding settings.
   - `library-index-job.json`: Last index job state. This is used to auto-resume interrupted running jobs after reopening the app.
+  - `library-index-errors.jsonl`: Structured index issue log with embedding failures, skipped documents, and file-level index errors.
   - `library.sqlite`: Generated local library database containing compressed indexed passages, optional embeddings, and optional keyword FTS data.
   - `security-events.jsonl`: The security audit trace showing permission requests and execution logs.
   - `daemon.log` / `daemon.error.log`: Output logs when running the LaunchAgent background daemon.

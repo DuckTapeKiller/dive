@@ -12,6 +12,8 @@ const DEFAULT_CONFIG_FILE = path.join(__dirname, "config.default.json");
 const SCHEMA_FILE = path.join(__dirname, "schema.sql");
 const SQLITE_TIMEOUT_MS = 120000;
 const SQLITE_MAX_BUFFER = 64 * 1024 * 1024;
+const EMBEDDING_RETRY_ATTEMPTS = 3;
+const EMBEDDING_RETRY_BASE_DELAY_MS = 500;
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
   ".obsidian",
@@ -1108,6 +1110,10 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function embedTexts(config, texts, purpose = "document") {
   const baseUrl = normalizeOllamaBaseUrl(config.embedding.ollamaBaseUrl);
   const model = config.embedding.model;
@@ -1145,6 +1151,88 @@ async function embedTexts(config, texts, purpose = "document") {
     embeddings.push(normalizeVector(payload.embedding, config.embedding.dimensions));
   }
   return embeddings;
+}
+
+function emitEmbeddingIssue(options, issue) {
+  if (typeof options.onError !== "function") return;
+  options.onError({
+    kind: "embedding_error",
+    timestamp: new Date().toISOString(),
+    ...issue,
+  });
+}
+
+async function embedAndStoreBatch(config, batch) {
+  const vectors = await embedTexts(
+    config,
+    batch.map((row) => decompressChunkText(row)),
+    "document",
+  );
+  const firstVector = vectors.find((vector) => Array.isArray(vector));
+  const dimensions = firstVector?.length || 0;
+  const vectorTableReady = await ensureVectorTable(config, dimensions);
+  const insertSql = vectors
+    .map((vector, vectorIndex) => {
+      const chunkId = batch[vectorIndex].id;
+      const vectorJson = JSON.stringify(vector);
+      const commonSql = `INSERT OR REPLACE INTO library_embeddings(chunk_id, model, dimensions, created_at)
+VALUES (${sqlInteger(chunkId)}, ${sqlLiteral(config.embedding.model)}, ${sqlInteger(vector.length)}, CURRENT_TIMESTAMP);`;
+      if (!vectorTableReady) return commonSql;
+      return `${commonSql}
+INSERT OR REPLACE INTO library_chunks_vec(chunk_id, embedding)
+VALUES (${sqlInteger(chunkId)}, ${sqlLiteral(vectorJson)});`;
+    })
+    .join("\n");
+  await runSqliteScript(config.databasePath, `BEGIN;\n${insertSql}\nCOMMIT;`, {
+    loadExtensionPath: vectorTableReady
+      ? config.embedding.sqliteVecExtensionPath
+      : "",
+  });
+  return vectors.length;
+}
+
+async function embedBatchWithRetries(config, batch, options, meta = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= EMBEDDING_RETRY_ATTEMPTS; attempt += 1) {
+    assertNotCancelled(options);
+    try {
+      const embedded = await embedAndStoreBatch(config, batch);
+      return { embedded, errors: 0, errorMessage: "" };
+    } catch (error) {
+      lastError = error;
+      if (attempt < EMBEDDING_RETRY_ATTEMPTS) {
+        await sleep(EMBEDDING_RETRY_BASE_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  if (batch.length > 1) {
+    let embedded = 0;
+    let errors = 0;
+    let errorMessage = lastError?.message || "";
+    for (const row of batch) {
+      const result = await embedBatchWithRetries(config, [row], options, {
+        ...meta,
+        batchSize: 1,
+        chunkIds: [row.id],
+      });
+      embedded += result.embedded;
+      errors += result.errors;
+      errorMessage = result.errorMessage || errorMessage;
+    }
+    return { embedded, errors, errorMessage };
+  }
+
+  const errorMessage = lastError?.message || "Unknown embedding error.";
+  emitEmbeddingIssue(options, {
+    filePath: meta.filePath || "",
+    batchStart: meta.batchStart || 0,
+    batchSize: batch.length,
+    chunkIds: batch.map((row) => row.id),
+    error: errorMessage,
+  });
+  console.warn(`Embedding failed for ${meta.filePath || "unknown file"}: ${errorMessage}`);
+  return { embedded: 0, errors: batch.length, errorMessage };
 }
 
 async function embedFileChunks(config, filePath, options = {}) {
@@ -1202,46 +1290,20 @@ ORDER BY c.chunk_index;`,
   for (let index = 0; index < rows.length; index += config.embedding.batchSize) {
     assertNotCancelled(options);
     const batch = rows.slice(index, index + config.embedding.batchSize);
-    try {
-      const vectors = await embedTexts(
-        config,
-        batch.map((row) => decompressChunkText(row)),
-        "document",
-      );
-      const firstVector = vectors.find((vector) => Array.isArray(vector));
-      const dimensions = firstVector?.length || 0;
-      const vectorTableReady = await ensureVectorTable(config, dimensions);
-      const insertSql = vectors
-        .map((vector, vectorIndex) => {
-          const chunkId = batch[vectorIndex].id;
-          const vectorJson = JSON.stringify(vector);
-          const commonSql = `INSERT OR REPLACE INTO library_embeddings(chunk_id, model, dimensions, created_at)
-VALUES (${sqlInteger(chunkId)}, ${sqlLiteral(config.embedding.model)}, ${sqlInteger(vector.length)}, CURRENT_TIMESTAMP);`;
-          if (!vectorTableReady) return commonSql;
-          return `${commonSql}
-INSERT OR REPLACE INTO library_chunks_vec(chunk_id, embedding)
-VALUES (${sqlInteger(chunkId)}, ${sqlLiteral(vectorJson)});`;
-        })
-        .join("\n");
-      await runSqliteScript(config.databasePath, `BEGIN;\n${insertSql}\nCOMMIT;`, {
-        loadExtensionPath: vectorTableReady
-          ? config.embedding.sqliteVecExtensionPath
-          : "",
+    const result = await embedBatchWithRetries(config, batch, options, {
+      filePath,
+      batchStart: index,
+      batchSize: batch.length,
+      chunkIds: batch.map((row) => row.id),
+    });
+    embedded += result.embedded;
+    errors += result.errors;
+    if (typeof options.onBatch === "function") {
+      options.onBatch({
+        embeddedDelta: result.embedded,
+        errorsDelta: result.errors,
+        errorMessage: result.errorMessage,
       });
-      embedded += vectors.length;
-      if (typeof options.onBatch === "function") {
-        options.onBatch({ embeddedDelta: vectors.length, errorsDelta: 0 });
-      }
-    } catch (error) {
-      errors += batch.length;
-      if (typeof options.onBatch === "function") {
-        options.onBatch({
-          embeddedDelta: 0,
-          errorsDelta: batch.length,
-          errorMessage: error.message,
-        });
-      }
-      console.warn(`Embedding failed for ${filePath}: ${error.message}`);
     }
   }
   return { embedded, errors };
@@ -1353,6 +1415,9 @@ function summarizeIndexProgress(stats, updates = {}) {
       ? stats.skippedDocuments.length
       : 0,
     errors: Array.isArray(stats.errors) ? stats.errors.length : 0,
+    recentErrors: Array.isArray(stats.recentErrors)
+      ? stats.recentErrors.slice(-5)
+      : [],
     embeddingPreflightError: stats.embeddingPreflightError || "",
     embeddingReady: stats.embeddingReady === true,
     estimatedFinalBytes:
@@ -1373,6 +1438,19 @@ function summarizeIndexProgress(stats, updates = {}) {
 function emitIndexProgress(options, stats, updates = {}) {
   if (typeof options.onProgress !== "function") return;
   options.onProgress(summarizeIndexProgress(stats, updates));
+}
+
+function recordIndexIssue(stats, options, issue) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    ...issue,
+  };
+  stats.recentErrors.push(entry);
+  stats.recentErrors = stats.recentErrors.slice(-10);
+  if (typeof options.onError === "function") {
+    options.onError(entry);
+  }
+  return entry;
 }
 
 async function checkEmbeddingPreflight(config) {
@@ -1583,6 +1661,7 @@ async function indexLibrary(options = {}) {
     warnings: [],
     skippedDocuments: [],
     errors: [],
+    recentErrors: [],
     databasePath: config.databasePath,
   };
 
@@ -1634,6 +1713,15 @@ async function indexLibrary(options = {}) {
               onlyMissing: true,
               dimensions: stats.embeddingDimensions,
               shouldCancel: options.shouldCancel,
+              onError: (entry) => {
+                const issue = recordIndexIssue(stats, options, entry);
+                emitIndexProgress(options, stats, {
+                  phase: "embedding",
+                  currentFile: file.path,
+                  currentFileIndex: fileIndex + 1,
+                  lastEmbeddingError: issue.error || issue.reason || "",
+                });
+              },
               onBatch: (batchStats) => {
                 stats.embedded += batchStats.embeddedDelta || 0;
                 stats.embeddingErrors += batchStats.errorsDelta || 0;
@@ -1679,6 +1767,15 @@ async function indexLibrary(options = {}) {
               onlyMissing: true,
               dimensions: stats.embeddingDimensions,
               shouldCancel: options.shouldCancel,
+              onError: (entry) => {
+                const issue = recordIndexIssue(stats, options, entry);
+                emitIndexProgress(options, stats, {
+                  phase: "embedding",
+                  currentFile: file.path,
+                  currentFileIndex: fileIndex + 1,
+                  lastEmbeddingError: issue.error || issue.reason || "",
+                });
+              },
               onBatch: (batchStats) => {
                 stats.embedded += batchStats.embeddedDelta || 0;
                 stats.embeddingErrors += batchStats.errorsDelta || 0;
@@ -1717,6 +1814,15 @@ async function indexLibrary(options = {}) {
         embeddingReady,
         dimensions: stats.embeddingDimensions,
         shouldCancel: options.shouldCancel,
+        onError: (entry) => {
+          const issue = recordIndexIssue(stats, options, entry);
+          emitIndexProgress(options, stats, {
+            phase: "embedding",
+            currentFile: file.path,
+            currentFileIndex: fileIndex + 1,
+            lastEmbeddingError: issue.error || issue.reason || "",
+          });
+        },
         onBatch: (batchStats) => {
           stats.embedded += batchStats.embeddedDelta || 0;
           stats.embeddingErrors += batchStats.errorsDelta || 0;
@@ -1732,9 +1838,19 @@ async function indexLibrary(options = {}) {
       if (error?.cancelled) throw error;
       if (isDocumentSkipError(error)) {
         stats.skippedDocuments.push({ path: file.path, reason: error.message });
+        recordIndexIssue(stats, options, {
+          kind: "document_skipped",
+          filePath: file.path,
+          reason: error.message,
+        });
         continue;
       }
       stats.errors.push({ path: file.path, error: error.message });
+      recordIndexIssue(stats, options, {
+        kind: "file_error",
+        filePath: file.path,
+        error: error.message,
+      });
     } finally {
       stats.processed += 1;
       emitIndexProgress(options, stats, {

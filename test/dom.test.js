@@ -170,7 +170,7 @@ function createFetchStub() {
       });
     }
     if (path === "/api/ollama/skills/settings") return jsonResponse({});
-    if (path === "/api/version") return jsonResponse({ version: "1.0.2" });
+    if (path === "/api/version") return jsonResponse({ version: "1.0.3" });
     if (
       path === "/api/security-event" ||
       path === "/api/mcp/config" ||
@@ -228,13 +228,13 @@ test("frontend boots without network fetch crashes", async () => {
   await waitFor(
     () =>
       dom.window.document.getElementById("app-version-label").textContent ===
-      "1.0.2",
+      "1.0.3",
   );
 
   assert.deepStrictEqual(errors, []);
   assert.strictEqual(
     dom.window.document.getElementById("app-version-label").textContent,
-    "1.0.2",
+    "1.0.3",
   );
   assert.strictEqual(
     dom.window.document.querySelectorAll("#modelSelect option").length,
@@ -259,7 +259,9 @@ test("frontend boots without network fetch crashes", async () => {
   assert.ok(
     dom.window.document.getElementById("libraryJobEmbeddingErrorsValue"),
   );
+  assert.ok(dom.window.document.getElementById("libraryJobRecentIssuesValue"));
   assert.ok(dom.window.document.getElementById("libraryIndexProgressFill"));
+  assert.ok(dom.window.document.getElementById("retryLibraryEmbeddingsBtn"));
   assert.strictEqual(
     dom.window.document.querySelectorAll(".settings-tab").length,
     4,
@@ -296,7 +298,7 @@ test("palette change listener updates UI state", async () => {
   await waitFor(
     () =>
       dom.window.document.getElementById("app-version-label").textContent ===
-      "1.0.2",
+      "1.0.3",
   );
 
   const select = dom.window.document.getElementById("settingOllamaPalette");
@@ -315,7 +317,7 @@ test("mode switch hides Ollama-only settings outside Ollama mode", async () => {
   await waitFor(
     () =>
       dom.window.document.getElementById("app-version-label").textContent ===
-      "1.0.2",
+      "1.0.3",
   );
 
   dom.window.document.getElementById("btnPi").click();
