@@ -62,15 +62,37 @@ async function initMcpServers(configJson) {
     if (!isMcpCommandAllowed(serverConfig.command)) {
       console.error(
         `[MCP] Rejected server "${serverName}": command "${serverConfig.command}" is not on the allowlist. ` +
-        `Permitted commands: ${[...MCP_ALLOWED_COMMANDS].join(", ")}`
+          `Permitted commands: ${[...MCP_ALLOWED_COMMANDS].join(", ")}`,
       );
       continue;
     }
     // Validate args is an array of strings (no objects that could smuggle flags)
     if (serverConfig.args !== undefined) {
-      if (!Array.isArray(serverConfig.args) ||
-          !serverConfig.args.every((a) => typeof a === "string")) {
-        console.error(`[MCP] Rejected server "${serverName}": args must be an array of strings.`);
+      if (
+        !Array.isArray(serverConfig.args) ||
+        !serverConfig.args.every((a) => typeof a === "string")
+      ) {
+        console.error(
+          `[MCP] Rejected server "${serverName}": args must be an array of strings.`,
+        );
+        continue;
+      }
+
+      // Prevent args escape hatches (eval execution via node/python/etc)
+      const blockedArgs = new Set([
+        "-e",
+        "--eval",
+        "-c",
+        "--command",
+        "-p",
+        "--print",
+        "-i",
+        "--interactive",
+      ]);
+      if (serverConfig.args.some((arg) => blockedArgs.has(arg))) {
+        console.error(
+          `[MCP] Rejected server "${serverName}": args contains forbidden execution flag.`,
+        );
         continue;
       }
     }
@@ -103,7 +125,6 @@ async function initMcpServers(configJson) {
     }
   }
 }
-
 
 // Convert MCP tools into Ollama's format
 function getMcpOllamaTools() {

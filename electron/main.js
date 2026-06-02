@@ -1,6 +1,5 @@
 const http = require("http");
 const fs = require("fs");
-const net = require("net");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
@@ -15,26 +14,30 @@ const LAUNCH_PLIST_PATH = path.join(LAUNCH_AGENTS_DIR, `${SERVER_LABEL}.plist`);
 const SETTINGS_DATA_DIR = path.join(os.homedir(), "ollama-pi-chat");
 const PI_SETTINGS_FILE = path.join(SETTINGS_DATA_DIR, "pi-settings.json");
 
-function findOpenPort(startPort = 8080, maxAttempts = 30) {
-  return new Promise((resolve, reject) => {
-    const attempt = (offset) => {
-      if (offset >= maxAttempts) {
-        reject(new Error("No available local port found."));
-        return;
-      }
-      const candidate = startPort + offset;
-      const tester = net.createServer();
-      tester.once("error", () => {
-        attempt(offset + 1);
-      });
-      tester.once("listening", () => {
-        tester.close(() => resolve(candidate));
-      });
-      tester.listen(candidate, "127.0.0.1");
-    };
-    attempt(0);
+function isBrokenPipeError(error) {
+  return error?.code === "EPIPE" || /write EPIPE/i.test(error?.message || "");
+}
+
+function installBrokenPipeGuards() {
+  for (const stream of [process.stdout, process.stderr]) {
+    if (!stream || typeof stream.on !== "function") continue;
+    stream.on("error", (error) => {
+      if (isBrokenPipeError(error)) return;
+      throw error;
+    });
+  }
+
+  process.on("uncaughtException", (error) => {
+    if (isBrokenPipeError(error)) return;
+    dialog.showErrorBox(
+      "Ollama Pi Chat Error",
+      String(error?.stack || error?.message || error),
+    );
+    app.quit();
   });
 }
+
+installBrokenPipeGuards();
 
 function waitForServer(port, timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
@@ -119,8 +122,16 @@ function copyIfExists(srcPath, dstPath, options = {}) {
   }
 }
 
+function getRuntimeSourceRoot() {
+  const unpackedRoot = path.join(process.resourcesPath, "app.asar.unpacked");
+  if (app.isPackaged && fs.existsSync(path.join(unpackedRoot, "server.js"))) {
+    return unpackedRoot;
+  }
+  return app.getAppPath();
+}
+
 function syncRuntimeFiles(runtimeDir) {
-  const appRoot = app.getAppPath();
+  const appRoot = getRuntimeSourceRoot();
   try {
     if (fs.existsSync(runtimeDir) && !fs.statSync(runtimeDir).isDirectory()) {
       fs.rmSync(runtimeDir, { force: true });
@@ -137,6 +148,20 @@ function syncRuntimeFiles(runtimeDir) {
   copyIfExists(
     path.join(appRoot, "index.html"),
     path.join(runtimeDir, "index.html"),
+    {
+      required: true,
+    },
+  );
+  copyIfExists(
+    path.join(appRoot, "skills.js"),
+    path.join(runtimeDir, "skills.js"),
+    {
+      required: true,
+    },
+  );
+  copyIfExists(
+    path.join(appRoot, "mcp.js"),
+    path.join(runtimeDir, "mcp.js"),
     {
       required: true,
     },
@@ -160,6 +185,14 @@ function syncRuntimeFiles(runtimeDir) {
   copyIfExists(path.join(appRoot, "fonts"), path.join(runtimeDir, "fonts"), {
     recursive: true,
   });
+  copyIfExists(
+    path.join(appRoot, "node_modules"),
+    path.join(runtimeDir, "node_modules"),
+    {
+      recursive: true,
+      required: true,
+    },
+  );
   copyIfExists(
     path.join(appRoot, "security"),
     path.join(runtimeDir, "security"),
@@ -277,7 +310,7 @@ function createMainWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      devTools: process.env.NODE_ENV === "development" || !app.isPackaged,
+      devTools: true,
     },
   });
 
@@ -288,6 +321,16 @@ function createMainWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const key = String(input.key || "").toLowerCase();
+    const wantsDevTools =
+      input.key === "F12" ||
+      (key === "i" && input.alt && (input.meta || input.control));
+    if (!wantsDevTools) return;
+    mainWindow.webContents.toggleDevTools();
+    event.preventDefault();
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${localPort}`);

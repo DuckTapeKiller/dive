@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "databasePath": "~/ollama-pi-chat/library.sqlite",
+  "sources": [
+    {
+      "name": "Books",
+      "type": "book",
+      "path": "~/Libros",
+      "extensions": [".epub"]
+    },
+    {
+      "name": "Obsidian",
+      "type": "note",
+      "path": "",
+      "extensions": [".md", ".txt"]
+    }
+  ],
+  "chunking": {
+    "targetChars": 2400,
+    "overlapChars": 0,
+    "minChars": 300,
+    "maxChars": 3200
+  },
+  "search": {
+    "keywordEnabled": false,
+    "defaultLimit": 5,
+    "maxLimit": 20,
+    "maxContextChars": 12000
+  },
+  "embedding": {
+    "enabled": false,
+    "model": "nomic-embed-text-v2-moe:latest",
+    "dimensions": 256,
+    "ollamaBaseUrl": "http://127.0.0.1:11434",
+    "batchSize": 16,
+    "sqliteVecExtensionPath": ""
+  },
+  "chatIntegration": {
+    "enabled": false,
+    "limit": 5,
+    "maxContextChars": 12000,
+    "includeSourcePaths": true
+  },
+  "watch": {
+    "enabled": false,
+    "debounceMs": 2000,
+    "rescanIntervalMs": 60000
+  }
+}

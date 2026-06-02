@@ -64,6 +64,11 @@ cat <<EOF > "$PLIST_PATH"
     <array>
         <string>$BINARY</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>$SERVER_PORT</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

@@ -6,6 +6,23 @@ echo "============================================="
 echo "     OLLAMA PI CHAT LOCAL LAUNCHER"
 echo "============================================="
 
+# Get current script folder directory
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SETTINGS_FILE="$HOME/ollama-pi-chat/pi-settings.json"
+SERVER_PORT=8080
+if [ -f "$SETTINGS_FILE" ]; then
+    EXTRACTED_PORT=$(node -e "
+      try {
+        const s = JSON.parse(require('fs').readFileSync('$SETTINGS_FILE', 'utf8'));
+        const p = parseInt(s.serverPort, 10);
+        if (!Number.isNaN(p) && p >= 1024 && p <= 65535) process.stdout.write(String(p));
+      } catch (_) {}
+    " 2>/dev/null)
+    if [ -n "$EXTRACTED_PORT" ]; then
+        SERVER_PORT="$EXTRACTED_PORT"
+    fi
+fi
+
 # 1. Check Node.js
 if ! command -v node &> /dev/null; then
     echo "ERROR: Node.js is not installed!"
@@ -31,12 +48,9 @@ if [ $? -ne 0 ]; then
     echo "Make sure Ollama is launched if you plan to use Ollama models."
 fi
 
-# Get current script folder directory
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
 # Start Node server
 echo "Starting local Node.js server..."
-node "$DIR/server.js" &
+PORT="$SERVER_PORT" node "$DIR/server.js" &
 SERVER_PID=$!
 
 # Trap Ctrl+C to kill the server when exiting
@@ -50,8 +64,13 @@ trap cleanup SIGINT SIGTERM
 
 # Wait 1s for server to start, then open the browser
 sleep 1
-echo "Opening browser at http://127.0.0.1:8080..."
-open "http://127.0.0.1:8080"
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "ERROR: Local server failed to start."
+    wait "$SERVER_PID"
+    exit 1
+fi
+echo "Opening browser at http://127.0.0.1:${SERVER_PORT}..."
+open "http://127.0.0.1:${SERVER_PORT}"
 
 # Keep script running
 wait $SERVER_PID

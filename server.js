@@ -4,8 +4,18 @@ const path = require("path");
 const { execFile, spawn, spawnSync } = require("child_process");
 const os = require("os");
 const { randomUUID, randomBytes } = require("crypto");
-const { ALL_SKILLS, executeSkill } = require("./skills");
+const { executeSkill, skillRequiresShellConfirmation } = require("./skills");
 const { initMcpServers, getMcpOllamaTools, executeMcpTool } = require("./mcp");
+const {
+  buildChatLibraryContext,
+  estimateLibraryIndex,
+  getLibraryStatus,
+  indexLibrary,
+  loadLibraryConfig,
+  saveLibraryConfig,
+  saveLibraryChatSettings,
+  searchLibrary,
+} = require("./library/store");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -19,6 +29,9 @@ const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB per log file
 const MAX_ROTATED_LOG_FILES = 3;
 const PDFTOTEXT_TIMEOUT_MS = 15 * 1000;
 const PDFTOTEXT_MAX_BUFFER = 10 * 1024 * 1024;
+
+let activeLibraryIndexJob = null;
+let lastLibraryIndexJob = null;
 
 const DATA_DIR = path.join(os.homedir(), "ollama-pi-chat");
 try {
@@ -34,24 +47,50 @@ const INDEX = fs.existsSync(path.join(__dirname, "index.html"))
   ? path.join(__dirname, "index.html")
   : path.join(DATA_DIR, "index.html");
 
-let EMBEDDED_INDEX = null;
+const EMBEDDED_ASSETS = new Map();
 try {
   const sea = require("node:sea");
   if (sea.isSea()) {
-    EMBEDDED_INDEX = sea.getAsset("index.html", "utf8");
+    for (const assetName of [
+      "index.html",
+      "font_faces.css",
+      "package.json",
+      "vendor/marked.umd.js",
+      "vendor/purify.min.js",
+    ]) {
+      try {
+        EMBEDDED_ASSETS.set(assetName, sea.getAsset(assetName, "utf8"));
+      } catch (_assetError) {}
+    }
   }
 } catch (e) {
   // SEA not available or not running as SEA
 }
+const EMBEDDED_INDEX = EMBEDDED_ASSETS.get("index.html") || null;
 
 const HISTORY_FILE = path.join(DATA_DIR, "conversations.json");
 const PROMPTS_FILE = path.join(DATA_DIR, "prompts.json");
 const CUSTOM_SKILLS_FILE = path.join(DATA_DIR, "custom_skills.json");
 const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
+const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
+const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
+const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
 const FONTS_DIR = path.join(__dirname, "fonts");
+const VENDOR_SCRIPT_FILES = {
+  "/vendor/marked.umd.js": {
+    assetName: "vendor/marked.umd.js",
+    resolveFilePath: () =>
+      path.join(__dirname, "node_modules", "marked", "lib", "marked.umd.js"),
+  },
+  "/vendor/purify.min.js": {
+    assetName: "vendor/purify.min.js",
+    resolveFilePath: () =>
+      path.join(__dirname, "node_modules", "dompurify", "dist", "purify.min.js"),
+  },
+};
 const SECURITY_EVENTS_FILE = path.join(DATA_DIR, "security-events.jsonl");
 const DAEMON_LOG_FILE = path.join(DATA_DIR, "daemon.log");
 const DAEMON_ERROR_LOG_FILE = path.join(DATA_DIR, "daemon.error.log");
@@ -73,6 +112,35 @@ const COMMON_BINARY_DIRS = [
   "/bin",
 ];
 const PI_COMMAND_CANDIDATES = ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"];
+const VALID_UI_PALETTES = new Set([
+  "orange",
+  "grey",
+  "solarised",
+  "forest",
+  "calmblue",
+  "retro",
+  "nordic",
+]);
+const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral"];
+const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
+const CLOUD_DEFAULT_MODELS = {
+  openai: "gpt-5",
+  anthropic: "claude-sonnet-4-20250514",
+  mistral: "mistral-large-latest",
+};
+const CLOUD_DEFAULT_BASE_URLS = {
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  mistral: "https://api.mistral.ai/v1",
+};
+const CLOUD_ENV_KEY_NAMES = {
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+};
+const CLOUD_MIN_MAX_TOKENS = 1;
+const CLOUD_MAX_MAX_TOKENS = 128000;
+const CLOUD_DEFAULT_MAX_TOKENS = 2048;
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -222,7 +290,7 @@ function upsertConversation(
   const newHistory = [...messages, { role: "assistant", content: response }];
   const title = convTitle || message.slice(0, 40);
   const existing = convs.findIndex((c) => c.id === saveConv);
-  
+
   // Cap the size of the conversation history array
   if (newHistory.length > MAX_HISTORY_MESSAGES) {
     const spliceCount = newHistory.length - MAX_HISTORY_MESSAGES;
@@ -516,6 +584,264 @@ function savePiSettings(settings) {
   }
 }
 
+function normalizeFontStackValue(fontStack) {
+  const trimmed = typeof fontStack === "string" ? fontStack.trim() : "";
+  return trimmed.slice(0, 300) || '"Space Mono", monospace';
+}
+
+function defaultUiSettings() {
+  return {
+    palettes: {
+      ollama: "solarised",
+      pi: "orange",
+      cloud: "calmblue",
+    },
+    fonts: {
+      ollama: '"Space Mono", monospace',
+      pi: '"Space Mono", monospace',
+      cloud: '"Space Mono", monospace',
+    },
+  };
+}
+
+function sanitizeUiSettings(rawInput) {
+  const defaults = defaultUiSettings();
+  const raw =
+    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      ? rawInput
+      : {};
+  const next = {
+    palettes: { ...defaults.palettes },
+    fonts: { ...defaults.fonts },
+  };
+
+  if (
+    raw.palettes &&
+    typeof raw.palettes === "object" &&
+    !Array.isArray(raw.palettes)
+  ) {
+    for (const modeName of ["ollama", "pi", "cloud"]) {
+      if (VALID_UI_PALETTES.has(raw.palettes[modeName])) {
+        next.palettes[modeName] = raw.palettes[modeName];
+      }
+    }
+  }
+
+  if (
+    raw.fonts &&
+    typeof raw.fonts === "object" &&
+    !Array.isArray(raw.fonts)
+  ) {
+    for (const modeName of ["ollama", "pi", "cloud"]) {
+      if (typeof raw.fonts[modeName] === "string") {
+        next.fonts[modeName] = normalizeFontStackValue(raw.fonts[modeName]);
+      }
+    }
+  }
+
+  return next;
+}
+
+function loadUiSettingsWithMeta() {
+  const exists = fs.existsSync(UI_SETTINGS_FILE);
+  if (exists) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, "utf8"));
+      const sanitized = sanitizeUiSettings(raw);
+      if (JSON.stringify(raw) !== JSON.stringify(sanitized)) {
+        saveUiSettings(sanitized);
+      }
+      return { settings: sanitized, exists: true };
+    } catch (e) {
+      console.warn("Failed to load UI settings:", e.message || e);
+    }
+  }
+  return { settings: defaultUiSettings(), exists: false };
+}
+
+function saveUiSettings(settings) {
+  try {
+    const sanitized = sanitizeUiSettings(settings);
+    fs.writeFileSync(UI_SETTINGS_FILE, JSON.stringify(sanitized, null, 2));
+    return sanitized;
+  } catch (e) {
+    console.error("Failed to save UI settings:", e.message || e);
+    throw e;
+  }
+}
+
+function defaultCloudSettings() {
+  return {
+    provider: "openai",
+    models: { ...CLOUD_DEFAULT_MODELS },
+    baseUrls: { ...CLOUD_DEFAULT_BASE_URLS },
+    apiKeys: {},
+    maxTokens: CLOUD_DEFAULT_MAX_TOKENS,
+  };
+}
+
+function normalizeCloudBaseUrl(value, fallback) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return fallback;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return fallback;
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function sanitizeCloudSettings(rawInput, existingInput = null) {
+  const defaults = defaultCloudSettings();
+  const existing =
+    existingInput &&
+    typeof existingInput === "object" &&
+    !Array.isArray(existingInput)
+      ? existingInput
+      : {};
+  const raw =
+    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      ? rawInput
+      : {};
+
+  const next = {
+    provider: CLOUD_PROVIDER_SET.has(existing.provider)
+      ? existing.provider
+      : defaults.provider,
+    models: { ...defaults.models, ...(existing.models || {}) },
+    baseUrls: { ...defaults.baseUrls, ...(existing.baseUrls || {}) },
+    apiKeys: { ...(existing.apiKeys || {}) },
+    maxTokens: clampNumber(
+      existing.maxTokens,
+      CLOUD_MIN_MAX_TOKENS,
+      CLOUD_MAX_MAX_TOKENS,
+      defaults.maxTokens,
+    ),
+  };
+
+  if (CLOUD_PROVIDER_SET.has(raw.provider)) {
+    next.provider = raw.provider;
+  }
+
+  if (
+    raw.models &&
+    typeof raw.models === "object" &&
+    !Array.isArray(raw.models)
+  ) {
+    for (const provider of CLOUD_PROVIDERS) {
+      if (typeof raw.models[provider] === "string") {
+        const model = raw.models[provider].trim().slice(0, 200);
+        if (model) next.models[provider] = model;
+      }
+    }
+  }
+
+  if (
+    raw.baseUrls &&
+    typeof raw.baseUrls === "object" &&
+    !Array.isArray(raw.baseUrls)
+  ) {
+    for (const provider of CLOUD_PROVIDERS) {
+      next.baseUrls[provider] = normalizeCloudBaseUrl(
+        raw.baseUrls[provider],
+        next.baseUrls[provider] || defaults.baseUrls[provider],
+      );
+    }
+  }
+
+  if (
+    raw.apiKeys &&
+    typeof raw.apiKeys === "object" &&
+    !Array.isArray(raw.apiKeys)
+  ) {
+    for (const provider of CLOUD_PROVIDERS) {
+      if (typeof raw.apiKeys[provider] !== "string") continue;
+      const value = raw.apiKeys[provider].trim();
+      if (value) {
+        next.apiKeys[provider] = value.slice(0, 4000);
+      }
+    }
+  }
+
+  if (
+    raw.clearApiKeys &&
+    typeof raw.clearApiKeys === "object" &&
+    !Array.isArray(raw.clearApiKeys)
+  ) {
+    for (const provider of CLOUD_PROVIDERS) {
+      if (raw.clearApiKeys[provider] === true) {
+        delete next.apiKeys[provider];
+      }
+    }
+  }
+
+  next.maxTokens = clampNumber(
+    raw.maxTokens,
+    CLOUD_MIN_MAX_TOKENS,
+    CLOUD_MAX_MAX_TOKENS,
+    next.maxTokens,
+  );
+
+  return next;
+}
+
+function saveCloudSettings(settings) {
+  const sanitized = sanitizeCloudSettings(settings, defaultCloudSettings());
+  fs.writeFileSync(CLOUD_SETTINGS_FILE, JSON.stringify(sanitized, null, 2), {
+    mode: 0o600,
+  });
+  try {
+    fs.chmodSync(CLOUD_SETTINGS_FILE, 0o600);
+  } catch (e) {}
+  return sanitized;
+}
+
+function loadCloudSettings() {
+  if (fs.existsSync(CLOUD_SETTINGS_FILE)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(CLOUD_SETTINGS_FILE, "utf8"));
+      const sanitized = sanitizeCloudSettings(raw, defaultCloudSettings());
+      if (JSON.stringify(raw) !== JSON.stringify(sanitized)) {
+        saveCloudSettings(sanitized);
+      }
+      return sanitized;
+    } catch (e) {
+      console.warn("Failed to load Cloud settings:", e.message || e);
+    }
+  }
+  return defaultCloudSettings();
+}
+
+function getCloudApiKey(settings, provider) {
+  const envKeyName = CLOUD_ENV_KEY_NAMES[provider];
+  const envValue = envKeyName ? process.env[envKeyName] : "";
+  if (typeof settings.apiKeys?.[provider] === "string") {
+    const saved = settings.apiKeys[provider].trim();
+    if (saved) return saved;
+  }
+  return typeof envValue === "string" ? envValue.trim() : "";
+}
+
+function redactCloudSettings(settings) {
+  const sanitized = sanitizeCloudSettings(settings, defaultCloudSettings());
+  return {
+    provider: sanitized.provider,
+    models: sanitized.models,
+    baseUrls: sanitized.baseUrls,
+    maxTokens: sanitized.maxTokens,
+    hasApiKey: Object.fromEntries(
+      CLOUD_PROVIDERS.map((provider) => [
+        provider,
+        Boolean(getCloudApiKey(sanitized, provider)),
+      ]),
+    ),
+    envKeyNames: { ...CLOUD_ENV_KEY_NAMES },
+  };
+}
+
 function getPiRuntimeInfo(settings = loadPiSettings()) {
   const resolvedWorkingDirectory = settings.workingDirectory || DATA_DIR;
   const globalSandbox = path.join(os.homedir(), ".pi", "sandbox.json");
@@ -668,6 +994,250 @@ async function parseJsonBody(req, maxPayloadSize = MAX_JSON_PAYLOAD_SIZE) {
   }
 }
 
+function normalizeCloudHistoryMessages(history, message) {
+  const messages = [];
+  const sourceHistory = Array.isArray(history) ? history : [];
+  for (const item of sourceHistory) {
+    if (!item || typeof item !== "object") continue;
+    if (item.role !== "user" && item.role !== "assistant") continue;
+    if (typeof item.content !== "string" || !item.content.trim()) continue;
+    messages.push({
+      role: item.role,
+      content: item.content,
+    });
+  }
+  messages.push({ role: "user", content: message });
+  if (messages.length > MAX_HISTORY_MESSAGES) {
+    return messages.slice(messages.length - MAX_HISTORY_MESSAGES);
+  }
+  return messages;
+}
+
+function buildCloudEndpoint(baseUrl, pathSuffix) {
+  const normalized = String(baseUrl || "").replace(/\/+$/, "");
+  return `${normalized}${pathSuffix}`;
+}
+
+function buildCloudRequest(provider, settings, messages) {
+  const model = settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
+  const baseUrl =
+    settings.baseUrls?.[provider] || CLOUD_DEFAULT_BASE_URLS[provider];
+  const maxTokens = clampNumber(
+    settings.maxTokens,
+    CLOUD_MIN_MAX_TOKENS,
+    CLOUD_MAX_MAX_TOKENS,
+    CLOUD_DEFAULT_MAX_TOKENS,
+  );
+  const apiKey = getCloudApiKey(settings, provider);
+  if (!apiKey) {
+    throw createHttpError(
+      400,
+      `Missing ${provider} API key. Add it in Cloud settings or set ${CLOUD_ENV_KEY_NAMES[provider]}.`,
+    );
+  }
+
+  if (provider === "anthropic") {
+    return {
+      url: buildCloudEndpoint(baseUrl, "/messages"),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: {
+        model,
+        max_tokens: maxTokens,
+        messages,
+        stream: true,
+      },
+    };
+  }
+
+  const body = {
+    model,
+    messages,
+    stream: true,
+  };
+  if (provider === "openai") {
+    body.stream_options = { include_usage: true };
+  }
+
+  return {
+    url: buildCloudEndpoint(baseUrl, "/chat/completions"),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body,
+  };
+}
+
+function normalizeUsage(provider, usage) {
+  if (!usage || typeof usage !== "object") return null;
+  if (provider === "anthropic") {
+    const input =
+      typeof usage.input_tokens === "number" ? usage.input_tokens : null;
+    const output =
+      typeof usage.output_tokens === "number" ? usage.output_tokens : null;
+    return {
+      input,
+      output,
+      total:
+        typeof input === "number" && typeof output === "number"
+          ? input + output
+          : null,
+    };
+  }
+  const input =
+    typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null;
+  const output =
+    typeof usage.completion_tokens === "number"
+      ? usage.completion_tokens
+      : null;
+  const total =
+    typeof usage.total_tokens === "number"
+      ? usage.total_tokens
+      : typeof input === "number" && typeof output === "number"
+        ? input + output
+        : null;
+  return { input, output, total };
+}
+
+function createSseParser(onEvent) {
+  let buffer = "";
+  return {
+    push(chunk) {
+      buffer += Buffer.from(chunk).toString("utf8");
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() || "";
+
+      for (const rawEvent of events) {
+        const dataLines = [];
+        let eventName = "";
+        for (const rawLine of rawEvent.split(/\r?\n/)) {
+          const line = rawLine.trimEnd();
+          if (!line || line.startsWith(":")) continue;
+          if (line.startsWith("event:")) {
+            eventName = line.slice("event:".length).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice("data:".length).trimStart());
+          }
+        }
+        const data = dataLines.join("\n");
+        if (data) onEvent(eventName, data);
+      }
+    },
+    flush() {
+      if (!buffer.trim()) return;
+      const pending = buffer;
+      buffer = "";
+      const dataLines = [];
+      let eventName = "";
+      for (const rawLine of pending.split(/\r?\n/)) {
+        const line = rawLine.trimEnd();
+        if (!line || line.startsWith(":")) continue;
+        if (line.startsWith("event:")) {
+          eventName = line.slice("event:".length).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice("data:".length).trimStart());
+        }
+      }
+      const data = dataLines.join("\n");
+      if (data) onEvent(eventName, data);
+    },
+  };
+}
+
+async function streamCloudCompletion({
+  provider,
+  settings,
+  messages,
+  signal,
+  onDelta,
+  onUsage,
+}) {
+  const request = buildCloudRequest(provider, settings, messages);
+  const upstreamRes = await fetch(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: JSON.stringify(request.body),
+    signal,
+  });
+
+  if (!upstreamRes.ok) {
+    const raw = await upstreamRes.text().catch(() => "");
+    throw createHttpError(
+      upstreamRes.status,
+      `Cloud provider request failed (${upstreamRes.status}): ${(raw || upstreamRes.statusText || "empty response body").slice(0, 700)}`,
+    );
+  }
+  if (!upstreamRes.body) {
+    throw createHttpError(502, "Cloud provider returned no stream body.");
+  }
+
+  let latestUsage = null;
+  const parser = createSseParser((_eventName, data) => {
+    if (data === "[DONE]") return;
+    let parsed;
+    try {
+      parsed = JSON.parse(data);
+    } catch (e) {
+      return;
+    }
+
+    if (parsed?.type === "error" || parsed?.error) {
+      const message =
+        parsed.error?.message ||
+        parsed.message ||
+        "Cloud provider stream error.";
+      throw createHttpError(502, message);
+    }
+
+    if (provider === "anthropic") {
+      if (parsed.type === "message_start" && parsed.message?.usage) {
+        latestUsage = normalizeUsage(provider, parsed.message.usage);
+        if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
+      }
+      if (parsed.type === "message_delta" && parsed.usage) {
+        latestUsage = {
+          ...(latestUsage || {}),
+          ...normalizeUsage(provider, parsed.usage),
+        };
+        if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
+      }
+      const textDelta =
+        parsed.type === "content_block_delta" &&
+        parsed.delta?.type === "text_delta" &&
+        typeof parsed.delta.text === "string"
+          ? parsed.delta.text
+          : "";
+      if (textDelta && typeof onDelta === "function") {
+        onDelta(textDelta);
+      }
+      return;
+    }
+
+    if (parsed.usage) {
+      latestUsage = normalizeUsage(provider, parsed.usage);
+      if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
+    }
+    const delta = parsed.choices?.[0]?.delta?.content;
+    if (typeof delta === "string" && delta && typeof onDelta === "function") {
+      onDelta(delta);
+    }
+  });
+
+  const reader = upstreamRes.body.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    parser.push(value);
+  }
+  parser.flush();
+
+  return latestUsage;
+}
+
 // clampOllamaNumber and clampOllamaInteger are kept as thin wrappers for
 // call-site compatibility. They differ from clampNumber in that they do not
 // round to integer (Number) vs parseInt respectively.
@@ -709,7 +1279,6 @@ function sanitizeOllamaOptions(raw) {
   }
   return options;
 }
-
 
 function ollamaChat(model, messages, options, tools = null) {
   let clientReq = null;
@@ -784,6 +1353,184 @@ function getModels() {
     req.on("error", reject);
     req.end();
   });
+}
+
+function publicLibraryIndexJob(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    force: job.force,
+    prune: job.prune,
+    compact: job.compact,
+    cancelRequested: job.cancelRequested === true,
+    pauseRequested: job.pauseRequested === true,
+    autoResumed: job.autoResumed === true,
+    startedAt: job.startedAt,
+    resumedAt: job.resumedAt || null,
+    finishedAt: job.finishedAt || null,
+    progress: job.progress || null,
+    stats: job.stats || null,
+    error: job.error || null,
+  };
+}
+
+function readLibraryIndexJobFile() {
+  try {
+    if (!fs.existsSync(LIBRARY_INDEX_JOB_FILE)) return null;
+    const parsed = JSON.parse(fs.readFileSync(LIBRARY_INDEX_JOB_FILE, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.error("Could not read library index job state:", error.message);
+    return null;
+  }
+}
+
+function persistLibraryIndexJob(job) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = `${LIBRARY_INDEX_JOB_FILE}.tmp`;
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(publicLibraryIndexJob(job), null, 2),
+      "utf8",
+    );
+    fs.renameSync(tmp, LIBRARY_INDEX_JOB_FILE);
+  } catch (error) {
+    console.error("Could not persist library index job state:", error.message);
+  }
+}
+
+function persistedJobStartFileIndex(job) {
+  const progress = job?.progress || {};
+  const embeddingErrors = Number(progress.embeddingErrors || 0);
+  const fileErrors = Number(progress.errors || 0);
+  if (embeddingErrors > 0 || fileErrors > 0) return 0;
+  const processed = Number(job?.progress?.processed || 0);
+  return Number.isFinite(processed) && processed > 0 ? Math.floor(processed) : 0;
+}
+
+function startLibraryIndexJob(options = {}) {
+  if (activeLibraryIndexJob) {
+    const error = new Error("A library index job is already running.");
+    error.statusCode = 409;
+    throw error;
+  }
+  const resumeProgress =
+    options.resumeProgress && typeof options.resumeProgress === "object"
+      ? options.resumeProgress
+      : null;
+  const startFileIndex = Math.max(
+    0,
+    Number.isFinite(Number(options.startFileIndex))
+      ? Math.floor(Number(options.startFileIndex))
+      : 0,
+  );
+  const job = {
+    id: options.id || randomUUID(),
+    status: "running",
+    force: options.force === true,
+    prune: options.prune !== false,
+    compact: options.compact !== false,
+    cancelRequested: false,
+    pauseRequested: false,
+    autoResumed: options.autoResume === true,
+    startedAt: options.startedAt || new Date().toISOString(),
+    resumedAt: options.autoResume === true ? new Date().toISOString() : null,
+    finishedAt: null,
+    progress: resumeProgress,
+    stats: null,
+    error: null,
+  };
+  activeLibraryIndexJob = job;
+  lastLibraryIndexJob = job;
+  persistLibraryIndexJob(job);
+  indexLibrary({
+    force: job.force,
+    prune: job.prune,
+    compact: job.compact,
+    startFileIndex,
+    resumeProgress: startFileIndex > 0 ? resumeProgress : null,
+    onProgress: (progress) => {
+      job.progress = progress;
+      persistLibraryIndexJob(job);
+    },
+    shouldCancel: () => job.cancelRequested === true,
+  })
+    .then((stats) => {
+      job.status = "completed";
+      job.stats = stats;
+      job.progress = {
+        ...(job.progress || {}),
+        phase: "completed",
+        percent: 100,
+      };
+      persistLibraryIndexJob(job);
+    })
+    .catch((error) => {
+      if (error?.cancelled) {
+        job.status = job.pauseRequested ? "paused" : "cancelled";
+        job.error = null;
+        job.progress = {
+          ...(job.progress || {}),
+          phase: job.pauseRequested ? "paused" : "cancelled",
+        };
+      } else {
+        job.status = "failed";
+        job.error = error.stack || error.message || String(error);
+      }
+      persistLibraryIndexJob(job);
+    })
+    .finally(() => {
+      job.finishedAt = new Date().toISOString();
+      activeLibraryIndexJob = null;
+      persistLibraryIndexJob(job);
+    });
+  return job;
+}
+
+function pauseLibraryIndexJob() {
+  if (!activeLibraryIndexJob) return null;
+  activeLibraryIndexJob.pauseRequested = true;
+  activeLibraryIndexJob.cancelRequested = true;
+  activeLibraryIndexJob.progress = {
+    ...(activeLibraryIndexJob.progress || {}),
+    phase: "pausing",
+  };
+  persistLibraryIndexJob(activeLibraryIndexJob);
+  return activeLibraryIndexJob;
+}
+
+function resumePersistedLibraryIndexJob() {
+  const persisted = readLibraryIndexJobFile();
+  if (!persisted) return;
+  lastLibraryIndexJob = persisted;
+  if (
+    persisted.status !== "running" ||
+    persisted.cancelRequested === true ||
+    persisted.pauseRequested === true
+  ) {
+    return;
+  }
+  const startFileIndex = persistedJobStartFileIndex(persisted);
+  try {
+    startLibraryIndexJob({
+      id: persisted.id || randomUUID(),
+      startedAt: persisted.startedAt || null,
+      force: persisted.force === true,
+      prune: persisted.prune !== false,
+      compact: persisted.compact !== false,
+      autoResume: true,
+      resumeProgress: startFileIndex > 0 ? persisted.progress || null : null,
+      startFileIndex,
+    });
+  } catch (error) {
+    persisted.status = "failed";
+    persisted.error = `Auto-resume failed: ${error.message}`;
+    persisted.finishedAt = new Date().toISOString();
+    lastLibraryIndexJob = persisted;
+    persistLibraryIndexJob(persisted);
+  }
 }
 
 function buildExecutablePath(basePath = "") {
@@ -901,7 +1648,7 @@ function formatPiUiRequest(evt) {
 }
 
 const piConvProcesses = new Map();
-// convId -> { proc, buffer, stderrData, closed, lastActivityAt, settings, sessionFile, activeRequestId, pendingStatsResolver }
+// convId -> { proc, buffer, stderrData, closed, lastActivityAt, settings, sessionFile, activeRequestId, pendingStatsResolver, pendingStateResolver }
 
 function cleanupPiSession(sessionId, reason = "session_closed") {
   const session = piRpcSessions.get(sessionId);
@@ -934,7 +1681,8 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
   // Cap number of running Pi processes
   const MAX_PI_CONV_PROCESSES = 20;
   if (piConvProcesses.size >= MAX_PI_CONV_PROCESSES) {
-    let oldest = null, oldestTime = Infinity;
+    let oldest = null,
+      oldestTime = Infinity;
     for (const [id, proc] of piConvProcesses.entries()) {
       if (proc.closed) {
         piConvProcesses.delete(id);
@@ -946,7 +1694,9 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       }
     }
     if (piConvProcesses.size >= MAX_PI_CONV_PROCESSES && oldest) {
-      try { piConvProcesses.get(oldest).proc.kill(); } catch (_) {}
+      try {
+        piConvProcesses.get(oldest).proc.kill();
+      } catch (_) {}
       piConvProcesses.delete(oldest);
     }
   }
@@ -970,6 +1720,7 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
     sessionFile: null,
     activeRequestId: null,
     pendingStatsResolver: null,
+    pendingStateResolver: null,
   };
 
   piConvProcesses.set(convId, convProc);
@@ -991,7 +1742,13 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       convProc.lastActivityAt = Date.now();
 
       if (evt.type === "response" && evt.command === "get_state") {
-        convProc.sessionFile = evt.data?.sessionFile || null;
+        const stateData = evt.data || evt;
+        convProc.sessionFile = stateData.sessionFile || convProc.sessionFile;
+        if (convProc.pendingStateResolver) {
+          const resolveState = convProc.pendingStateResolver;
+          convProc.pendingStateResolver = null;
+          resolveState(stateData);
+        }
         continue;
       }
 
@@ -1003,8 +1760,9 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       ) {
         const statsData = evt.data || evt;
         if (convProc.pendingStatsResolver && statsData.contextUsage) {
-          convProc.pendingStatsResolver(statsData);
+          const resolveStats = convProc.pendingStatsResolver;
           convProc.pendingStatsResolver = null;
+          resolveStats(statsData);
         }
         continue;
       }
@@ -1187,10 +1945,30 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
         notifyPiSession(session);
       }
     }
+    if (convProc.pendingStateResolver) {
+      const resolveState = convProc.pendingStateResolver;
+      convProc.pendingStateResolver = null;
+      resolveState(null);
+    }
+    if (convProc.pendingStatsResolver) {
+      const resolveStats = convProc.pendingStatsResolver;
+      convProc.pendingStatsResolver = null;
+      resolveStats(null);
+    }
   });
 
   proc.on("close", (code) => {
     convProc.closed = true;
+    if (convProc.pendingStateResolver) {
+      const resolveState = convProc.pendingStateResolver;
+      convProc.pendingStateResolver = null;
+      resolveState(null);
+    }
+    if (convProc.pendingStatsResolver) {
+      const resolveStats = convProc.pendingStatsResolver;
+      convProc.pendingStatsResolver = null;
+      resolveStats(null);
+    }
     if (convProc.activeRequestId) {
       const session = piRpcSessions.get(convProc.activeRequestId);
       if (session && !session.done) {
@@ -1219,6 +1997,102 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
   proc.stdin.write(JSON.stringify({ type: "get_state" }) + "\n");
 
   return convProc;
+}
+
+function requestPiState(convProc, timeoutMs = 5000) {
+  if (!convProc || convProc.closed) return Promise.resolve(null);
+  if (convProc.pendingStateResolver) {
+    return Promise.reject(createHttpError(409, "State request already in progress"));
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (convProc.pendingStateResolver === finish) {
+        convProc.pendingStateResolver = null;
+      }
+      resolve(value);
+    };
+    convProc.pendingStateResolver = finish;
+    convProc.proc.stdin.write(JSON.stringify({ type: "get_state" }) + "\n");
+    setTimeout(() => finish(null), timeoutMs);
+  });
+}
+
+function requestPiStats(convProc, timeoutMs = 5000) {
+  if (!convProc || convProc.closed) return Promise.resolve(null);
+  if (convProc.pendingStatsResolver) {
+    return Promise.reject(createHttpError(409, "Stats request already in progress"));
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (convProc.pendingStatsResolver === finish) {
+        convProc.pendingStatsResolver = null;
+      }
+      resolve(value);
+    };
+    convProc.pendingStatsResolver = finish;
+    convProc.proc.stdin.write(
+      JSON.stringify({ type: "get_session_stats" }) + "\n",
+    );
+    setTimeout(() => finish(null), timeoutMs);
+  });
+}
+
+function formatPiContextUsage(stats) {
+  const cu = stats && stats.contextUsage;
+  if (cu && cu.tokens != null && cu.contextWindow != null) {
+    return {
+      used: cu.tokens,
+      total: cu.contextWindow,
+      percent:
+        cu.percent != null
+          ? cu.percent
+          : Math.round((cu.tokens / cu.contextWindow) * 100),
+    };
+  }
+  return null;
+}
+
+function summarizePiStatus(state, stats = null) {
+  const model = state?.model && typeof state.model === "object" ? state.model : {};
+  const provider = typeof model.provider === "string" ? model.provider : "";
+  const zeroCost =
+    model.cost &&
+    typeof model.cost === "object" &&
+    Number(model.cost.input || 0) === 0 &&
+    Number(model.cost.output || 0) === 0 &&
+    Number(model.cost.cacheRead || 0) === 0 &&
+    Number(model.cost.cacheWrite || 0) === 0;
+  const statsCost =
+    stats && typeof stats.cost === "number" && Number.isFinite(stats.cost)
+      ? stats.cost
+      : null;
+  const cost =
+    provider === "ollama" || zeroCost || statsCost === 0
+      ? "Local"
+      : statsCost != null
+        ? `$${statsCost.toFixed(4)}`
+        : null;
+
+  return {
+    model: model.id || model.name || null,
+    provider: provider || null,
+    state: state?.isCompacting
+      ? "COMPACTING"
+      : state?.isStreaming
+        ? "STREAMING"
+        : "IDLE",
+    thinkingLevel:
+      typeof state?.thinkingLevel === "string" ? state.thinkingLevel : null,
+    cost,
+    sessionId: typeof state?.sessionId === "string" ? state.sessionId : null,
+    contextUsage: formatPiContextUsage(stats),
+  };
 }
 
 function sendPiPrompt(convProc, message, source = "manual") {
@@ -1333,7 +2207,7 @@ setInterval(() => {
       cleanupPiSession(sessionId, "stale_timeout");
     }
   }
-  
+
   // Sweep closed piConvProcesses
   for (const [convId, proc] of piConvProcesses.entries()) {
     if (proc.closed) {
@@ -1373,10 +2247,11 @@ const server = http.createServer(async (req, res) => {
     res.end("Forbidden: Cross-Origin request blocked.");
     return;
   }
-  
+
   // SV-14: Normalize URL path by stripping query strings
   const urlPath = req.url.split("?")[0];
-  
+  const requestUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+
   // SV-17: Generate a nonce for CSP
   const cspNonce = randomBytes(16).toString("base64");
 
@@ -1385,7 +2260,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'self'; script-src 'self' 'nonce-${cspNonce}' https://cdn.jsdelivr.net; style-src 'self' 'nonce-${cspNonce}'; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
+    `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
   );
 
   console.log("Incoming request:", req.method, req.url);
@@ -1396,7 +2271,12 @@ const server = http.createServer(async (req, res) => {
   };
 
   if (req.method === "GET" && urlPath === "/") {
-    const injectNonce = (html) => html.replace(/<script /g, `<script nonce="${cspNonce}" `).replace(/<style /g, `<style nonce="${cspNonce}" `).replace(/<style>/g, `<style nonce="${cspNonce}">`);
+    const injectNonce = (html) =>
+      html
+        .replace(/<script /g, `<script nonce="${cspNonce}" `)
+        .replace(/<script>/g, `<script nonce="${cspNonce}">`)
+        .replace(/<style /g, `<style nonce="${cspNonce}" `)
+        .replace(/<style>/g, `<style nonce="${cspNonce}">`);
     if (EMBEDDED_INDEX) {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(injectNonce(EMBEDDED_INDEX));
@@ -1414,14 +2294,37 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && VENDOR_SCRIPT_FILES[urlPath]) {
+    try {
+      const vendor = VENDOR_SCRIPT_FILES[urlPath];
+      const embedded = EMBEDDED_ASSETS.get(vendor.assetName);
+      const source =
+        typeof embedded === "string"
+          ? embedded
+          : fs.readFileSync(vendor.resolveFilePath(), "utf8");
+      res.writeHead(200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      });
+      res.end(source);
+    } catch (error) {
+      send(500, { error: "Failed to load vendor script." });
+    }
+    return;
+  }
+
   if (req.method === "GET" && urlPath === "/fonts/pi-font-faces.css") {
     try {
-      if (!fs.existsSync(FONT_FACES_FILE)) {
+      const embedded = EMBEDDED_ASSETS.get("font_faces.css");
+      if (!embedded && !fs.existsSync(FONT_FACES_FILE)) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Font faces file not found.");
         return;
       }
-      const css = fs.readFileSync(FONT_FACES_FILE, "utf8");
+      const css =
+        typeof embedded === "string"
+          ? embedded
+          : fs.readFileSync(FONT_FACES_FILE, "utf8");
       res.writeHead(200, {
         "Content-Type": "text/css; charset=utf-8",
         "Cache-Control": "public, max-age=3600",
@@ -1436,7 +2339,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && urlPath === "/api/version") {
     try {
       const pkgPath = path.join(__dirname, "package.json");
-      if (fs.existsSync(pkgPath)) {
+      const embeddedPackage = EMBEDDED_ASSETS.get("package.json");
+      if (typeof embeddedPackage === "string") {
+        const pkg = JSON.parse(embeddedPackage);
+        send(200, { version: pkg.version || "unknown" });
+      } else if (fs.existsSync(pkgPath)) {
         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
         send(200, { version: pkg.version || "unknown" });
       } else {
@@ -1479,6 +2386,205 @@ const server = http.createServer(async (req, res) => {
       send(200, await getModels());
     } catch (e) {
       send(500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/ui/settings") {
+    const payload = loadUiSettingsWithMeta();
+    send(200, payload);
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/ui/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const nextSettings =
+        body.settings && typeof body.settings === "object"
+          ? body.settings
+          : body;
+      const sanitized = saveUiSettings(nextSettings);
+      send(200, { ok: true, settings: sanitized, exists: true });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/cloud/settings") {
+    send(200, { settings: redactCloudSettings(loadCloudSettings()) });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/cloud/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const nextSettings =
+        body.settings && typeof body.settings === "object"
+          ? body.settings
+          : body;
+      const sanitized = sanitizeCloudSettings(
+        nextSettings,
+        loadCloudSettings(),
+      );
+      saveCloudSettings(sanitized);
+      send(200, {
+        ok: true,
+        settings: redactCloudSettings(sanitized),
+      });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/settings") {
+    try {
+      const config = loadLibraryConfig();
+      send(200, { settings: config.chatIntegration });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const nextSettings =
+        body.settings && typeof body.settings === "object"
+          ? body.settings
+          : body;
+      const config = saveLibraryChatSettings(nextSettings);
+      send(200, { ok: true, settings: config.chatIntegration });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/config") {
+    try {
+      send(200, { config: loadLibraryConfig() });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/config") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Config object is required" });
+        return;
+      }
+      const nextConfig =
+        body.config && typeof body.config === "object" ? body.config : body;
+      const config = saveLibraryConfig(nextConfig);
+      send(200, { ok: true, config });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/status") {
+    try {
+      send(200, await getLibraryStatus());
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/estimate") {
+    try {
+      const sampleLimit = Number.parseInt(
+        requestUrl.searchParams.get("sample") || "",
+        10,
+      );
+      send(
+        200,
+        await estimateLibraryIndex({
+          sampleLimit: Number.isFinite(sampleLimit) ? sampleLimit : undefined,
+        }),
+      );
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/index") {
+    send(200, {
+      running: !!activeLibraryIndexJob,
+      job: publicLibraryIndexJob(activeLibraryIndexJob || lastLibraryIndexJob),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/index") {
+    try {
+      const body = await parseJsonBody(req);
+      const job = startLibraryIndexJob({
+        force: body?.force === true,
+        prune: body?.prune !== false,
+        compact: body?.compact !== false,
+      });
+      send(202, { ok: true, running: true, job: publicLibraryIndexJob(job) });
+    } catch (e) {
+      send(e.statusCode || 500, {
+        error: e.message,
+        running: !!activeLibraryIndexJob,
+        job: publicLibraryIndexJob(activeLibraryIndexJob || lastLibraryIndexJob),
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/index/cancel") {
+    if (!activeLibraryIndexJob) {
+      send(200, {
+        ok: true,
+        running: false,
+        job: publicLibraryIndexJob(lastLibraryIndexJob),
+      });
+      return;
+    }
+    const job = pauseLibraryIndexJob();
+    send(202, {
+      ok: true,
+      running: true,
+      job: publicLibraryIndexJob(job),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/search") {
+    try {
+      const body = await parseJsonBody(req);
+      const query = typeof body?.query === "string" ? body.query.trim() : "";
+      if (!query) {
+        send(400, { error: "Search query is required" });
+        return;
+      }
+      const results = await searchLibrary(query, { limit: body.limit });
+      send(200, { query, results });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
     }
     return;
   }
@@ -1708,13 +2814,13 @@ const server = http.createServer(async (req, res) => {
         send(400, { error: "Settings object is required" });
         return;
       }
-      
+
       const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
       const filtered = Object.fromEntries(
-        Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k))
+        Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k)),
       );
       const nextSettings = { ...loadSkillsConfig(), ...filtered };
-      
+
       saveSkillsConfig(nextSettings);
       send(200, { ok: true, settings: nextSettings });
     } catch (e) {
@@ -1742,7 +2848,7 @@ const server = http.createServer(async (req, res) => {
         typeof uiResponse.confirmed === "boolean"
           ? uiResponse.confirmed
           : false;
-          
+
       clearTimeout(entry.timer);
       entry.resolve(approved);
       ollamaToolRequests.delete(sessionId);
@@ -1776,13 +2882,13 @@ const server = http.createServer(async (req, res) => {
       const body = await parseJsonBody(req);
       const convId = body.saveConv || body.convId || "default";
       const { sessionFile } = body;
-      
+
       if (typeof sessionFile !== "string" || !sessionFile.trim()) {
         send(400, { error: "sessionFile must be a non-empty string" });
         return;
       }
       const resolvedPath = path.resolve(sessionFile.trim());
-      
+
       const convProc = getOrCreatePiConvProcess(convId);
       convProc.proc.stdin.write(
         JSON.stringify({ type: "switch_session", sessionPath: resolvedPath }) +
@@ -1805,36 +2911,31 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      if (convProc.pendingStatsResolver) {
-        send(409, { error: "Stats request already in progress" });
+      const stats = await requestPiStats(convProc);
+      send(200, { contextUsage: formatPiContextUsage(stats) });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/pi/status") {
+    try {
+      const body = await parseJsonBody(req);
+      const convId = body.saveConv || body.convId || "default";
+      const convProc = piConvProcesses.get(convId);
+      if (!convProc || convProc.closed) {
+        send(404, { error: "No active Pi process" });
         return;
       }
 
-      const stats = await new Promise((resolve) => {
-        convProc.pendingStatsResolver = resolve;
-        convProc.proc.stdin.write(
-          JSON.stringify({ type: "get_session_stats" }) + "\n",
-        );
-        setTimeout(() => resolve(null), 5000);
+      const state = await requestPiState(convProc);
+      const stats = await requestPiStats(convProc);
+      send(200, {
+        status: summarizePiStatus(state, stats),
       });
-
-      const cu = stats && stats.contextUsage;
-      if (cu && cu.tokens != null && cu.contextWindow != null) {
-        send(200, {
-          contextUsage: {
-            used: cu.tokens,
-            total: cu.contextWindow,
-            percent:
-              cu.percent != null
-                ? cu.percent
-                : Math.round((cu.tokens / cu.contextWindow) * 100),
-          },
-        });
-      } else {
-        send(200, { contextUsage: null });
-      }
     } catch (e) {
-      send(500, { error: e.message });
+      send(e.statusCode || 500, { error: e.message });
     }
     return;
   }
@@ -1917,6 +3018,91 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && urlPath === "/api/cloud/chat/stream") {
+    let finished = false;
+    const abortController = new AbortController();
+    const emit = (event) => {
+      if (!res.writableEnded) {
+        res.write(JSON.stringify(event) + "\n");
+      }
+    };
+
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body.message !== "string" || !body.message.trim()) {
+        send(400, { error: "message is required" });
+        return;
+      }
+
+      const settings = loadCloudSettings();
+      const provider = CLOUD_PROVIDER_SET.has(settings.provider)
+        ? settings.provider
+        : "openai";
+      const { history = [], saveConv, convTitle, mode = "cloud" } = body;
+      const message = body.message;
+      const messages = normalizeCloudHistoryMessages(history, message);
+      let output = "";
+      let usage = null;
+
+      res.writeHead(200, {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+
+      req.on("close", () => {
+        if (!finished) {
+          abortController.abort();
+        }
+      });
+
+      usage = await streamCloudCompletion({
+        provider,
+        settings,
+        messages,
+        signal: abortController.signal,
+        onDelta: (delta) => {
+          output += delta;
+          emit({ type: "delta", delta, response: output });
+        },
+        onUsage: (nextUsage) => {
+          usage = nextUsage;
+        },
+      });
+
+      finished = true;
+      upsertConversation(saveConv, convTitle, message, messages, output, mode);
+      emit({
+        type: "done",
+        response: output,
+        usage,
+        provider,
+        model: settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider],
+      });
+      if (!res.writableEnded) res.end();
+    } catch (e) {
+      const isAbort = e?.name === "AbortError";
+      if (!finished) {
+        finished = true;
+      }
+      if (!res.writableEnded) {
+        if (!res.headersSent) {
+          send(isAbort ? 499 : e.statusCode || 500, {
+            error: isAbort ? "Cloud request cancelled." : e.message,
+          });
+        } else {
+          emit({
+            type: "error",
+            error: isAbort ? "Cloud request cancelled." : e.message,
+          });
+          res.end();
+        }
+      }
+    }
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/chat/stream") {
     let finished = false;
     let upstreamReq = null;
@@ -1931,6 +3117,7 @@ const server = http.createServer(async (req, res) => {
         convTitle,
         mode = "ollama",
         options,
+        library,
       } = body;
       const messages = [...history, { role: "user", content: message }];
       const safeOptions = sanitizeOllamaOptions(options);
@@ -1959,6 +3146,37 @@ const server = http.createServer(async (req, res) => {
           res.write(JSON.stringify(event) + "\n");
         }
       };
+
+      try {
+        const libraryContext = await buildChatLibraryContext(message, library);
+        if (libraryContext.enabled) {
+          if (libraryContext.contextMessage) {
+            const firstNonSystemIndex = messages.findIndex(
+              (item) => item.role !== "system",
+            );
+            if (firstNonSystemIndex === -1) {
+              messages.push(libraryContext.contextMessage);
+            } else {
+              messages.splice(firstNonSystemIndex, 0, libraryContext.contextMessage);
+            }
+          }
+          emit({
+            type: "library_results",
+            results: libraryContext.results.map((result) => ({
+              chunkId: result.chunkId,
+              title: result.title,
+              author: result.author,
+              path: result.path,
+              heading: result.heading,
+              kind: result.kind,
+              score: result.score,
+              snippet: result.snippet,
+            })),
+          });
+        }
+      } catch (e) {
+        emit({ type: "library_error", error: e.message });
+      }
 
       const startStream = (depth = 0) => {
         if (depth > 10) {
@@ -2055,22 +3273,33 @@ const server = http.createServer(async (req, res) => {
                         thinking,
                       });
 
+                      const requiresShellConfirmation =
+                        skillRequiresShellConfirmation(
+                          tc.function.name,
+                          DATA_DIR,
+                        );
                       let executeAllowed = true;
-                      if (tc.function.name === "shell_command") {
+                      if (requiresShellConfirmation) {
                         executeAllowed = await new Promise((resolve) => {
                           const reqId =
-                            "ollama_req_" +
-                            Date.now() +
-                            "_" +
-                            Math.floor(Math.random() * 1000);
-                          const denialTimer = setTimeout(() => {
-                            if (ollamaToolRequests.has(reqId)) {
-                              ollamaToolRequests.delete(reqId);
-                              resolve(false);
-                              appendSecurityEvent("shell_command_timeout_denied", { reqId });
-                            }
-                          }, 5 * 60 * 1000); // 5 minute auto-deny timeout
-                          ollamaToolRequests.set(reqId, { resolve, timer: denialTimer });
+                            "ollama_req_" + Date.now() + "_" + randomUUID();
+                          const denialTimer = setTimeout(
+                            () => {
+                              if (ollamaToolRequests.has(reqId)) {
+                                ollamaToolRequests.delete(reqId);
+                                resolve(false);
+                                appendSecurityEvent(
+                                  "shell_command_timeout_denied",
+                                  { reqId },
+                                );
+                              }
+                            },
+                            5 * 60 * 1000,
+                          ); // 5 minute auto-deny timeout
+                          ollamaToolRequests.set(reqId, {
+                            resolve,
+                            timer: denialTimer,
+                          });
                           emit({
                             type: "needs_ui",
                             sessionId: reqId,
@@ -2089,13 +3318,20 @@ const server = http.createServer(async (req, res) => {
                       if (tc.function.name.startsWith("mcp__")) {
                         result = await executeMcpTool(tc);
                       } else if (executeAllowed) {
-                        appendSecurityEvent("shell_command_executed", {
-                          command: tc.function.arguments,
+                        if (requiresShellConfirmation) {
+                          appendSecurityEvent("shell_command_executed", {
+                            command: tc.function.arguments,
+                            tool: tc.function.name,
+                          });
+                        }
+                        result = await executeSkill(tc, {
+                          dataDir: DATA_DIR,
+                          allowShellCommand: requiresShellConfirmation,
                         });
-                        result = await executeSkill(tc, { dataDir: DATA_DIR });
                       } else {
                         appendSecurityEvent("shell_command_denied", {
                           command: tc.function.arguments,
+                          tool: tc.function.name,
                         });
                         result =
                           "User denied permission to execute this shell command.";
@@ -2260,12 +3496,15 @@ const server = http.createServer(async (req, res) => {
         messages.push(messageObj);
         for (const toolCall of messageObj.tool_calls) {
           let result;
-          if (toolCall.function.name === "shell_command") {
+          if (
+            skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR)
+          ) {
             appendSecurityEvent("shell_command_denied_non_stream", {
               command: toolCall.function.arguments,
+              tool: toolCall.function.name,
             });
             result =
-              "Error: shell_command requires interactive confirmation, which is not supported in the non-streaming API.";
+              "Error: shell command execution requires interactive confirmation, which is not supported in the non-streaming API.";
           } else if (toolCall.function.name.startsWith("mcp__")) {
             result = await executeMcpTool(toolCall);
           } else {
@@ -2313,16 +3552,22 @@ const server = http.createServer(async (req, res) => {
         send(400, { error: "event is required" });
         return;
       }
-      
+
       const ALLOWED_SECURITY_EVENTS = new Set([
-        "user_action", "settings_changed", "conversation_cleared",
-        "file_uploaded", "pi_mode_entered", "ollama_mode_entered",
+        "user_action",
+        "settings_changed",
+        "conversation_cleared",
+        "file_uploaded",
+        "pi_mode_entered",
+        "ollama_mode_entered",
+        "cloud_mode_entered",
+        "user_message_submitted",
       ]);
       if (!ALLOWED_SECURITY_EVENTS.has(body.event.trim())) {
         send(400, { error: "Unknown security event type" });
         return;
       }
-      
+
       appendSecurityEvent(body.event.trim(), {
         ...(body.details && typeof body.details === "object"
           ? body.details
@@ -2531,7 +3776,10 @@ const server = http.createServer(async (req, res) => {
       }
       const isPdf = file.filename.toLowerCase().endsWith(".pdf");
       if (isPdf) {
-        const tmp = path.join(os.tmpdir(), "upload_" + randomBytes(8).toString("hex") + ".pdf");
+        const tmp = path.join(
+          os.tmpdir(),
+          "upload_" + randomBytes(8).toString("hex") + ".pdf",
+        );
         try {
           fs.writeFileSync(tmp, file.body);
           execFile(
@@ -2591,16 +3839,17 @@ const server = http.createServer(async (req, res) => {
   res.end();
 });
 
-server.listen(PORT, "127.0.0.1", () =>
-  console.log("Running securely on http://127.0.0.1:" + PORT),
-);
+server.listen(PORT, "127.0.0.1", () => {
+  console.log("Running securely on http://127.0.0.1:" + PORT);
+  resumePersistedLibraryIndexJob();
+});
 
 // SV-18: Graceful shutdown handler
 function gracefulShutdown(signal) {
   console.log(`Received ${signal}. Shutting down gracefully...`);
-  
+
   // Clean up all Pi processes
-  for (const [convId, procObj] of piConvProcesses.entries()) {
+  for (const procObj of piConvProcesses.values()) {
     try {
       procObj.proc.kill("SIGTERM");
     } catch (e) {}
@@ -2612,7 +3861,7 @@ function gracefulShutdown(signal) {
     console.log("Server stopped.");
     process.exit(0);
   });
-  
+
   // Force exit after 5 seconds
   setTimeout(() => process.exit(1), 5000).unref();
 }

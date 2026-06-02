@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ollama Pi Chat</title>
     <!-- Markdown Parser and Sanitiser -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+    <script src="/vendor/marked.umd.js"></script>
+    <script src="/vendor/purify.min.js"></script>
     <link rel="stylesheet" href="/fonts/pi-font-faces.css" />
     <style>
       @keyframes pulse {
@@ -260,9 +260,9 @@
         order: 4;
         margin-top: -4px;
       }
-      /* Hide file label completely in Pi mode (upload not available there) */
-      [data-mode="pi"] #fileLabel,
-      [data-mode="pi"] #mcpBtn {
+      /* MCP tools are Ollama-only in this app. */
+      [data-mode="pi"] #mcpBtn,
+      [data-mode="cloud"] #mcpBtn {
         display: none !important;
       }
       #windowDragBar {
@@ -295,7 +295,7 @@
         align-items: center;
         justify-content: center;
         min-height: 28px;
-        margin-left: auto;
+        margin-left: 0;
         margin-right: 12px;
         font-size: 11px;
         font-weight: 700;
@@ -305,6 +305,19 @@
         line-height: 1;
         white-space: nowrap;
         flex-shrink: 0;
+      }
+      .mode-status {
+        justify-content: flex-start;
+        margin-left: auto;
+        max-width: 42vw;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      [data-mode="ollama"] #modeStatus {
+        display: none;
+      }
+      [data-mode="ollama"] #tokenCounter {
+        margin-left: auto;
       }
       .mode-hidden {
         visibility: hidden !important;
@@ -317,11 +330,16 @@
         transition: border-color 0.2s;
       }
       .toggle button {
-        padding: 5px 12px;
+        width: 38px;
+        height: 30px;
+        padding: 0;
         background: transparent;
         border: none;
         color: var(--text-inverse);
         cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         font-family: inherit;
         font-size: 11px;
         font-weight: 700;
@@ -333,6 +351,19 @@
       .toggle button.active {
         background: var(--text-inverse);
         color: var(--bg-inverse);
+      }
+      .toggle button svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        display: block;
+        flex-shrink: 0;
+      }
+      .toggle button .mode-icon-ollama {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+        stroke: none;
       }
       #modelSelect,
       #topbarPromptSelect {
@@ -605,6 +636,46 @@
         flex-direction: column;
         gap: 20px;
       }
+      .settings-tabs {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .settings-tab {
+        min-height: 32px;
+        padding: 7px 8px;
+        background: transparent;
+        color: var(--text-inverse);
+        border: var(--border-width) solid var(--text-inverse);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-align: center;
+        transition:
+          background 0.1s,
+          color 0.1s,
+          border-color 0.2s;
+      }
+      .settings-tab:hover,
+      .settings-tab.active {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .settings-tab:focus-visible {
+        outline: var(--border-width) solid var(--text-inverse);
+        outline-offset: 2px;
+      }
+      .settings-tab-panel {
+        display: none;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .settings-tab-panel.active {
+        display: flex;
+      }
       .setting-group {
         display: flex;
         flex-direction: column;
@@ -624,6 +695,20 @@
         font-weight: 700;
         letter-spacing: 1px;
       }
+      .setting-section-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-inverse);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+      }
+      .setting-section-title svg {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+      }
       .setting-group select {
         padding: 6px 8px;
         background: var(--bg-inverse);
@@ -635,7 +720,8 @@
         outline: none;
       }
       .setting-group input[type="text"],
-      .setting-group input[type="number"] {
+      .setting-group input[type="number"],
+      .setting-group input[type="password"] {
         padding: 6px 8px;
         background: var(--bg-inverse);
         color: var(--text-inverse);
@@ -644,6 +730,25 @@
         font-size: 12px;
         outline: none;
         border-radius: 0;
+      }
+      .setting-group input[type="text"]:focus,
+      .setting-group input[type="number"]:focus,
+      .setting-group input[type="password"]:focus,
+      .setting-group textarea:focus,
+      .setting-group select:focus {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+        border-color: var(--text-inverse);
+        outline: none;
+        box-shadow: none;
+      }
+      .setting-group input:-webkit-autofill,
+      .setting-group input:-webkit-autofill:hover,
+      .setting-group input:-webkit-autofill:focus {
+        -webkit-text-fill-color: var(--text-inverse);
+        caret-color: var(--text-inverse);
+        box-shadow: 0 0 0 1000px var(--bg-inverse) inset;
+        transition: background-color 9999s ease-out;
       }
       .setting-group textarea {
         padding: 6px 8px;
@@ -788,6 +893,96 @@
         line-height: 1.4;
         opacity: 0.8;
       }
+      .database-source-row {
+        border: 1px dashed var(--text-inverse);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .database-source-grid {
+        display: grid;
+        grid-template-columns: 1fr 120px;
+        gap: 8px;
+      }
+      .database-source-grid-wide {
+        display: grid;
+        grid-template-columns: 1fr 130px;
+        gap: 8px;
+      }
+      .database-source-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .database-metrics-section {
+        border: 1px dashed var(--text-inverse);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .database-metrics-title {
+        color: var(--text-inverse);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+      .database-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .database-metric {
+        border: 1px solid var(--text-inverse);
+        min-width: 0;
+        padding: 6px;
+      }
+      .database-metric-wide {
+        grid-column: 1 / -1;
+      }
+      .database-metric-label {
+        color: var(--text-inverse);
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1.2;
+        opacity: 0.7;
+      }
+      .database-metric-value {
+        color: var(--text-inverse);
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.25;
+        margin-top: 3px;
+        overflow-wrap: anywhere;
+      }
+      .database-progress {
+        width: 100%;
+        height: 12px;
+        border: var(--border-width) solid var(--text-inverse);
+        background: var(--bg-inverse);
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .database-progress-fill {
+        width: 0%;
+        height: 100%;
+        background: var(--text-inverse);
+        transition: width 0.18s ease;
+      }
+      @media (max-width: 720px) {
+        .database-source-grid,
+        .database-source-grid-wide,
+        .database-metrics-grid {
+          grid-template-columns: 1fr;
+        }
+        .database-metric-wide {
+          grid-column: auto;
+        }
+        .setting-row-inline {
+          align-items: stretch;
+          flex-direction: column;
+        }
+      }
 
       .settings-action-btn,
       .mcp-action-btn {
@@ -810,6 +1005,16 @@
       .mcp-action-btn:hover {
         background: var(--text-inverse);
         color: var(--bg-inverse);
+      }
+      .settings-action-btn:disabled,
+      .mcp-action-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+      .settings-action-btn:disabled:hover,
+      .mcp-action-btn:disabled:hover {
+        background: transparent;
+        color: var(--text-inverse);
       }
       .settings-footer {
         margin-top: 4px;
@@ -1491,8 +1696,88 @@
         </svg>
       </span>
       <div class="toggle">
-        <button id="btnOllama" class="active">OLLAMA</button>
-        <button id="btnPi">PI</button>
+        <button
+          id="btnOllama"
+          class="active"
+          title="Ollama"
+          aria-label="Ollama mode"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 640 640"
+            class="mode-icon-ollama"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M0 0 C21.66150227 14.65426525 30.52976894 42.50453797 35.5390625 66.9140625 C36.67113047 72.89978717 37.31095315 78.84024284 37.4375 84.9375 C38.31148437 84.50179687 39.18546875 84.06609375 40.0859375 83.6171875 C72.3029905 67.87769431 109.38121196 63.03368191 143.88671875 74.36328125 C150.5147771 76.66621251 156.84045622 79.37406386 162.8359375 83.0546875 C164.42462831 84.09841283 164.42462831 84.09841283 166.4375 83.9375 C166.52725098 83.30996826 166.61700195 82.68243652 166.70947266 82.03588867 C170.96779877 52.92495319 178.62755086 21.54139053 202.4375 1.9375 C210.12127864 -3.00623618 219.20219752 -6.30213792 228.4375 -5.0625 C236.83190239 -3.18760809 243.64969028 -0.3265157 250.4375 4.9375 C251.9534375 6.0203125 251.9534375 6.0203125 253.5 7.125 C273.98042616 25.00294107 279.15420025 57.0017799 281.08984375 82.5859375 C282.47303467 104.73821764 281.40286618 126.85849275 279.4375 148.9375 C280.05085205 149.23011719 280.6642041 149.52273437 281.29614258 149.82421875 C301.60199491 160.38113206 315.09924109 187.2259388 321.90283203 208.14379883 C332.23781793 241.6472892 332.39542338 279.78121174 315.75 311.3125 C314.19210491 314.08447885 312.75170485 316.57543613 310.66796875 318.9765625 C309.19771905 320.89712751 309.19771905 320.89712751 309.5859375 323.375 C310.49535917 326.11160833 311.66006877 328.41762357 313.0625 330.9375 C319.89246002 344.28472308 324.17829282 359.1483822 326.4375 373.9375 C326.62054687 375.12988281 326.80359375 376.32226562 326.9921875 377.55078125 C328.94106578 393.80893848 328.29733223 411.01793198 324.4375 426.9375 C324.26009277 427.69450195 324.08268555 428.45150391 323.89990234 429.23144531 C321.85914794 437.63332987 319.46888935 445.37577377 315.09765625 452.8828125 C307.79898477 464.84550313 307.79898477 464.84550313 307.3046875 478.34765625 C308.92179175 483.69669736 311.07777787 488.80289994 313.27392578 493.93603516 C315.09731557 498.63950851 316.02163205 503.41725358 316.875 508.375 C317.02517578 509.19645508 317.17535156 510.01791016 317.33007812 510.86425781 C320.59238822 529.5421318 324.56890792 559.39940824 313.4375 575.9375 C309.38390922 579.88715256 305.68943894 581.72898713 300.0625 582.25 C294.62402141 581.78116564 290.90340392 580.13687593 286.6875 576.6875 C282.23370603 571.24397403 281.16332188 567.92475206 281.84375 561.015625 C284.36360522 532.09978243 280.74979117 506.63251672 269.4375 479.9375 C267.1001616 474.40806839 266.20346032 470.04371395 268.46484375 464.3515625 C270.37176654 460.49545825 272.43842556 456.73906551 274.52441406 452.97753906 C279.95118616 443.15168692 284.39970378 433.80208885 287.4375 422.9375 C287.75589844 421.926875 288.07429688 420.91625 288.40234375 419.875 C296.95618824 388.34008945 286.64155368 358.22200228 271.4375 330.9375 C270.78007813 329.79861328 270.78007813 329.79861328 270.109375 328.63671875 C267.56193901 324.01724856 266.45968668 320.20739918 267.4375 314.9375 C268.97626152 309.7199775 271.54790592 306.68278023 275.75 303.3125 C285.93127523 294.77498914 290.25945548 279.78850387 291.4375 266.9375 C292.06543976 252.79915756 292.42709617 238.62069327 288.4375 224.9375 C287.90962891 223.06964844 287.90962891 223.06964844 287.37109375 221.1640625 C281.12824093 200.29819217 268.61884877 182.59677321 249.4375 171.9375 C233.38474473 163.33609829 216.69174329 161.78742671 198.81640625 161.5078125 C191.43213003 161.30340347 186.36812295 160.86812295 180.9375 155.4375 C178.84455073 152.750338 177.31840466 149.89319048 175.75 146.875 C166.09935794 128.71199674 151.24413687 115.57065576 131.6875 109.0625 C129.27803536 108.33004248 126.86193526 107.61876907 124.4375 106.9375 C123.62410156 106.69128906 122.81070313 106.44507813 121.97265625 106.19140625 C99.26748981 100.40537965 72.81909362 106.88866313 52.9609375 118.30859375 C48.49824435 121.18931053 44.43517875 124.44724531 40.4375 127.9375 C39.79941406 128.48019531 39.16132813 129.02289063 38.50390625 129.58203125 C32.01926659 135.51785954 27.95171141 143.38156306 24.5 151.375 C22.36875784 155.78446654 18.85405239 158.02119329 14.4375 159.9375 C10.79870149 160.92181722 7.22003964 161.08910204 3.4621582 161.22753906 C-23.42974068 162.23198049 -48.43059812 169.29977801 -67.5625 188.9375 C-68.15417969 189.52015625 -68.74585938 190.1028125 -69.35546875 190.703125 C-86.2977853 208.69014204 -89.39986019 233.79924033 -88.9140625 257.33984375 C-88.2055884 275.11540792 -82.83316295 292.62764141 -70.8125 306.0625 C-67.35015227 310.48661098 -66.44840941 314.08884568 -66.79296875 319.671875 C-67.42558451 324.1990315 -69.16383402 327.78821852 -71.25 331.8125 C-86.43920115 362.77772678 -92.11242722 400.68149749 -81.25 433.9375 C-77.65173917 443.91839015 -72.61805657 452.21326587 -66.19921875 460.625 C-63.05363137 465.06936212 -62.87309844 469.67409352 -63.5625 474.9375 C-64.99823897 479.50028579 -66.87197727 483.85395127 -68.75 488.25 C-74.82441947 502.91778407 -80.67686772 518.72333264 -80.6953125 534.81640625 C-80.69660156 535.90244141 -80.69789063 536.98847656 -80.69921875 538.10742188 C-80.69341797 539.78674805 -80.69341797 539.78674805 -80.6875 541.5 C-80.69136719 542.62341797 -80.69523437 543.74683594 -80.69921875 544.90429688 C-80.69728516 546.53141602 -80.69728516 546.53141602 -80.6953125 548.19140625 C-80.69362061 549.66589233 -80.69362061 549.66589233 -80.69189453 551.17016602 C-80.5658296 553.86629052 -80.12843214 556.30378047 -79.5625 558.9375 C-79.03934245 565.32002213 -79.9228903 569.60256721 -83.5625 574.9375 C-87.45812974 578.83312974 -91.37665148 580.89072572 -96.95703125 580.97265625 C-102.51183763 580.63120638 -106.27203423 579.71719604 -110.5625 575.9375 C-121.14800342 561.93082627 -118.90760756 538.15281618 -116.83862305 521.63574219 C-114.75694304 507.73786416 -110.87833309 493.482098 -105.27734375 480.59765625 C-103.64836168 476.57395512 -103.06687971 474.16550352 -104.5625 469.9375 C-105.85788507 467.21821943 -107.32000439 464.61508971 -108.8125 462 C-127.61380939 427.55134075 -126.73252726 384.95004295 -116.5625 347.9375 C-111.69759672 331.60186513 -111.69759672 331.60186513 -108.29296875 324.1640625 C-107.34006668 321.25949468 -107.60695052 319.83905437 -108.5625 316.9375 C-109.41527846 315.33981243 -110.27375686 313.74413485 -111.19067383 312.18237305 C-116.78909254 302.63061141 -119.9316232 292.64664082 -122.5625 281.9375 C-122.74184082 281.21256348 -122.92118164 280.48762695 -123.10595703 279.74072266 C-127.75721149 259.91169049 -127.35396468 237.6975758 -122.5625 217.9375 C-122.31306641 216.8861084 -122.31306641 216.8861084 -122.05859375 215.81347656 C-115.44298164 188.84873166 -99.69391395 163.82525614 -76.5625 147.9375 C-75.9025 147.9375 -75.2425 147.9375 -74.5625 147.9375 C-74.69527344 146.95136719 -74.82804687 145.96523437 -74.96484375 144.94921875 C-80.10397563 104.44761849 -82.30031093 51.16029677 -57.625 15.9375 C-43.03889634 -2.70029912 -21.91212934 -12.95780034 0 0 Z M-26.5625 33.9375 C-46.22432284 59.49786969 -42.84803695 101.89901442 -40.5625 131.9375 C-38.81839844 131.53917969 -38.81839844 131.53917969 -37.0390625 131.1328125 C-35.42233254 130.77397399 -33.80510465 130.41737469 -32.1875 130.0625 C-31.33784668 129.87469971 -30.48819336 129.68689941 -29.61279297 129.4934082 C-25.23088018 128.56564033 -20.93755993 127.81460374 -16.46875 127.47265625 C-15.2629126 127.37863525 -15.2629126 127.37863525 -14.03271484 127.28271484 C-12.50346223 127.17987316 -10.97202782 127.10463788 -9.43994141 127.06103516 C-6.52570063 126.86433565 -4.21749411 126.51330341 -1.98339844 124.54931641 C5.88442281 114.47974247 3.18823618 95.68449198 1.9765625 83.65234375 C-0.24223624 65.61735728 -5.29770673 42.44554533 -19.5625 29.9375 C-22.91781027 29.9375 -24.15890968 31.64316379 -26.5625 33.9375 Z M222.1875 32.9375 C205.41754407 50.18935121 201.66108818 79.38357015 201.40136719 102.40917969 C201.37098241 114.75231876 201.37098241 114.75231876 205.4375 125.9375 C207.5859962 126.48956867 207.5859962 126.48956867 210.1015625 126.5625 C211.05216553 126.62775879 212.00276855 126.69301758 212.98217773 126.76025391 C213.99868408 126.81874512 215.01519043 126.87723633 216.0625 126.9375 C225.7213357 127.61894465 234.97664333 128.87780696 244.4375 130.9375 C245.40637895 126.03679767 245.61239233 121.3473128 245.640625 116.375 C245.64763931 115.55471313 245.65465363 114.73442627 245.66188049 113.88928223 C245.67937823 111.23863238 245.6857374 108.58820557 245.6875 105.9375 C245.68817474 105.03555908 245.68884949 104.13361816 245.68954468 103.2043457 C245.902855 66.87600328 245.902855 66.87600328 230.6015625 35 C226.57051291 30.7919547 226.57051291 30.7919547 222.1875 32.9375 Z"
+              fill="currentColor"
+              transform="translate(218.5625,32.0625)"
+            />
+            <path
+              d="M0 0 C1.58249838 1.3519357 3.14508346 2.72750851 4.6875 4.125 C5.51765625 4.86234375 6.3478125 5.5996875 7.203125 6.359375 C19.56605348 17.96384161 28.80004119 33.55124481 29.92578125 50.76953125 C30.38437494 67.91928267 26.85350699 83.14554965 15.3125 96.375 C13.78685405 97.97377609 12.24609585 99.55832852 10.6875 101.125 C9.79998047 102.06472656 9.79998047 102.06472656 8.89453125 103.0234375 C-1.11225492 112.78723328 -15.97282133 117.88046821 -29.3125 121.125 C-29.98458496 121.28871094 -30.65666992 121.45242188 -31.34912109 121.62109375 C-62.1111501 128.64909566 -98.83940485 125.92123396 -126.0625 109.31640625 C-140.85867453 99.33965876 -152.4487689 86.10370204 -156.8046875 68.4296875 C-159.74811497 49.27476722 -155.5501419 33.03993396 -144.28125 17.28515625 C-127.97155844 -3.78152868 -103.52020774 -15.57041914 -77.55859375 -19.43359375 C-50.47792848 -22.62843154 -21.83508471 -16.88807333 0 0 Z M-124.33203125 32.53125 C-131.3960828 41.78278891 -133.25179748 50.65498708 -132.3125 62.125 C-129.78153207 72.46581184 -122.91371432 81.05193813 -114.3125 87.125 C-90.50561073 101.19540588 -59.19887097 103.09497975 -32.5703125 96.38671875 C-19.07390152 92.55878932 -6.68581374 86.57191226 0.6875 74.125 C5.19675234 64.41684496 6.24708901 54.4785802 3.25 44.125 C-2.69573462 28.09462717 -15.68567562 18.5764011 -30.3125 11.125 C-62.49186059 -3.43949031 -101.51490304 6.36222508 -124.33203125 32.53125 Z"
+              fill="currentColor"
+              transform="translate(383.3125,290.875)"
+            />
+            <path
+              d="M0 0 C5.02557011 4.59398489 8.57415064 9.13269363 9.3359375 16.05078125 C9.44096382 24.82047902 8.2811306 29.98972927 2.75 36.75 C-3.88432947 42.17808775 -9.22184999 43.68915913 -17.87890625 43.37890625 C-24.0723223 42.62701469 -28.07818159 40.26316377 -32.3125 35.75 C-36.45082299 30.46151639 -38.59263322 24.87881783 -38.28515625 18.07421875 C-37.3340349 11.15578809 -34.98756148 5.87420781 -30 1 C-20.81009714 -5.44325774 -9.52730312 -6.33389226 0 0 Z"
+              fill="currentColor"
+              transform="translate(218,280)"
+            />
+            <path
+              d="M0 0 C6.12015366 5.69968509 9.34983051 10.92154702 10.02734375 19.2734375 C9.96687342 25.30319303 8.09636741 30.2391675 4.9375 35.3125 C-0.68106882 40.45289275 -6.31984661 43.26916278 -14 43.625 C-21.05369622 43.28047499 -26.78426665 41.12900196 -31.8828125 36.16796875 C-36.71139178 30.25470862 -38.30732447 24.55828763 -37.9375 17 C-36.90985551 9.29857231 -32.73908337 3.9232461 -26.7421875 -0.8125 C-18.69302145 -6.29892709 -7.87152005 -5.24768004 0 0 Z"
+              fill="currentColor"
+              transform="translate(450,280)"
+            />
+            <path
+              d="M0 0 C2.0360882 1.27754554 4.04109119 2.60699818 6 4 C10.02757055 4.39211447 10.02757055 4.39211447 12.75 2 C17.09409581 -0.67328973 18.96500027 -0.71928568 24 0 C27.64184981 2.55704348 28.77792202 4.22272709 30 8.5 C30 12.58464363 29.57248653 13.86478204 27 17 C26.44183594 17.35578125 25.88367188 17.7115625 25.30859375 18.078125 C23.02377197 19.58543957 21.60254774 20.75164944 20 23 C19.30908013 26.43323071 18.88137169 29.68617964 18.70678711 33.17504883 C18.4110789 38.02848273 17.45350623 40.55950133 14 44 C10.79826746 45.60086627 7.47422941 45.49917089 4 45 C1.1899654 43.20636089 -0.50940468 41.98119065 -2 39 C-2 37.17984456 -1.99848828 35.35966561 -1.98632812 33.53955078 C-1.9779707 26.44402698 -1.9779707 26.44402698 -5.03125 20.234375 C-7.27309187 18.3188772 -9.56561919 16.65725155 -12 15 C-13.55024464 11.89951072 -13.28992015 9.42105782 -13 6 C-9.30298192 0.33123894 -6.70067405 -0.5583895 0 0 Z"
+              fill="currentColor"
+              transform="translate(311,324)"
+            />
+          </svg>
+        </button>
+        <button id="btnPi" title="Pi" aria-label="Pi mode">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="lucide lucide-pi-icon lucide-pi"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <line x1="9" x2="9" y1="4" y2="20" />
+            <path d="M4 7c0-1.7 1.3-3 3-3h13" />
+            <path d="M18 20c-1.7 0-3-1.3-3-3V4" />
+          </svg>
+        </button>
+        <button id="btnCloud" title="Cloud" aria-label="Cloud mode">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="lucide lucide-cloud-drizzle-icon lucide-cloud-drizzle"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"
+            />
+            <path d="M8 19v1" />
+            <path d="M8 14v1" />
+            <path d="M16 19v1" />
+            <path d="M16 14v1" />
+            <path d="M12 21v1" />
+            <path d="M12 16v1" />
+          </svg>
+        </button>
       </div>
       <select id="modelSelect"></select>
       <select
@@ -1500,6 +1785,9 @@
         
         title="Active System Prompt"
       ></select>
+      <span id="modeStatus" class="token-counter mode-status" title="Mode Status"
+        >Ollama</span
+      >
       <span id="tokenCounter" class="token-counter" title="Token Usage"
         >Tokens: 0 / ?</span
       >
@@ -1795,6 +2083,72 @@
           <button id="closeSettingsBtn">✕</button>
         </div>
         <div id="settingsBody">
+          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+            <button
+              type="button"
+              class="settings-tab active"
+              data-settings-tab="main"
+              role="tab"
+              aria-selected="true"
+              aria-controls="settingsTabMain"
+            >
+              MAIN
+            </button>
+            <button
+              type="button"
+              class="settings-tab"
+              data-settings-tab="database"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabDatabase"
+            >
+              DATABASE
+            </button>
+            <button
+              type="button"
+              class="settings-tab"
+              data-settings-tab="prompts"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabPrompts"
+            >
+              PROMPTS
+            </button>
+            <button
+              type="button"
+              class="settings-tab"
+              data-settings-tab="skills"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabSkills"
+            >
+              SKILLS
+            </button>
+          </div>
+          <div
+            id="settingsTabMain"
+            class="settings-tab-panel active"
+            data-settings-panel="main"
+            role="tabpanel"
+          ></div>
+          <div
+            id="settingsTabDatabase"
+            class="settings-tab-panel"
+            data-settings-panel="database"
+            role="tabpanel"
+          ></div>
+          <div
+            id="settingsTabPrompts"
+            class="settings-tab-panel"
+            data-settings-panel="prompts"
+            role="tabpanel"
+          ></div>
+          <div
+            id="settingsTabSkills"
+            class="settings-tab-panel"
+            data-settings-panel="skills"
+            role="tabpanel"
+          ></div>
           <div id="ollamaPaletteGroup" class="setting-group">
             <label>OLLAMA COLOR PALETTE</label>
             <select
@@ -1829,6 +2183,23 @@
             </select>
             <div class="setting-help">
               Theme used when chat mode is set to `PI`.
+            </div>
+          </div>
+          <div id="cloudPaletteGroup" class="setting-group" style="display: none">
+            <label>CLOUD COLOR PALETTE</label>
+            <select
+              id="settingCloudPalette"
+            >
+              <option value="orange">Cyber Orange</option>
+              <option value="grey">Brutalist Slate</option>
+              <option value="solarised">Solarised Everforest</option>
+              <option value="forest">Forest Sage</option>
+              <option value="calmblue">Gentle Blue (Default)</option>
+              <option value="retro">Retro Amber</option>
+              <option value="nordic">Nordic Light</option>
+            </select>
+            <div class="setting-help">
+              Theme used when chat mode is set to `Cloud`.
             </div>
           </div>
           <div id="ollamaFontGroup" class="setting-group">
@@ -2180,11 +2551,492 @@
               </button>
             </div>
           </div>
+          <div id="databaseSettingsGroup" class="setting-group">
+            <div class="setting-section-title">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <ellipse cx="12" cy="5" rx="9" ry="3" />
+                <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                <path d="M3 12A9 3 0 0 0 21 12" />
+              </svg>
+              <span>DATABASE</span>
+            </div>
+            <div class="setting-help">
+              Build and use the local SQLite library index for retrieval before
+              Ollama responses.
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">DATABASE FILE</label>
+              <input id="databasePathInput" type="text" />
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: 10px">
+                <input id="librarySearchEnabledInput" type="checkbox" />
+                ENABLE FOR OLLAMA CHAT
+              </label>
+            </div>
+            <div class="setting-row-inline">
+              <div class="setting-row" style="flex: 1">
+                <label style="font-size: 10px">PASSAGES</label>
+                <div class="setting-number">
+                  <input
+                    id="libraryLimitInput"
+                    type="number"
+                    min="1"
+                    max="20"
+                    step="1"
+                  />
+                  <div class="setting-number-controls">
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="libraryLimitInput"
+                      data-dir="up"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="libraryLimitInput"
+                      data-dir="down"
+                    >
+                      −
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row" style="flex: 1">
+                <label style="font-size: 10px">CONTEXT CHARS</label>
+                <div class="setting-number">
+                  <input
+                    id="libraryMaxContextInput"
+                    type="number"
+                    min="1000"
+                    max="50000"
+                    step="1000"
+                  />
+                  <div class="setting-number-controls">
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="libraryMaxContextInput"
+                      data-dir="up"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="libraryMaxContextInput"
+                      data-dir="down"
+                    >
+                      −
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: 10px">
+                <input id="libraryIncludePathsInput" type="checkbox" />
+                INCLUDE SOURCE PATHS IN MODEL CONTEXT
+              </label>
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: 10px">
+                <input id="databaseSemanticEnabledInput" type="checkbox" />
+                ENABLE SEMANTIC VECTOR SEARCH
+              </label>
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: 10px">
+                <input id="databaseKeywordEnabledInput" type="checkbox" />
+                ENABLE KEYWORD FTS INDEX
+              </label>
+            </div>
+            <div class="setting-help">
+              Keyword FTS increases database size. Leave it off unless you need
+              exact-term fallback search.
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">EMBEDDING MODEL</label>
+              <select id="databaseEmbeddingModelSelect"></select>
+              <input
+                id="databaseEmbeddingModelCustomInput"
+                type="text"
+                placeholder="Custom embedding model id"
+                style="display: none"
+              />
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">OLLAMA EMBEDDING URL</label>
+              <input id="databaseEmbeddingBaseUrlInput" type="text" />
+            </div>
+            <div class="setting-row-inline">
+              <div class="setting-row" style="flex: 1">
+                <label style="font-size: 10px">BATCH SIZE</label>
+                <div class="setting-number">
+                  <input
+                    id="databaseEmbeddingBatchInput"
+                    type="number"
+                    min="1"
+                    max="64"
+                    step="1"
+                  />
+                  <div class="setting-number-controls">
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseEmbeddingBatchInput"
+                      data-dir="up"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseEmbeddingBatchInput"
+                      data-dir="down"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row" style="flex: 1">
+                <label style="font-size: 10px">VECTOR DIMS</label>
+                <div class="setting-number">
+                  <input
+                    id="databaseEmbeddingDimensionsInput"
+                    type="number"
+                    min="0"
+                    max="4096"
+                    step="1"
+                  />
+                  <div class="setting-number-controls">
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseEmbeddingDimensionsInput"
+                      data-dir="up"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseEmbeddingDimensionsInput"
+                      data-dir="down"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row" style="flex: 1">
+                <label style="font-size: 10px">DEFAULT SEARCH LIMIT</label>
+                <div class="setting-number">
+                  <input
+                    id="databaseDefaultLimitInput"
+                    type="number"
+                    min="1"
+                    max="50"
+                    step="1"
+                  />
+                  <div class="setting-number-controls">
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseDefaultLimitInput"
+                      data-dir="up"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      class="setting-number-btn"
+                      data-target="databaseDefaultLimitInput"
+                      data-dir="down"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">SQLITE-VEC EXTENSION PATH</label>
+              <input
+                id="databaseSqliteVecPathInput"
+                type="text"
+                placeholder="/path/to/sqlite-vec extension"
+              />
+              <div class="setting-help">
+                Required only for semantic vector search. Leave empty to use
+                keyword search only.
+              </div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">SOURCE FOLDERS</label>
+              <div id="databaseSourcesList"></div>
+              <div class="setting-row-inline" style="margin-top: 6px">
+                <button id="addDatabaseSourceBtn" class="settings-action-btn">
+                  ADD SOURCE
+                </button>
+              </div>
+            </div>
+            <div
+              class="database-metrics-section"
+              aria-label="Saved database status"
+            >
+              <div class="database-metrics-title">SAVED DATABASE</div>
+              <div class="database-metrics-grid">
+                <div class="database-metric">
+                  <div class="database-metric-label">FILES</div>
+                  <div id="libraryStatusFilesValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">PASSAGES</div>
+                  <div
+                    id="libraryStatusPassagesValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">EMBEDDINGS</div>
+                  <div
+                    id="libraryStatusEmbeddingsValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">SOURCES</div>
+                  <div
+                    id="libraryStatusSourcesValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">VECTOR</div>
+                  <div id="libraryStatusVectorValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">DIMS</div>
+                  <div id="libraryStatusDimsValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">MODEL</div>
+                  <div id="libraryStatusModelValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">SQLITE</div>
+                  <div id="libraryStatusSqliteValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="libraryStatusText" class="setting-help">
+              Saved database snapshot. Live job counts appear below.
+            </div>
+            <div
+              class="database-metrics-section"
+              aria-label="Index size estimate"
+            >
+              <div class="database-metrics-title">INDEX ESTIMATE</div>
+              <div class="database-metrics-grid">
+                <div class="database-metric">
+                  <div class="database-metric-label">FILES</div>
+                  <div id="libraryEstimateFilesValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">PASSAGES</div>
+                  <div
+                    id="libraryEstimatePassagesValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">TEXT</div>
+                  <div id="libraryEstimateTextValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">VECTORS</div>
+                  <div
+                    id="libraryEstimateVectorValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">PROJECTED SIZE</div>
+                  <div id="libraryEstimateTotalValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">OUTLIERS</div>
+                  <div
+                    id="libraryEstimateOutliersValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="libraryEstimateStatusText" class="setting-help">
+              Run an estimate before indexing a large library.
+            </div>
+            <div class="setting-row-inline" style="margin-top: 6px">
+              <button id="estimateLibraryIndexBtn" class="settings-action-btn">
+                ESTIMATE INDEX SIZE
+              </button>
+            </div>
+            <div
+              class="database-metrics-section"
+              aria-label="Current index job"
+            >
+              <div class="database-metrics-title">CURRENT INDEX JOB</div>
+              <div class="database-metrics-grid">
+                <div class="database-metric">
+                  <div class="database-metric-label">PHASE</div>
+                  <div id="libraryJobPhaseValue" class="database-metric-value">
+                    Idle
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">PROGRESS</div>
+                  <div id="libraryJobProgressValue" class="database-metric-value">
+                    0%
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">FILES</div>
+                  <div id="libraryJobFilesValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">PASSAGES</div>
+                  <div id="libraryJobPassagesValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">EMBEDDINGS</div>
+                  <div
+                    id="libraryJobEmbeddingsValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">PENDING</div>
+                  <div
+                    id="libraryJobPendingEmbeddingsValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">FILE ERRORS</div>
+                  <div id="libraryJobErrorsValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">EMBED ERRORS</div>
+                  <div
+                    id="libraryJobEmbeddingErrorsValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">SKIPPED</div>
+                  <div id="libraryJobSkippedValue" class="database-metric-value">
+                    --
+                  </div>
+                </div>
+                <div class="database-metric database-metric-wide">
+                  <div class="database-metric-label">CURRENT FILE</div>
+                  <div
+                    id="libraryJobCurrentFileValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="libraryIndexStatusText" class="setting-help">
+              No active index job.
+            </div>
+            <div class="database-progress" aria-label="Database index progress">
+              <div
+                id="libraryIndexProgressFill"
+                class="database-progress-fill"
+              ></div>
+            </div>
+            <div id="libraryIndexProgressText" class="setting-help">0%</div>
+            <div class="setting-row-inline" style="margin-top: 6px">
+              <button id="saveDatabaseSettingsBtn" class="settings-action-btn">
+                SAVE DATABASE SETTINGS
+              </button>
+              <button id="reloadLibraryStatusBtn" class="settings-action-btn">
+                REFRESH STATUS
+              </button>
+            </div>
+            <div class="setting-row-inline">
+              <button id="runLibraryIndexBtn" class="settings-action-btn">
+                BUILD / UPDATE INDEX
+              </button>
+              <button id="forceLibraryReindexBtn" class="settings-action-btn">
+                REINDEX ALL
+              </button>
+              <button id="cancelLibraryIndexBtn" class="settings-action-btn">
+                PAUSE INDEX
+              </button>
+            </div>
+          </div>
           <div id="piFontGroup" class="setting-group">
             <label>PI FONT FAMILY</label>
             <select
               id="settingPiFontPreset"
-              
             >
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
@@ -2202,11 +3054,38 @@
               id="settingPiFontCustom"
               type="text"
               placeholder='"Space Mono", monospace'
-              
               style="display: none"
             />
             <div class="setting-help">
               Font stack used only in `PI` mode. Presets use local embedded
+              font-faces from this project.
+            </div>
+          </div>
+          <div id="cloudFontGroup" class="setting-group" style="display: none">
+            <label>CLOUD FONT FAMILY</label>
+            <select
+              id="settingCloudFontPreset"
+            >
+              <option value="space-mono">Space Mono (Default)</option>
+              <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
+              <option value="montserrat">Montserrat</option>
+              <option value="sen">Sen</option>
+              <option value="ia-writer-duo-s">iA Writer Duo S</option>
+              <option value="ibm-plex-serif">IBM Plex Serif</option>
+              <option value="ibarra-real-nova">Ibarra Real Nova</option>
+              <option value="lora">Lora</option>
+              <option value="ia-writer-mono-s">iA Writer Mono S</option>
+              <option value="marcellus">Marcellus</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input
+              id="settingCloudFontCustom"
+              type="text"
+              placeholder='"Space Mono", monospace'
+              style="display: none"
+            />
+            <div class="setting-help">
+              Font stack used only in `Cloud` mode. Presets use local embedded
               font-faces from this project.
             </div>
           </div>
@@ -2459,6 +3338,91 @@
             <div class="setting-help">
               Quick access to the active Ollama Pi Chat project folder shown
               above.
+            </div>
+          </div>
+
+          <div id="cloudSettingsGroup" class="setting-group" style="display: none">
+            <label>CLOUD MODE</label>
+            <div class="setting-help">
+              Configure direct cloud model access for the independent `Cloud`
+              chat mode.
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">PROVIDER</label>
+              <select id="cloudProviderSelect">
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic Claude</option>
+                <option value="mistral">Mistral</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">API KEY</label>
+              <input
+                id="cloudApiKeyInput"
+                type="password"
+                autocomplete="off"
+                placeholder="Leave blank to keep saved key"
+              />
+              <div id="cloudApiKeyStatus" class="setting-help"></div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">MODEL</label>
+              <input id="cloudModelInput" type="text" />
+              <div class="setting-help">
+                Enter the exact model id available to your provider account.
+              </div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">BASE URL</label>
+              <input id="cloudBaseUrlInput" type="text" />
+              <div class="setting-help">
+                Use the provider default unless you are targeting a compatible
+                gateway.
+              </div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">MAX OUTPUT TOKENS</label>
+              <div class="setting-number">
+                <input
+                  id="cloudMaxTokensInput"
+                  type="number"
+                  min="1"
+                  max="128000"
+                  step="128"
+                />
+                <div class="setting-number-controls">
+                  <button
+                    type="button"
+                    class="setting-number-btn"
+                    data-target="cloudMaxTokensInput"
+                    data-dir="up"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    class="setting-number-btn"
+                    data-target="cloudMaxTokensInput"
+                    data-dir="down"
+                  >
+                    −
+                  </button>
+                </div>
+              </div>
+              <div class="setting-help">Default: 2048.</div>
+            </div>
+            <div class="setting-row-inline" style="margin-top: 6px">
+              <button id="saveCloudSettingsBtn" class="settings-action-btn">
+                SAVE CLOUD SETTINGS
+              </button>
+              <button id="reloadCloudSettingsBtn" class="settings-action-btn">
+                RELOAD
+              </button>
+            </div>
+            <div class="setting-row-inline">
+              <button id="clearCloudApiKeyBtn" class="settings-action-btn">
+                CLEAR SAVED API KEY
+              </button>
             </div>
           </div>
 
@@ -2768,6 +3732,13 @@
           lastSentMessage: null,
           lastExchangePersisted: true,
         },
+        cloud: {
+          convId: null,
+          history: [],
+          lastUserMessage: null,
+          lastSentMessage: null,
+          lastExchangePersisted: true,
+        },
       };
       let pendingFile = null;
       let lastUserMessage = null;
@@ -2782,14 +3753,42 @@
       let notesSaveInFlight = null;
       let notesPendingSaveText = null;
       let settingsOpen = false;
+      let activeSettingsTab = "main";
       let mcpOpen = false;
       let isDark = false;
       let ollamaPalette = "solarised";
       let piPalette = "orange";
+      let cloudPalette = "calmblue";
       let ollamaTokenState = { used: null, total: null };
       let piTokenState = { used: null, total: null };
+      let cloudTokenState = { used: null, total: null };
       let ollamaFont = '"Space Mono", monospace';
       let piFont = '"Space Mono", monospace';
+      let cloudFont = '"Space Mono", monospace';
+      let piStatusInfo = null;
+      let cloudStreamState = "IDLE";
+      const CLOUD_DEFAULT_MODELS = {
+        openai: "gpt-5",
+        anthropic: "claude-sonnet-4-20250514",
+        mistral: "mistral-large-latest",
+      };
+      const CLOUD_DEFAULT_BASE_URLS = {
+        openai: "https://api.openai.com/v1",
+        anthropic: "https://api.anthropic.com/v1",
+        mistral: "https://api.mistral.ai/v1",
+      };
+      let cloudSettings = {
+        provider: "openai",
+        models: { ...CLOUD_DEFAULT_MODELS },
+        baseUrls: { ...CLOUD_DEFAULT_BASE_URLS },
+        maxTokens: 2048,
+        hasApiKey: { openai: false, anthropic: false, mistral: false },
+        envKeyNames: {
+          openai: "OPENAI_API_KEY",
+          anthropic: "ANTHROPIC_API_KEY",
+          mistral: "MISTRAL_API_KEY",
+        },
+      };
       let ollamaOptions = {
         temperature: 0.3,
         topP: 0.6,
@@ -2801,6 +3800,58 @@
         seed: 42,
         stop: [],
       };
+      let librarySettings = {
+        enabled: false,
+        limit: 5,
+        maxContextChars: 12000,
+        includeSourcePaths: true,
+      };
+      let databaseConfig = {
+        version: 1,
+        databasePath: "~/ollama-pi-chat/library.sqlite",
+        sources: [
+          {
+            name: "Books",
+            type: "book",
+            path: "~/Libros",
+            extensions: [".epub"],
+          },
+          {
+            name: "Obsidian",
+            type: "note",
+            path: "",
+            extensions: [".md", ".txt"],
+          },
+        ],
+        chunking: {
+          targetChars: 2400,
+          overlapChars: 0,
+          minChars: 300,
+          maxChars: 3200,
+        },
+        search: {
+          keywordEnabled: false,
+          defaultLimit: 5,
+          maxLimit: 20,
+          maxContextChars: 12000,
+        },
+        embedding: {
+          enabled: false,
+          model: "nomic-embed-text-v2-moe:latest",
+          ollamaBaseUrl: "http://127.0.0.1:11434",
+          batchSize: 16,
+          dimensions: 256,
+          sqliteVecExtensionPath: "",
+        },
+        chatIntegration: { ...librarySettings },
+        watch: {
+          enabled: false,
+          debounceMs: 2000,
+          rescanIntervalMs: 60000,
+        },
+      };
+      let availableOllamaModels = [];
+      let libraryIndexPollTimer = null;
       let promptsList = [];
       let activePromptId = "";
       let lastExchangePersisted = true;
@@ -3077,14 +4128,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       const topbarPromptSelect = document.getElementById("topbarPromptSelect");
       const ollamaPaletteGroup = document.getElementById("ollamaPaletteGroup");
       const piPaletteGroup = document.getElementById("piPaletteGroup");
+      const cloudPaletteGroup = document.getElementById("cloudPaletteGroup");
       const ollamaFontGroup = document.getElementById("ollamaFontGroup");
       const ollamaGenGroup = document.getElementById("ollamaGenGroup");
+      const databaseSettingsGroup = document.getElementById(
+        "databaseSettingsGroup",
+      );
       const piFontGroup = document.getElementById("piFontGroup");
+      const cloudFontGroup = document.getElementById("cloudFontGroup");
       const promptSettingsGroup = document.getElementById(
         "promptSettingsGroup",
       );
       const promptManageGroup = document.getElementById("promptManageGroup");
       const piSettingsGroup = document.getElementById("piSettingsGroup");
+      const cloudSettingsGroup =
+        document.getElementById("cloudSettingsGroup");
       const piPermissionBtn = document.getElementById("piPermissionBtn");
       const fileInput = document.getElementById("fileInput");
       const fileLabel = document.getElementById("fileLabel");
@@ -3145,6 +4203,93 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }).catch(() => {});
       }
 
+      function refreshCustomSelectUi(selectEl) {
+        if (selectEl && typeof syncCustomSelect === "function") {
+          syncCustomSelect(selectEl);
+        }
+      }
+
+      let uiSettingsSaveTimer = null;
+      function currentUiSettingsPayload() {
+        return {
+          palettes: {
+            ollama: ollamaPalette,
+            pi: piPalette,
+            cloud: cloudPalette,
+          },
+          fonts: {
+            ollama: ollamaFont,
+            pi: piFont,
+            cloud: cloudFont,
+          },
+        };
+      }
+
+      function saveUiSettingsSoon() {
+        if (uiSettingsSaveTimer) clearTimeout(uiSettingsSaveTimer);
+        uiSettingsSaveTimer = window.setTimeout(() => {
+          uiSettingsSaveTimer = null;
+          postJson(
+            "/api/ui/settings",
+            { settings: currentUiSettingsPayload() },
+            "Save UI settings",
+          ).catch((error) => {
+            console.error("Could not save UI settings", error);
+          });
+        }, 250);
+      }
+
+      async function loadUiSettings() {
+        let serverPayload = null;
+        try {
+          const res = await fetch(apiUrl("/api/ui/settings"));
+          serverPayload = await readJsonResponse(res, "Load UI settings");
+        } catch (error) {
+          console.error("Could not load UI settings", error);
+        }
+
+        const useServer = serverPayload?.exists === true;
+        const settings = serverPayload?.settings || {};
+        const palettes = settings.palettes || {};
+        const fonts = settings.fonts || {};
+
+        ollamaPalette = useServer
+          ? palettes.ollama || "solarised"
+          : localStorage.getItem("ollama-pi-chat-ollama-palette") ||
+            "solarised";
+        piPalette = useServer
+          ? palettes.pi || "orange"
+          : localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
+        cloudPalette = useServer
+          ? palettes.cloud || "calmblue"
+          : localStorage.getItem("ollama-pi-chat-cloud-palette") ||
+            "calmblue";
+        ollamaFont = normalizeFontStack(
+          useServer
+            ? fonts.ollama
+            : localStorage.getItem("ollama-pi-chat-ollama-font"),
+        );
+        piFont = normalizeFontStack(
+          useServer
+            ? fonts.pi
+            : localStorage.getItem("ollama-pi-chat-pi-font"),
+        );
+        cloudFont = normalizeFontStack(
+          useServer
+            ? fonts.cloud
+            : localStorage.getItem("ollama-pi-chat-cloud-font"),
+        );
+
+        localStorage.setItem("ollama-pi-chat-ollama-palette", ollamaPalette);
+        localStorage.setItem("ollama-pi-chat-pi-palette", piPalette);
+        localStorage.setItem("ollama-pi-chat-cloud-palette", cloudPalette);
+        localStorage.setItem("ollama-pi-chat-ollama-font", ollamaFont);
+        localStorage.setItem("ollama-pi-chat-pi-font", piFont);
+        localStorage.setItem("ollama-pi-chat-cloud-font", cloudFont);
+
+        if (!useServer) saveUiSettingsSoon();
+      }
+
       // THEMES AND PALETTES
       function toggleTheme() {
         isDark = !isDark;
@@ -3169,13 +4314,22 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function changeOllamaPalette(p) {
         ollamaPalette = p;
         localStorage.setItem("ollama-pi-chat-ollama-palette", p);
+        saveUiSettingsSoon();
         if (mode === "ollama") applyPalette(p);
       }
 
       function changePiPalette(p) {
         piPalette = p;
         localStorage.setItem("ollama-pi-chat-pi-palette", p);
+        saveUiSettingsSoon();
         if (mode === "pi") applyPalette(p);
+      }
+
+      function changeCloudPalette(p) {
+        cloudPalette = p;
+        localStorage.setItem("ollama-pi-chat-cloud-palette", p);
+        saveUiSettingsSoon();
+        if (mode === "cloud") applyPalette(p);
       }
 
       function clampFloat(value, fallback, min, max) {
@@ -3312,6 +4466,889 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         return payload;
       }
 
+      function normalizeLibrarySettings(raw) {
+        const source = raw && typeof raw === "object" ? raw : {};
+        return {
+          enabled: source.enabled === true,
+          limit: clampInteger(source.limit, 5, 1, 20),
+          maxContextChars: clampInteger(
+            source.maxContextChars,
+            12000,
+            1000,
+            50000,
+          ),
+          includeSourcePaths: source.includeSourcePaths !== false,
+        };
+      }
+
+      function normalizeSourceExtensionsInput(value) {
+        const raw = Array.isArray(value)
+          ? value
+          : String(value || "").split(/[, ]+/);
+        const extensions = raw
+          .map((extension) => String(extension || "").trim().toLowerCase())
+          .filter(Boolean)
+          .map((extension) =>
+            extension.startsWith(".") ? extension : `.${extension}`,
+          );
+        return [...new Set(extensions)];
+      }
+
+      function formatExtensions(extensions) {
+        const normalized = normalizeSourceExtensionsInput(extensions);
+        return normalized.length ? normalized.join(", ") : ".txt";
+      }
+
+      function normalizeDatabaseConfig(raw) {
+        const source = raw && typeof raw === "object" ? raw : {};
+        const defaults = databaseConfig || {};
+        const search = source.search || {};
+        const embedding = source.embedding || {};
+        const chunking = source.chunking || {};
+        const usesLegacyChunkDefaults =
+          (Number(chunking.targetChars) === 1800 &&
+            Number(chunking.overlapChars) === 220 &&
+            Number(chunking.minChars) === 120 &&
+            Number(chunking.maxChars) === 2800) ||
+          (Number(chunking.targetChars) === 4200 &&
+            Number(chunking.overlapChars) === 120 &&
+            Number(chunking.minChars) === 300 &&
+            Number(chunking.maxChars) === 6500);
+        const normalizedChunking = usesLegacyChunkDefaults ? {} : chunking;
+        const watch = source.watch || {};
+        const sources = Array.isArray(source.sources)
+          ? source.sources.map((item, index) => ({
+              name: String(item?.name || `Source ${index + 1}`).trim(),
+              type: String(item?.type || "document").trim() || "document",
+              path: String(item?.path || "").trim(),
+              extensions: normalizeSourceExtensionsInput(item?.extensions),
+            }))
+          : [];
+        const chatIntegration = normalizeLibrarySettings(
+          source.chatIntegration || source.library || librarySettings,
+        );
+        return {
+          version: 1,
+          databasePath:
+            String(source.databasePath || defaults.databasePath || "").trim() ||
+            "~/ollama-pi-chat/library.sqlite",
+          sources,
+          chunking: {
+            targetChars: clampInteger(
+              normalizedChunking.targetChars,
+              defaults.chunking?.targetChars || 2400,
+              500,
+              10000,
+            ),
+            overlapChars: clampInteger(
+              normalizedChunking.overlapChars,
+              defaults.chunking?.overlapChars || 0,
+              0,
+              2000,
+            ),
+            minChars: clampInteger(
+              normalizedChunking.minChars,
+              defaults.chunking?.minChars || 300,
+              20,
+              2000,
+            ),
+            maxChars: clampInteger(
+              normalizedChunking.maxChars,
+              defaults.chunking?.maxChars || 3200,
+              500,
+              20000,
+            ),
+          },
+          search: {
+            keywordEnabled: search.keywordEnabled === true,
+            defaultLimit: clampInteger(search.defaultLimit, 5, 1, 50),
+            maxLimit: clampInteger(search.maxLimit, 20, 1, 50),
+            maxContextChars: clampInteger(
+              search.maxContextChars,
+              12000,
+              1000,
+              50000,
+            ),
+          },
+          embedding: {
+            enabled: embedding.enabled === true,
+            model:
+              String(embedding.model || "").trim() ||
+              "nomic-embed-text-v2-moe:latest",
+            ollamaBaseUrl:
+              String(embedding.ollamaBaseUrl || "").trim() ||
+              "http://127.0.0.1:11434",
+            batchSize: clampInteger(embedding.batchSize, 16, 1, 64),
+            dimensions: clampInteger(embedding.dimensions, 256, 0, 4096),
+            sqliteVecExtensionPath: String(
+              embedding.sqliteVecExtensionPath || "",
+            ).trim(),
+          },
+          chatIntegration,
+          watch: {
+            enabled: watch.enabled === true,
+            debounceMs: clampInteger(watch.debounceMs, 2000, 250, 60000),
+            rescanIntervalMs: clampInteger(
+              watch.rescanIntervalMs,
+              60000,
+              5000,
+              3600000,
+            ),
+          },
+        };
+      }
+
+      function renderEmbeddingModelSelect(currentModel) {
+        const select = document.getElementById("databaseEmbeddingModelSelect");
+        const customInput = document.getElementById(
+          "databaseEmbeddingModelCustomInput",
+        );
+        if (!select) return;
+        const models = [
+          ...new Set([
+            "nomic-embed-text-v2-moe:latest",
+            ...availableOllamaModels,
+            currentModel,
+          ].filter(Boolean)),
+        ];
+        const currentKnown = models.includes(currentModel);
+        select.innerHTML = "";
+        models.forEach((modelName) => {
+          const option = document.createElement("option");
+          option.value = modelName;
+          option.textContent = modelName;
+          select.appendChild(option);
+        });
+        const customOption = document.createElement("option");
+        customOption.value = "__custom__";
+        customOption.textContent = "Custom model id";
+        select.appendChild(customOption);
+        select.value = currentKnown ? currentModel : "__custom__";
+        if (customInput) {
+          customInput.style.display = select.value === "__custom__" ? "" : "none";
+          customInput.value = currentKnown ? "" : currentModel || "";
+        }
+        refreshCustomSelectUi(select);
+      }
+
+      function renderDatabaseSources(sources) {
+        const container = document.getElementById("databaseSourcesList");
+        if (!container) return;
+        container.innerHTML = "";
+        if (!sources.length) {
+          const empty = document.createElement("div");
+          empty.className = "setting-help";
+          empty.textContent = "No source folders configured.";
+          container.appendChild(empty);
+          return;
+        }
+        sources.forEach((source, index) => {
+          const row = document.createElement("div");
+          row.className = "database-source-row";
+          row.dataset.index = String(index);
+
+          const firstGrid = document.createElement("div");
+          firstGrid.className = "database-source-grid";
+
+          const nameWrap = document.createElement("div");
+          nameWrap.className = "setting-row";
+          const nameLabel = document.createElement("label");
+          nameLabel.style.fontSize = "10px";
+          nameLabel.textContent = "NAME";
+          const nameInput = document.createElement("input");
+          nameInput.type = "text";
+          nameInput.className = "database-source-name";
+          nameInput.value = source.name || "";
+          nameWrap.append(nameLabel, nameInput);
+
+          const typeWrap = document.createElement("div");
+          typeWrap.className = "setting-row";
+          const typeLabel = document.createElement("label");
+          typeLabel.style.fontSize = "10px";
+          typeLabel.textContent = "TYPE";
+          const typeSelect = document.createElement("select");
+          typeSelect.className = "database-source-type";
+          ["book", "note", "document"].forEach((type) => {
+            const option = document.createElement("option");
+            option.value = type;
+            option.textContent = type;
+            typeSelect.appendChild(option);
+          });
+          typeSelect.value = ["book", "note", "document"].includes(source.type)
+            ? source.type
+            : "document";
+          typeWrap.append(typeLabel, typeSelect);
+
+          firstGrid.append(nameWrap, typeWrap);
+
+          const secondGrid = document.createElement("div");
+          secondGrid.className = "database-source-grid-wide";
+
+          const pathWrap = document.createElement("div");
+          pathWrap.className = "setting-row";
+          const pathLabel = document.createElement("label");
+          pathLabel.style.fontSize = "10px";
+          pathLabel.textContent = "FOLDER PATH";
+          const pathInput = document.createElement("input");
+          pathInput.type = "text";
+          pathInput.className = "database-source-path";
+          pathInput.value = source.path || "";
+          pathWrap.append(pathLabel, pathInput);
+
+          const extensionsWrap = document.createElement("div");
+          extensionsWrap.className = "setting-row";
+          const extensionsLabel = document.createElement("label");
+          extensionsLabel.style.fontSize = "10px";
+          extensionsLabel.textContent = "EXTENSIONS";
+          const extensionsInput = document.createElement("input");
+          extensionsInput.type = "text";
+          extensionsInput.className = "database-source-extensions";
+          extensionsInput.value = formatExtensions(source.extensions);
+          extensionsWrap.append(extensionsLabel, extensionsInput);
+
+          secondGrid.append(pathWrap, extensionsWrap);
+
+          const actions = document.createElement("div");
+          actions.className = "database-source-actions";
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "settings-action-btn database-source-remove";
+          removeButton.textContent = "REMOVE SOURCE";
+          removeButton.dataset.index = String(index);
+          actions.appendChild(removeButton);
+
+          row.append(firstGrid, secondGrid, actions);
+          container.appendChild(row);
+          refreshCustomSelectUi(typeSelect);
+        });
+      }
+
+      function renderDatabaseConfigForm() {
+        databaseConfig = normalizeDatabaseConfig(databaseConfig);
+        librarySettings = databaseConfig.chatIntegration;
+        const settings = librarySettings;
+        const dbPathInput = document.getElementById("databasePathInput");
+        const enabledInput = document.getElementById(
+          "librarySearchEnabledInput",
+        );
+        const limitInput = document.getElementById("libraryLimitInput");
+        const maxContextInput = document.getElementById(
+          "libraryMaxContextInput",
+        );
+        const includePathsInput = document.getElementById(
+          "libraryIncludePathsInput",
+        );
+        const semanticInput = document.getElementById(
+          "databaseSemanticEnabledInput",
+        );
+        const keywordInput = document.getElementById(
+          "databaseKeywordEnabledInput",
+        );
+        const baseUrlInput = document.getElementById(
+          "databaseEmbeddingBaseUrlInput",
+        );
+        const batchInput = document.getElementById(
+          "databaseEmbeddingBatchInput",
+        );
+        const dimensionsInput = document.getElementById(
+          "databaseEmbeddingDimensionsInput",
+        );
+        const defaultLimitInput = document.getElementById(
+          "databaseDefaultLimitInput",
+        );
+        const sqliteVecInput = document.getElementById(
+          "databaseSqliteVecPathInput",
+        );
+        if (dbPathInput) dbPathInput.value = databaseConfig.databasePath;
+        if (enabledInput) enabledInput.checked = settings.enabled;
+        if (limitInput) limitInput.value = String(settings.limit);
+        if (maxContextInput) {
+          maxContextInput.value = String(settings.maxContextChars);
+        }
+        if (includePathsInput) {
+          includePathsInput.checked = settings.includeSourcePaths;
+        }
+        if (semanticInput) {
+          semanticInput.checked = databaseConfig.embedding.enabled;
+        }
+        if (keywordInput) {
+          keywordInput.checked = databaseConfig.search.keywordEnabled;
+        }
+        renderEmbeddingModelSelect(databaseConfig.embedding.model);
+        if (baseUrlInput) {
+          baseUrlInput.value = databaseConfig.embedding.ollamaBaseUrl;
+        }
+        if (batchInput) {
+          batchInput.value = String(databaseConfig.embedding.batchSize);
+        }
+        if (dimensionsInput) {
+          dimensionsInput.value = String(databaseConfig.embedding.dimensions);
+        }
+        if (defaultLimitInput) {
+          defaultLimitInput.value = String(databaseConfig.search.defaultLimit);
+        }
+        if (sqliteVecInput) {
+          sqliteVecInput.value = databaseConfig.embedding.sqliteVecExtensionPath;
+        }
+        renderDatabaseSources(databaseConfig.sources);
+      }
+
+      function collectLibrarySettingsFromForm() {
+        return normalizeLibrarySettings({
+          enabled: document.getElementById("librarySearchEnabledInput")?.checked,
+          limit: document.getElementById("libraryLimitInput")?.value,
+          maxContextChars: document.getElementById("libraryMaxContextInput")
+            ?.value,
+          includeSourcePaths: document.getElementById(
+            "libraryIncludePathsInput",
+          )?.checked,
+        });
+      }
+
+      function collectDatabaseSourcesFromForm() {
+        const container = document.getElementById("databaseSourcesList");
+        if (!container) return [];
+        return Array.from(container.querySelectorAll(".database-source-row"))
+          .map((row, index) => ({
+            name:
+              row.querySelector(".database-source-name")?.value.trim() ||
+              `Source ${index + 1}`,
+            type:
+              row.querySelector(".database-source-type")?.value ||
+              "document",
+            path: row.querySelector(".database-source-path")?.value.trim() || "",
+            extensions: normalizeSourceExtensionsInput(
+              row.querySelector(".database-source-extensions")?.value || "",
+            ),
+          }))
+          .filter((source) => source.path);
+      }
+
+      function getSelectedEmbeddingModel() {
+        const select = document.getElementById("databaseEmbeddingModelSelect");
+        const customInput = document.getElementById(
+          "databaseEmbeddingModelCustomInput",
+        );
+        if (select?.value === "__custom__") {
+          return (
+            customInput?.value.trim() ||
+            databaseConfig.embedding.model ||
+            "nomic-embed-text-v2-moe:latest"
+          );
+        }
+        return select?.value || databaseConfig.embedding.model;
+      }
+
+      function collectDatabaseConfigFromForm() {
+        const current = normalizeDatabaseConfig(databaseConfig);
+        return normalizeDatabaseConfig({
+          ...current,
+          databasePath:
+            document.getElementById("databasePathInput")?.value ||
+            current.databasePath,
+          sources: collectDatabaseSourcesFromForm(),
+          search: {
+            ...current.search,
+            keywordEnabled: document.getElementById("databaseKeywordEnabledInput")
+              ?.checked,
+            defaultLimit: document.getElementById("databaseDefaultLimitInput")
+              ?.value,
+            maxContextChars: document.getElementById("libraryMaxContextInput")
+              ?.value,
+          },
+          embedding: {
+            ...current.embedding,
+            enabled: document.getElementById("databaseSemanticEnabledInput")
+              ?.checked,
+            model: getSelectedEmbeddingModel(),
+            ollamaBaseUrl:
+              document.getElementById("databaseEmbeddingBaseUrlInput")?.value ||
+              current.embedding.ollamaBaseUrl,
+            batchSize: document.getElementById("databaseEmbeddingBatchInput")
+              ?.value,
+            dimensions: document.getElementById(
+              "databaseEmbeddingDimensionsInput",
+            )?.value,
+            sqliteVecExtensionPath:
+              document.getElementById("databaseSqliteVecPathInput")?.value ||
+              "",
+          },
+          chatIntegration: collectLibrarySettingsFromForm(),
+        });
+      }
+
+      async function loadLibrarySettings() {
+        try {
+          const res = await fetch(apiUrl("/api/library/config"));
+          const payload = await readJsonResponse(res, "Load database config");
+          databaseConfig = normalizeDatabaseConfig(payload?.config);
+          librarySettings = databaseConfig.chatIntegration;
+        } catch (error) {
+          console.error("Could not load database config", error);
+          databaseConfig = normalizeDatabaseConfig(databaseConfig);
+          librarySettings = databaseConfig.chatIntegration;
+        }
+        renderDatabaseConfigForm();
+      }
+
+      async function saveLibrarySettingsFromForm() {
+        databaseConfig = collectDatabaseConfigFromForm();
+        librarySettings = databaseConfig.chatIntegration;
+        renderDatabaseConfigForm();
+        try {
+          const payload = await postJson(
+            "/api/library/config",
+            { config: databaseConfig },
+            "Save database settings",
+          );
+          databaseConfig = normalizeDatabaseConfig(payload?.config);
+          librarySettings = databaseConfig.chatIntegration;
+          renderDatabaseConfigForm();
+          await loadLibraryStatus();
+          return true;
+        } catch (error) {
+          console.error("Could not save database settings", error);
+          alert(error.message || "Failed to save database settings.");
+          return false;
+        }
+      }
+
+      function setElementText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+      }
+
+      function formatMetricNumber(value) {
+        const number = Number(value || 0);
+        if (!Number.isFinite(number)) return "0";
+        return number.toLocaleString();
+      }
+
+      function formatByteSize(value) {
+        const bytes = Number(value || 0);
+        if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let size = bytes;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        const digits = unitIndex === 0 || size >= 100 ? 0 : size >= 10 ? 1 : 2;
+        return `${size.toFixed(digits)} ${units[unitIndex]}`;
+      }
+
+      function renderSavedDatabaseStatus(status) {
+        const sourceCount = Array.isArray(status.sources)
+          ? status.sources.filter((source) => source.exists).length
+          : 0;
+        const vectorLabel = status.embedding?.sqliteVecConfigured
+          ? "sqlite-vec on"
+          : status.embedding?.enabled
+            ? "semantic waiting"
+            : status.search?.keywordEnabled
+              ? "FTS5 only"
+              : "compact only";
+        const sqliteLabel = status.sqliteAvailable
+          ? status.sqliteCanLoadExtensions
+            ? `extensions on | ${basenameFromPath(status.sqliteExtensionPath || status.sqlitePath)}`
+            : `no extensions | ${basenameFromPath(status.sqlitePath)}`
+          : "not available";
+
+        setElementText("libraryStatusFilesValue", formatMetricNumber(status.files));
+        setElementText(
+          "libraryStatusPassagesValue",
+          formatMetricNumber(status.chunks),
+        );
+        setElementText(
+          "libraryStatusEmbeddingsValue",
+          formatMetricNumber(status.embeddings),
+        );
+        setElementText(
+          "libraryStatusSourcesValue",
+          formatMetricNumber(sourceCount),
+        );
+        setElementText("libraryStatusVectorValue", vectorLabel);
+        setElementText(
+          "libraryStatusDimsValue",
+          formatMetricNumber(status.embedding?.dimensions || 0),
+        );
+        setElementText(
+          "libraryStatusModelValue",
+          status.embedding?.model || "no embedding model",
+        );
+        setElementText("libraryStatusSqliteValue", sqliteLabel);
+      }
+
+      async function loadLibraryStatus() {
+        const statusEl = document.getElementById("libraryStatusText");
+        if (!statusEl) return;
+        try {
+          const res = await fetch(apiUrl("/api/library/status"));
+          const status = await readJsonResponse(res, "Load library status");
+          renderSavedDatabaseStatus(status);
+          if (!status.sqliteAvailable) {
+            statusEl.textContent = "SQLite not available. Set SQLITE3_PATH.";
+            return;
+          }
+          statusEl.textContent =
+            "Saved database snapshot. Live job counts appear below.";
+        } catch (error) {
+          console.error("Could not load library status", error);
+          statusEl.textContent = "Library status unavailable.";
+        }
+      }
+
+      function renderLibraryEstimate(estimate) {
+        setElementText(
+          "libraryEstimateFilesValue",
+          `${formatMetricNumber(estimate.sampledFiles)} / ${formatMetricNumber(estimate.files)} sampled`,
+        );
+        setElementText(
+          "libraryEstimatePassagesValue",
+          formatMetricNumber(estimate.estimatedChunks),
+        );
+        setElementText(
+          "libraryEstimateTextValue",
+          `${formatByteSize(estimate.estimatedCompressedBytes)} compressed`,
+        );
+        setElementText(
+          "libraryEstimateVectorValue",
+          formatByteSize(estimate.estimatedVectorBytes),
+        );
+        setElementText(
+          "libraryEstimateTotalValue",
+          `${formatByteSize(estimate.estimatedTotalBytes)} estimated`,
+        );
+        const outliers = Array.isArray(estimate.outliers)
+          ? estimate.outliers.slice(0, 3)
+          : [];
+        setElementText(
+          "libraryEstimateOutliersValue",
+          outliers.length
+            ? outliers
+                .map(
+                  (item) =>
+                    `${basenameFromPath(item.path)} (${formatMetricNumber(item.chunks)} passages)`,
+                )
+                .join(" | ")
+            : "--",
+        );
+      }
+
+      async function estimateLibraryIndexSize() {
+        const statusEl = document.getElementById("libraryEstimateStatusText");
+        const button = document.getElementById("estimateLibraryIndexBtn");
+        const saved = await saveLibrarySettingsFromForm();
+        if (!saved) return;
+        if (statusEl) statusEl.textContent = "Estimating from a sample...";
+        if (button) button.disabled = true;
+        try {
+          const res = await fetch(apiUrl("/api/library/estimate?sample=150"));
+          const estimate = await readJsonResponse(res, "Estimate index size");
+          renderLibraryEstimate(estimate);
+          if (statusEl) {
+            const skipped = Number(estimate.sampleSkippedDocuments || 0);
+            const errors = Number(estimate.sampleErrors || 0);
+            statusEl.textContent = `Estimate based on ${formatMetricNumber(estimate.sampledFiles)} readable sample files. ${formatMetricNumber(skipped)} skipped, ${formatMetricNumber(errors)} errors in sample.`;
+          }
+        } catch (error) {
+          console.error("Could not estimate library index", error);
+          if (statusEl) statusEl.textContent = "Index estimate unavailable.";
+          alert(error.message || "Failed to estimate index size.");
+        } finally {
+          if (button) button.disabled = false;
+        }
+      }
+
+      function formatIndexPhase(phase) {
+        const labels = {
+          "embedding-preflight": "Checking embeddings",
+          resuming: "Resuming",
+          indexing: "Indexing",
+          embedding: "Embedding",
+          pruning: "Pruning removed files",
+          compacting: "Compacting database",
+          cancelling: "Cancelling",
+          cancelled: "Cancelled",
+          pausing: "Pausing",
+          paused: "Paused",
+          completed: "Completed",
+        };
+        return labels[phase] || "Indexing";
+      }
+
+      function basenameFromPath(filePath) {
+        return String(filePath || "").split(/[\\/]/).filter(Boolean).pop() || "";
+      }
+
+      function setLibraryIndexProgress(percent, text) {
+        const fill = document.getElementById("libraryIndexProgressFill");
+        const progressText = document.getElementById("libraryIndexProgressText");
+        const safePercent = Math.max(
+          0,
+          Math.min(100, Number.isFinite(Number(percent)) ? Number(percent) : 0),
+        );
+        if (fill) fill.style.width = `${safePercent}%`;
+        if (progressText) progressText.textContent = text || `${safePercent}%`;
+      }
+
+      function setLibraryIndexButtons(running) {
+        const runButton = document.getElementById("runLibraryIndexBtn");
+        const forceButton = document.getElementById("forceLibraryReindexBtn");
+        const cancelButton = document.getElementById("cancelLibraryIndexBtn");
+        if (runButton) runButton.disabled = running;
+        if (forceButton) forceButton.disabled = running;
+        if (cancelButton) cancelButton.disabled = !running;
+      }
+
+      function renderIndexJobGrid(values = {}) {
+        setElementText("libraryJobPhaseValue", values.phase || "Idle");
+        setElementText("libraryJobProgressValue", values.progress || "0%");
+        setElementText("libraryJobFilesValue", values.files || "--");
+        setElementText("libraryJobPassagesValue", values.passages || "--");
+        setElementText("libraryJobEmbeddingsValue", values.embeddings || "--");
+        setElementText(
+          "libraryJobPendingEmbeddingsValue",
+          values.pending || "--",
+        );
+        setElementText("libraryJobErrorsValue", values.errors || "--");
+        setElementText(
+          "libraryJobEmbeddingErrorsValue",
+          values.embeddingErrors || "--",
+        );
+        setElementText("libraryJobSkippedValue", values.skipped || "--");
+        setElementText("libraryJobCurrentFileValue", values.currentFile || "--");
+      }
+
+      function renderLibraryIndexJob(payload) {
+        const statusEl = document.getElementById("libraryIndexStatusText");
+        if (!statusEl) return;
+        const job = payload?.job || null;
+        if (!job) {
+          statusEl.textContent = "No active index job.";
+          setLibraryIndexProgress(0, "0%");
+          setLibraryIndexButtons(false);
+          renderIndexJobGrid();
+          return;
+        }
+        const progress = job.progress || {};
+        const stats = job.stats || {};
+        const percent =
+          job.status === "completed"
+            ? 100
+            : Number.isFinite(Number(progress.percent))
+              ? Number(progress.percent)
+              : 0;
+        const processed = progress.processed ?? stats.processed ?? 0;
+        const scanned = progress.scanned ?? stats.scanned ?? 0;
+        const chunks = progress.chunks ?? stats.chunks ?? 0;
+        const embedded = progress.embedded ?? stats.embedded ?? 0;
+        const estimatedFinalBytes =
+          progress.estimatedFinalBytes ?? stats.estimatedFinalBytes ?? 0;
+        const embeddingErrors =
+          progress.embeddingErrors ?? stats.embeddingErrors ?? 0;
+        const embeddingPending =
+          progress.embeddingPending ??
+          stats.embeddingPending ??
+          Math.max(
+            0,
+            Number(chunks || 0) -
+              Number(embedded || 0) -
+              Number(embeddingErrors || 0) -
+              Number(progress.embeddingsSkipped ?? stats.embeddingsSkipped ?? 0),
+          );
+        const jobErrors =
+          progress.errors ??
+          (Array.isArray(stats.errors) ? stats.errors.length : 0);
+        const skippedDocs =
+          progress.skippedDocuments ??
+          (Array.isArray(stats.skippedDocuments)
+            ? stats.skippedDocuments.length
+            : 0);
+        const skippedUnchanged = progress.skipped ?? stats.skipped ?? 0;
+        const phaseText = formatIndexPhase(progress.phase);
+        const currentFile = basenameFromPath(progress.currentFile);
+        const currentFileText = currentFile ? ` | ${currentFile}` : "";
+        const estimateText = estimatedFinalBytes
+          ? ` | est ${formatByteSize(estimatedFinalBytes)}`
+          : "";
+        const progressLine = `${Math.round(percent)}% | ${processed}/${scanned} files | ${chunks} passages | ${embedded} embeddings | ${embeddingPending} pending${estimateText}`;
+        setLibraryIndexProgress(percent, progressLine);
+        setLibraryIndexButtons(job.status === "running");
+        renderIndexJobGrid({
+          phase: phaseText,
+          progress: `${Math.round(percent)}%`,
+          files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+          passages: formatMetricNumber(chunks),
+          embeddings: formatMetricNumber(embedded),
+          pending: formatMetricNumber(embeddingPending),
+          errors: formatMetricNumber(jobErrors),
+          embeddingErrors: formatMetricNumber(embeddingErrors),
+          skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
+          currentFile: currentFile || "--",
+        });
+        if (job.status === "running") {
+          const preflightError =
+            progress.embeddingPreflightError || stats.embeddingPreflightError;
+          const embeddingText = preflightError ? ` ${preflightError}` : "";
+          const lastEmbeddingError = progress.lastEmbeddingError
+            ? ` Last embedding error: ${progress.lastEmbeddingError}`
+            : "";
+          statusEl.textContent = `${job.force ? "Reindexing all sources" : "Indexing changed sources"}: ${phaseText}${currentFileText}.${embeddingText}${lastEmbeddingError}`;
+          return;
+        }
+        if (job.status === "completed") {
+          const errors = Array.isArray(stats.errors) ? stats.errors.length : 0;
+          const completedPending =
+            stats.embeddingPending ??
+            Math.max(
+              0,
+              Number(stats.chunks || chunks || 0) -
+                Number(stats.embedded || embedded || 0) -
+                Number(embeddingErrors || 0) -
+                Number(stats.embeddingsSkipped || 0),
+            );
+          const preflightError = stats.embeddingPreflightError
+            ? ` ${stats.embeddingPreflightError}`
+            : "";
+          statusEl.textContent = `Index completed: ${stats.indexed || 0} indexed, ${stats.skipped || 0} unchanged, ${skippedDocs} skipped documents, ${stats.chunks || 0} passages, ${stats.embedded || 0} embeddings, ${completedPending} pending, ${embeddingErrors} embedding failures, ${errors} file errors.${preflightError}`;
+          setLibraryIndexProgress(100, "100%");
+          renderIndexJobGrid({
+            phase: "Completed",
+            progress: "100%",
+            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            passages: formatMetricNumber(stats.chunks || chunks),
+            embeddings: formatMetricNumber(stats.embedded || embedded),
+            pending: formatMetricNumber(completedPending),
+            errors: formatMetricNumber(errors),
+            embeddingErrors: formatMetricNumber(embeddingErrors),
+            skipped: `${formatMetricNumber(stats.skipped || skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
+            currentFile: "--",
+          });
+          return;
+        }
+        if (job.status === "paused") {
+          statusEl.textContent =
+            "Index paused. Build / Update Index will continue later.";
+          renderIndexJobGrid({
+            phase: "Paused",
+            progress: `${Math.round(percent)}%`,
+            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            passages: formatMetricNumber(chunks),
+            embeddings: formatMetricNumber(embedded),
+            pending: formatMetricNumber(embeddingPending),
+            errors: formatMetricNumber(jobErrors),
+            embeddingErrors: formatMetricNumber(embeddingErrors),
+            skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
+            currentFile: "--",
+          });
+          return;
+        }
+        if (job.status === "cancelled") {
+          statusEl.textContent = "Index cancelled.";
+          renderIndexJobGrid({
+            phase: "Cancelled",
+            progress: `${Math.round(percent)}%`,
+            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            passages: formatMetricNumber(chunks),
+            embeddings: formatMetricNumber(embedded),
+            pending: formatMetricNumber(embeddingPending),
+            errors: formatMetricNumber(jobErrors),
+            embeddingErrors: formatMetricNumber(embeddingErrors),
+            skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
+            currentFile: "--",
+          });
+          return;
+        }
+        statusEl.textContent = `Index failed: ${job.error || "unknown error"}`;
+        renderIndexJobGrid({
+          phase: "Failed",
+          progress: `${Math.round(percent)}%`,
+          files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+          passages: formatMetricNumber(chunks),
+          embeddings: formatMetricNumber(embedded),
+          pending: formatMetricNumber(embeddingPending),
+          errors: formatMetricNumber(jobErrors || 1),
+          embeddingErrors: formatMetricNumber(embeddingErrors),
+          skipped: `${formatMetricNumber(skippedUnchanged)} unchanged | ${formatMetricNumber(skippedDocs)} docs`,
+          currentFile: "--",
+        });
+      }
+
+      async function pollLibraryIndexJob() {
+        try {
+          const res = await fetch(apiUrl("/api/library/index"));
+          const payload = await readJsonResponse(res, "Load index job");
+          renderLibraryIndexJob(payload);
+          if (payload?.running) {
+            libraryIndexPollTimer = window.setTimeout(
+              pollLibraryIndexJob,
+              2000,
+            );
+          } else {
+            await loadLibraryStatus();
+          }
+        } catch (error) {
+          console.error("Could not poll index job", error);
+        }
+      }
+
+      async function startLibraryIndex(force = false) {
+        const saved = await saveLibrarySettingsFromForm();
+        if (!saved) return;
+        if (libraryIndexPollTimer) clearTimeout(libraryIndexPollTimer);
+        try {
+          const payload = await postJson(
+            "/api/library/index",
+            { force, prune: true, compact: true },
+            force ? "Start library reindex" : "Start library index",
+          );
+          renderLibraryIndexJob(payload);
+          libraryIndexPollTimer = window.setTimeout(pollLibraryIndexJob, 1000);
+        } catch (error) {
+          console.error("Could not start index job", error);
+          alert(error.message || "Failed to start index job.");
+        }
+      }
+
+      async function cancelLibraryIndex() {
+        try {
+          const payload = await postJson(
+            "/api/library/index/cancel",
+            {},
+            "Pause library index",
+          );
+          renderLibraryIndexJob(payload);
+          if (libraryIndexPollTimer) clearTimeout(libraryIndexPollTimer);
+          libraryIndexPollTimer = window.setTimeout(pollLibraryIndexJob, 1000);
+        } catch (error) {
+          console.error("Could not pause index job", error);
+          alert(error.message || "Failed to pause index job.");
+        }
+      }
+
+      function addDatabaseSource() {
+        databaseConfig = collectDatabaseConfigFromForm();
+        databaseConfig.sources.push({
+          name: `Source ${databaseConfig.sources.length + 1}`,
+          type: "document",
+          path: "",
+          extensions: [".md", ".txt"],
+        });
+        renderDatabaseConfigForm();
+      }
+
+      function removeDatabaseSource(index) {
+        databaseConfig = collectDatabaseConfigFromForm();
+        databaseConfig.sources.splice(index, 1);
+        renderDatabaseConfigForm();
+      }
+
+      function getLibraryRequestPayload() {
+        return collectLibrarySettingsFromForm();
+      }
+
       function normalizeFontStack(fontStack) {
         const trimmed = typeof fontStack === "string" ? fontStack.trim() : "";
         return trimmed || '"Space Mono", monospace';
@@ -3351,12 +5388,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function syncFontControls(scope, fontStack) {
-        const isOllama = scope === "ollama";
+        const ids = {
+          ollama: ["settingOllamaFontPreset", "settingOllamaFontCustom"],
+          pi: ["settingPiFontPreset", "settingPiFontCustom"],
+          cloud: ["settingCloudFontPreset", "settingCloudFontCustom"],
+        }[scope];
+        if (!ids) return;
         const presetSelect = document.getElementById(
-          isOllama ? "settingOllamaFontPreset" : "settingPiFontPreset",
+          ids[0],
         );
         const customInput = document.getElementById(
-          isOllama ? "settingOllamaFontCustom" : "settingPiFontCustom",
+          ids[1],
         );
         if (!presetSelect || !customInput) return;
         const presetId = getPresetIdByStack(fontStack);
@@ -3367,6 +5409,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         } else {
           customInput.style.display = "none";
         }
+        refreshCustomSelectUi(presetSelect);
       }
 
       function applyFont(fontStack) {
@@ -3379,6 +5422,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function changeOllamaFont(fontStack) {
         ollamaFont = normalizeFontStack(fontStack);
         localStorage.setItem("ollama-pi-chat-ollama-font", ollamaFont);
+        saveUiSettingsSoon();
         syncFontControls("ollama", ollamaFont);
         if (mode === "ollama") applyFont(ollamaFont);
       }
@@ -3386,8 +5430,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function changePiFont(fontStack) {
         piFont = normalizeFontStack(fontStack);
         localStorage.setItem("ollama-pi-chat-pi-font", piFont);
+        saveUiSettingsSoon();
         syncFontControls("pi", piFont);
         if (mode === "pi") applyFont(piFont);
+      }
+
+      function changeCloudFont(fontStack) {
+        cloudFont = normalizeFontStack(fontStack);
+        localStorage.setItem("ollama-pi-chat-cloud-font", cloudFont);
+        saveUiSettingsSoon();
+        syncFontControls("cloud", cloudFont);
+        if (mode === "cloud") applyFont(cloudFont);
       }
 
       function onOllamaFontPresetChange(presetId) {
@@ -3418,6 +5471,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (presetStack) changePiFont(presetStack);
       }
 
+      function onCloudFontPresetChange(presetId) {
+        if (presetId === "custom") {
+          const customInput = document.getElementById(
+            "settingCloudFontCustom",
+          );
+          customInput.style.display = "";
+          customInput.value = cloudFont;
+          customInput.focus();
+          customInput.select();
+          return;
+        }
+        const presetStack = getPresetStackById(presetId);
+        if (presetStack) changeCloudFont(presetStack);
+      }
+
       function applyPalette(p) {
         document.documentElement.setAttribute("data-palette", p);
       }
@@ -3436,22 +5504,24 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         try {
           const res = await fetch(apiUrl("/api/models"));
           const models = await readJsonResponse(res, "Load models");
+          availableOllamaModels = Array.isArray(models) ? models : [];
           const savedModel = localStorage.getItem(MODEL_STORAGE_KEY) || "";
           modelSelect.innerHTML = "";
-          models.forEach((m) => {
+          availableOllamaModels.forEach((m) => {
             const opt = document.createElement("option");
             opt.value = m;
             opt.textContent = m;
             modelSelect.appendChild(opt);
           });
-          if (savedModel && models.includes(savedModel)) {
+          if (savedModel && availableOllamaModels.includes(savedModel)) {
             modelSelect.value = savedModel;
-          } else if (models.length > 0) {
-            modelSelect.value = models[0];
-            localStorage.setItem(MODEL_STORAGE_KEY, models[0]);
+          } else if (availableOllamaModels.length > 0) {
+            modelSelect.value = availableOllamaModels[0];
+            localStorage.setItem(MODEL_STORAGE_KEY, availableOllamaModels[0]);
           }
           if (typeof syncCustomSelect === "function")
             syncCustomSelect(modelSelect);
+          renderDatabaseConfigForm();
           await refreshOllamaModelContext();
         } catch (e) {
           console.error("Could not load models", e);
@@ -3463,9 +5533,80 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           localStorage.setItem(MODEL_STORAGE_KEY, modelSelect.value);
         }
         await refreshOllamaModelContext();
+        updateModeStatus();
       });
 
+      function getCloudProviderLabel(provider) {
+        if (provider === "anthropic") return "Claude";
+        if (provider === "mistral") return "Mistral";
+        return "OpenAI";
+      }
+
+      function formatTitleCase(value) {
+        if (!value) return "";
+        return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+      }
+
+      function updateModeStatus() {
+        const statusEl = document.getElementById("modeStatus");
+        if (!statusEl) return;
+        if (mode === "ollama") {
+          statusEl.textContent = "";
+          statusEl.title = "";
+          return;
+        }
+        if (mode === "pi") {
+          const modelName = piStatusInfo?.model || "Model ?";
+          const state = piStatusInfo?.state || "IDLE";
+          const cost = piStatusInfo?.cost || "Cost ?";
+          const think = piStatusInfo?.thinkingLevel
+            ? formatTitleCase(piStatusInfo.thinkingLevel)
+            : "?";
+          statusEl.textContent = `Pi: ${modelName} | ${state} | ${cost} | Think: ${think}`;
+          statusEl.title = statusEl.textContent;
+          return;
+        }
+        const provider = cloudSettings.provider || "openai";
+        const modelName =
+          cloudSettings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
+        const keyStatus = cloudSettings.hasApiKey?.[provider]
+          ? "Key saved"
+          : "No API key";
+        statusEl.textContent = `Cloud: ${getCloudProviderLabel(provider)} | ${modelName} | ${cloudStreamState} | ${keyStatus}`;
+        statusEl.title = statusEl.textContent;
+      }
+
+      async function refreshPiStatus() {
+        if (mode !== "pi" || !currentConvId) {
+          updateModeStatus();
+          return;
+        }
+        try {
+          const res = await fetch(apiUrl("/api/pi/status"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ saveConv: currentConvId }),
+          });
+          if (!res.ok) {
+            updateModeStatus();
+            return;
+          }
+          const payload = await res.json();
+          piStatusInfo = payload?.status || piStatusInfo;
+          if (piStatusInfo?.contextUsage) {
+            piTokenState = {
+              used: piStatusInfo.contextUsage.used || 0,
+              total: piStatusInfo.contextUsage.total || null,
+            };
+          }
+          updateModeStatus();
+        } catch (e) {
+          updateModeStatus();
+        }
+      }
+
       function setMode(m) {
+        if (!modeSession[m]) m = "ollama";
         // Save current mode session state before switching
         if (mode && modeSession[mode]) {
           modeSession[mode].convId = currentConvId;
@@ -3477,8 +5618,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         mode = m;
         const isOllamaMode = m === "ollama";
-        applyPalette(isOllamaMode ? ollamaPalette : piPalette);
-        applyFont(isOllamaMode ? ollamaFont : piFont);
+        const isPiMode = m === "pi";
+        const isCloudMode = m === "cloud";
+        applyPalette(
+          isOllamaMode ? ollamaPalette : isPiMode ? piPalette : cloudPalette,
+        );
+        applyFont(isOllamaMode ? ollamaFont : isPiMode ? piFont : cloudFont);
 
         document.documentElement.setAttribute("data-mode", m); // Switches the CSS colors
 
@@ -3502,17 +5647,34 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         document.getElementById("btnOllama").className =
           m === "ollama" ? "active" : "";
         document.getElementById("btnPi").className = m === "pi" ? "active" : "";
+        document.getElementById("btnCloud").className =
+          m === "cloud" ? "active" : "";
         modelSelect.classList.toggle("mode-hidden", !isOllamaMode);
         topbarPromptSelect.classList.toggle("mode-hidden", !isOllamaMode);
+        updateSettingsTabAvailability(isOllamaMode);
         ollamaPaletteGroup.style.display = isOllamaMode ? "" : "none";
+        piPaletteGroup.style.display = isPiMode ? "" : "none";
+        cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
         ollamaGenGroup.style.display = isOllamaMode ? "" : "none";
-        piPaletteGroup.style.display = isOllamaMode ? "none" : "";
+        databaseSettingsGroup.style.display = "";
         ollamaFontGroup.style.display = isOllamaMode ? "" : "none";
-        piFontGroup.style.display = isOllamaMode ? "none" : "";
+        piFontGroup.style.display = isPiMode ? "" : "none";
+        cloudFontGroup.style.display = isCloudMode ? "" : "none";
         promptSettingsGroup.style.display = isOllamaMode ? "" : "none";
         promptManageGroup.style.display = isOllamaMode ? "" : "none";
-        piSettingsGroup.style.display = isOllamaMode ? "none" : "";
-        if (isOllamaMode) {
+        const builtinSkillsGroup = document.getElementById(
+          "builtinSkillsGroup",
+        );
+        const customSkillsGroup = document.getElementById("customSkillsGroup");
+        if (builtinSkillsGroup) {
+          builtinSkillsGroup.style.display = isOllamaMode ? "" : "none";
+        }
+        if (customSkillsGroup) {
+          customSkillsGroup.style.display = isOllamaMode ? "" : "none";
+        }
+        piSettingsGroup.style.display = isPiMode ? "" : "none";
+        cloudSettingsGroup.style.display = isCloudMode ? "" : "none";
+        if (!isPiMode) {
           piPermissionBtn.style.display = "none";
         } else if (
           activePiPermissionRequest &&
@@ -3520,17 +5682,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ) {
           piPermissionBtn.style.display = "";
         }
-        document.getElementById("uploadBtn").style.display = isOllamaMode
-          ? ""
-          : "none";
-        fileLabel.textContent = "";
-        pendingFile = null;
+        if (!isOllamaMode && mcpOpen) {
+          toggleMcp();
+        }
+        document.getElementById("uploadBtn").style.display = "";
         if (!isOllamaMode) closePromptEditor();
         if (historyOpen) {
           loadHistoryPanel();
         }
         if (isOllamaMode) {
           refreshOllamaModelContext().catch(() => {});
+        }
+        if (isPiMode) {
+          refreshPiStatus().catch(() => {});
+        } else {
+          updateModeStatus();
         }
         updateTokenCounter();
       }
@@ -3545,8 +5711,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
         if (mode === "ollama") {
           ollamaTokenState = { used: null, total: null };
-        } else {
+        } else if (mode === "pi") {
           piTokenState = { used: null, total: null };
+          piStatusInfo = null;
+        } else {
+          cloudTokenState = { used: null, total: null };
+          cloudStreamState = "IDLE";
         }
         // Wipe the saved session for this mode so switching back doesn't restore it
         modeSession[mode] = {
@@ -3815,7 +5985,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "thinking_start" ||
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
-              evt.type === "skill_links"
+              evt.type === "skill_links" ||
+              evt.type === "library_results" ||
+              evt.type === "library_error"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -3911,6 +6083,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             convTitle,
             mode: "ollama",
             options: getOllamaOptionsRequestPayload(),
+            library: getLibraryRequestPayload(),
           }),
           signal,
         });
@@ -3995,6 +6168,88 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
             if (evt.type === "error") {
               throw new Error(evt.error || "Ollama streaming error.");
+            }
+          }
+        }
+
+        return finalResponse;
+      }
+
+      async function runCloudStreamConversation(
+        message,
+        historyForRequest,
+        saveConv,
+        convTitle,
+        signal,
+        onDelta,
+        onEvent,
+      ) {
+        const res = await fetch(apiUrl("/api/cloud/chat/stream"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message,
+            history: historyForRequest,
+            saveConv,
+            convTitle,
+            mode: "cloud",
+          }),
+          signal,
+        });
+
+        if (!res.ok) {
+          const raw = await res.text();
+          throw new Error(
+            `Start Cloud stream failed (${res.status}): ${(raw || "empty response body").slice(0, 500)}`,
+          );
+        }
+        if (!res.body) {
+          throw new Error("Cloud stream response body is unavailable.");
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResponse = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let evt;
+            try {
+              evt = JSON.parse(line);
+            } catch (_e) {
+              continue;
+            }
+
+            if (evt.type === "delta") {
+              finalResponse =
+                typeof evt.response === "string" ? evt.response : finalResponse;
+              if (typeof onDelta === "function") {
+                onDelta(finalResponse, evt.delta || "");
+              }
+              continue;
+            }
+
+            if (evt.type === "done") {
+              finalResponse =
+                typeof evt.response === "string" ? evt.response : finalResponse;
+              if (evt.usage && typeof evt.usage.total === "number") {
+                updateTokenCounter("cloud", evt.usage.total, null);
+              }
+              if (typeof onDelta === "function") onDelta(finalResponse, "");
+              if (typeof onEvent === "function") onEvent(evt);
+              return finalResponse;
+            }
+
+            if (evt.type === "error") {
+              throw new Error(evt.error || "Cloud streaming error.");
             }
           }
         }
@@ -4090,6 +6345,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               sessionFile: conv.piSessionFile,
             }),
           }).catch(console.error);
+        }
+        if (mode === "pi") {
+          refreshPiStatus().catch(() => {});
+        } else {
+          updateModeStatus();
         }
         toggleHistory();
       }
@@ -4361,6 +6621,139 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         input.dispatchEvent(new Event("change", { bubbles: true }));
       }
 
+      function normalizeCloudSettings(raw) {
+        const source =
+          raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+        const provider =
+          source.provider === "anthropic" || source.provider === "mistral"
+            ? source.provider
+            : "openai";
+        return {
+          provider,
+          models: {
+            ...CLOUD_DEFAULT_MODELS,
+            ...(source.models && typeof source.models === "object"
+              ? source.models
+              : {}),
+          },
+          baseUrls: {
+            ...CLOUD_DEFAULT_BASE_URLS,
+            ...(source.baseUrls && typeof source.baseUrls === "object"
+              ? source.baseUrls
+              : {}),
+          },
+          maxTokens: clampInteger(source.maxTokens, 2048, 1, 128000),
+          hasApiKey: {
+            openai: !!source.hasApiKey?.openai,
+            anthropic: !!source.hasApiKey?.anthropic,
+            mistral: !!source.hasApiKey?.mistral,
+          },
+          envKeyNames: {
+            openai: source.envKeyNames?.openai || "OPENAI_API_KEY",
+            anthropic: source.envKeyNames?.anthropic || "ANTHROPIC_API_KEY",
+            mistral: source.envKeyNames?.mistral || "MISTRAL_API_KEY",
+          },
+        };
+      }
+
+      function renderCloudSettingsForm() {
+        const provider = cloudSettings.provider || "openai";
+        const providerSelect = document.getElementById("cloudProviderSelect");
+        const apiKeyInput = document.getElementById("cloudApiKeyInput");
+        const modelInput = document.getElementById("cloudModelInput");
+        const baseUrlInput = document.getElementById("cloudBaseUrlInput");
+        const maxTokensInput = document.getElementById("cloudMaxTokensInput");
+        const keyStatus = document.getElementById("cloudApiKeyStatus");
+        if (
+          !providerSelect ||
+          !apiKeyInput ||
+          !modelInput ||
+          !baseUrlInput ||
+          !maxTokensInput
+        ) {
+          return;
+        }
+        providerSelect.value = provider;
+        apiKeyInput.value = "";
+        apiKeyInput.placeholder = cloudSettings.hasApiKey?.[provider]
+          ? "Saved key is active. Leave blank to keep it."
+          : `Paste ${getCloudProviderLabel(provider)} API key`;
+        modelInput.value =
+          cloudSettings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
+        baseUrlInput.value =
+          cloudSettings.baseUrls?.[provider] ||
+          CLOUD_DEFAULT_BASE_URLS[provider];
+        maxTokensInput.value = Number(cloudSettings.maxTokens) || 2048;
+        if (keyStatus) {
+          const envName =
+            cloudSettings.envKeyNames?.[provider] || "provider API key";
+          keyStatus.textContent = cloudSettings.hasApiKey?.[provider]
+            ? `API key configured for ${getCloudProviderLabel(provider)}.`
+            : `No key configured. You can save one here or set ${envName}.`;
+        }
+        refreshCustomSelectUi(providerSelect);
+        updateModeStatus();
+      }
+
+      function collectCloudSettingsFromForm(clearApiKey = false) {
+        const provider =
+          document.getElementById("cloudProviderSelect")?.value || "openai";
+        const model = document.getElementById("cloudModelInput")?.value || "";
+        const baseUrl =
+          document.getElementById("cloudBaseUrlInput")?.value || "";
+        const apiKey =
+          document.getElementById("cloudApiKeyInput")?.value || "";
+        const maxTokens = clampInteger(
+          document.getElementById("cloudMaxTokensInput")?.value,
+          2048,
+          1,
+          128000,
+        );
+        return {
+          provider,
+          models: {
+            ...cloudSettings.models,
+            [provider]: model.trim() || CLOUD_DEFAULT_MODELS[provider],
+          },
+          baseUrls: {
+            ...cloudSettings.baseUrls,
+            [provider]: baseUrl.trim() || CLOUD_DEFAULT_BASE_URLS[provider],
+          },
+          maxTokens,
+          apiKeys: apiKey.trim() ? { [provider]: apiKey.trim() } : {},
+          clearApiKeys: clearApiKey ? { [provider]: true } : {},
+        };
+      }
+
+      async function loadCloudSettings() {
+        try {
+          const res = await fetch(apiUrl("/api/cloud/settings"));
+          const payload = await readJsonResponse(res, "Load Cloud settings");
+          cloudSettings = normalizeCloudSettings(payload?.settings);
+          renderCloudSettingsForm();
+        } catch (error) {
+          console.error("Could not load Cloud settings", error);
+          renderCloudSettingsForm();
+        }
+      }
+
+      async function saveCloudSettingsUi(clearApiKey = false) {
+        try {
+          const settings = collectCloudSettingsFromForm(clearApiKey);
+          const res = await fetch(apiUrl("/api/cloud/settings"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ settings }),
+          });
+          const payload = await readJsonResponse(res, "Save Cloud settings");
+          cloudSettings = normalizeCloudSettings(payload?.settings);
+          renderCloudSettingsForm();
+        } catch (error) {
+          console.error("Could not save Cloud settings", error);
+          alert(error.message || "Failed to save Cloud settings.");
+        }
+      }
+
       function renderPiSettingsForm() {
         const commandInput = document.getElementById("piCommandPathInput");
         const workingDirInput = document.getElementById("piWorkingDirInput");
@@ -4582,7 +6975,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 <strong>${skill}</strong>
                 <div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">${info.desc}</div>
               </div>
-              <input type="checkbox" class="brutalist-toggle" ${enabled ? "checked" : ""} >
+              <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${skill}" ${enabled ? "checked" : ""} >
             </div>
           `;
         }
@@ -4854,6 +7247,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         if (evt.type === "thinking_delta") {
           thinking.addReasoningChunk(evt.delta || "");
+          return;
+        }
+
+        if (evt.type === "library_results") {
+          const count = Array.isArray(evt.results) ? evt.results.length : 0;
+          thinking.addTraceLine(`Library search: ${count} passage(s)`);
+          return;
+        }
+
+        if (evt.type === "library_error") {
+          thinking.addTraceLine(`Library search error: ${evt.error || "unknown"}`);
           return;
         }
 
@@ -5237,7 +7641,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               history.push({ role: "assistant", content: response });
             }
             lastExchangePersisted = persistToHistory;
-          } else {
+          } else if (mode === "pi") {
             response = await runPiRpcConversation(
               messageToSend,
               activeAbortController.signal,
@@ -5259,7 +7663,58 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
               },
               (evt) => {
+                if (evt.type === "session_start") {
+                  piStatusInfo = {
+                    ...(piStatusInfo || {}),
+                    state: "STREAMING",
+                  };
+                  updateModeStatus();
+                }
+                if (evt.type === "done") {
+                  refreshPiStatus().catch(() => {});
+                }
                 handleStreamEventTrace(evt, thinking);
+              },
+            );
+            if (!streamingAssistantDiv && (response || "").trim()) {
+              streamingAssistantDiv = addMessage("", "assistant");
+            }
+            if (streamingAssistantDiv) {
+              renderAssistantMessage(streamingAssistantDiv, response || "");
+            }
+            if (thinking?.isConnected && !thinking.hadReasoning) {
+              thinking.remove();
+            }
+            history.push({ role: "user", content: messageToSend });
+            history.push({ role: "assistant", content: response });
+            lastExchangePersisted = true;
+          } else {
+            cloudStreamState = "STREAMING";
+            updateModeStatus();
+            response = await runCloudStreamConversation(
+              messageToSend,
+              requestHistory,
+              currentConvId,
+              lastUserMessage.slice(0, 40),
+              activeAbortController.signal,
+              (partialResponse) => {
+                if (thinking?.isConnected && !thinking.hadReasoning) {
+                  thinking.remove();
+                }
+                const nextText = partialResponse || "";
+                if (!streamingAssistantDiv && nextText.trim()) {
+                  streamingAssistantDiv = addMessage("", "assistant");
+                }
+                if (streamingAssistantDiv) {
+                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  chat.scrollTop = chat.scrollHeight;
+                }
+              },
+              (evt) => {
+                if (evt.type === "done") {
+                  cloudStreamState = "IDLE";
+                  updateModeStatus();
+                }
               },
             );
             if (!streamingAssistantDiv && (response || "").trim()) {
@@ -5277,6 +7732,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           }
         } catch (e) {
           clearPiPermissionState();
+          if (mode === "cloud") {
+            cloudStreamState = "IDLE";
+            updateModeStatus();
+          }
           if (e.name === "AbortError") {
             if (thinking && thinking.isConnected) thinking.remove();
             if (streamingAssistantDiv && streamingAssistantDiv.isConnected) {
@@ -5391,7 +7850,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               history.push({ role: "assistant", content: response });
             }
             lastExchangePersisted = persistToHistory;
-          } else {
+          } else if (mode === "pi") {
             response = await runPiRpcConversation(
               messageToSend,
               activeAbortController.signal,
@@ -5413,7 +7872,58 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
               },
               (evt) => {
+                if (evt.type === "session_start") {
+                  piStatusInfo = {
+                    ...(piStatusInfo || {}),
+                    state: "STREAMING",
+                  };
+                  updateModeStatus();
+                }
+                if (evt.type === "done") {
+                  refreshPiStatus().catch(() => {});
+                }
                 handleStreamEventTrace(evt, thinking);
+              },
+            );
+            if (!streamingAssistantDiv && (response || "").trim()) {
+              streamingAssistantDiv = addMessage("", "assistant");
+            }
+            if (streamingAssistantDiv) {
+              renderAssistantMessage(streamingAssistantDiv, response || "");
+            }
+            if (thinking?.isConnected && !thinking.hadReasoning) {
+              thinking.remove();
+            }
+            history.push({ role: "user", content: messageToSend });
+            history.push({ role: "assistant", content: response });
+            lastExchangePersisted = true;
+          } else {
+            cloudStreamState = "STREAMING";
+            updateModeStatus();
+            response = await runCloudStreamConversation(
+              messageToSend,
+              requestHistory,
+              currentConvId,
+              lastUserMessage.slice(0, 40),
+              activeAbortController.signal,
+              (partialResponse) => {
+                if (thinking?.isConnected && !thinking.hadReasoning) {
+                  thinking.remove();
+                }
+                const nextText = partialResponse || "";
+                if (!streamingAssistantDiv && nextText.trim()) {
+                  streamingAssistantDiv = addMessage("", "assistant");
+                }
+                if (streamingAssistantDiv) {
+                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  chat.scrollTop = chat.scrollHeight;
+                }
+              },
+              (evt) => {
+                if (evt.type === "done") {
+                  cloudStreamState = "IDLE";
+                  updateModeStatus();
+                }
               },
             );
             if (!streamingAssistantDiv && (response || "").trim()) {
@@ -5431,6 +7941,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           }
         } catch (e) {
           clearPiPermissionState();
+          if (mode === "cloud") {
+            cloudStreamState = "IDLE";
+            updateModeStatus();
+          }
           if (e.name === "AbortError") {
             if (thinking && thinking.isConnected) thinking.remove();
             if (streamingAssistantDiv && streamingAssistantDiv.isConnected) {
@@ -5485,8 +7999,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               used,
               total: typeof total === "number" ? total : null,
             };
-          } else {
+          } else if (m === "pi") {
             piTokenState = {
+              used,
+              total: typeof total === "number" ? total : null,
+            };
+          } else if (m === "cloud") {
+            cloudTokenState = {
               used,
               total: typeof total === "number" ? total : null,
             };
@@ -5494,21 +8013,28 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
 
         // Display only the current mode's state
-        const state = mode === "ollama" ? ollamaTokenState : piTokenState;
+        const state =
+          mode === "ollama"
+            ? ollamaTokenState
+            : mode === "pi"
+              ? piTokenState
+              : cloudTokenState;
 
         // Pi with no data yet: try fetching live from the process
         if (mode === "pi" && state.used == null && currentConvId) {
           try {
-            const res = await fetch(apiUrl("/api/pi/stats"), {
+            const res = await fetch(apiUrl("/api/pi/status"), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ saveConv: currentConvId }),
             });
             const data = await res.json();
-            if (data.contextUsage) {
+            piStatusInfo = data?.status || piStatusInfo;
+            updateModeStatus();
+            if (data.status?.contextUsage) {
               piTokenState = {
-                used: data.contextUsage.used || 0,
-                total: data.contextUsage.total || null,
+                used: data.status.contextUsage.used || 0,
+                total: data.status.contextUsage.total || null,
               };
               const t = piTokenState.total != null ? piTokenState.total : "?";
               counterEl.textContent = `Tokens: ${piTokenState.used} / ${t}`;
@@ -5648,6 +8174,72 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         } else {
           panel.classList.remove("open");
           resizerEl.style.display = "none";
+        }
+      }
+
+      function appendSettingsGroups(panelId, groupIds) {
+        const panel = document.getElementById(panelId);
+        if (!panel) return;
+        groupIds.forEach((groupId) => {
+          const group = document.getElementById(groupId);
+          if (group) panel.appendChild(group);
+        });
+      }
+
+      function organizeSettingsTabs() {
+        appendSettingsGroups("settingsTabMain", [
+          "ollamaPaletteGroup",
+          "piPaletteGroup",
+          "cloudPaletteGroup",
+          "ollamaFontGroup",
+          "piFontGroup",
+          "cloudFontGroup",
+          "ollamaGenGroup",
+          "piSettingsGroup",
+          "cloudSettingsGroup",
+        ]);
+        appendSettingsGroups("settingsTabDatabase", ["databaseSettingsGroup"]);
+        appendSettingsGroups("settingsTabPrompts", [
+          "promptSettingsGroup",
+          "promptManageGroup",
+        ]);
+        appendSettingsGroups("settingsTabSkills", [
+          "builtinSkillsGroup",
+          "customSkillsGroup",
+        ]);
+
+        const settingsBody = document.getElementById("settingsBody");
+        const settingsFooter = document.querySelector(".settings-footer");
+        if (settingsBody && settingsFooter) settingsBody.appendChild(settingsFooter);
+      }
+
+      function switchSettingsTab(tabName) {
+        const validTabs = ["main", "database", "prompts", "skills"];
+        const nextTab = validTabs.includes(tabName) ? tabName : "main";
+        activeSettingsTab = nextTab;
+
+        document.querySelectorAll(".settings-tab").forEach((tab) => {
+          const isActive = tab.dataset.settingsTab === nextTab;
+          tab.classList.toggle("active", isActive);
+          tab.setAttribute("aria-selected", isActive ? "true" : "false");
+          tab.tabIndex = isActive ? 0 : -1;
+        });
+        document.querySelectorAll(".settings-tab-panel").forEach((panel) => {
+          const isActive = panel.dataset.settingsPanel === nextTab;
+          panel.classList.toggle("active", isActive);
+          panel.hidden = !isActive;
+        });
+      }
+
+      function updateSettingsTabAvailability(isOllamaMode) {
+        ["prompts", "skills"].forEach((tabName) => {
+          const tab = document.querySelector(
+            `.settings-tab[data-settings-tab="${tabName}"]`,
+          );
+          if (tab) tab.style.display = isOllamaMode ? "" : "none";
+        });
+        if (!isOllamaMode && ["prompts", "skills"].includes(activeSettingsTab)) {
+          switchSettingsTab("main");
         }
       }
 
@@ -5818,24 +8410,31 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         isDark = localStorage.getItem("ollama-pi-chat-dark-mode") === "true";
         updateThemeUI();
 
-        ollamaPalette =
-          localStorage.getItem("ollama-pi-chat-ollama-palette") || "solarised";
-        piPalette =
-          localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
-        ollamaFont =
-          localStorage.getItem("ollama-pi-chat-ollama-font") ||
-          '"Space Mono", monospace';
-        piFont =
-          localStorage.getItem("ollama-pi-chat-pi-font") ||
-          '"Space Mono", monospace';
+        await loadUiSettings();
         loadOllamaOptionsFromStorage();
         document.getElementById("settingOllamaPalette").value = ollamaPalette;
         document.getElementById("settingPiPalette").value = piPalette;
+        document.getElementById("settingCloudPalette").value = cloudPalette;
+        refreshCustomSelectUi(document.getElementById("settingOllamaPalette"));
+        refreshCustomSelectUi(document.getElementById("settingPiPalette"));
+        refreshCustomSelectUi(document.getElementById("settingCloudPalette"));
         syncFontControls("ollama", ollamaFont);
         syncFontControls("pi", piFont);
+        syncFontControls("cloud", cloudFont);
         renderOllamaOptionsForm();
-        applyPalette(mode === "ollama" ? ollamaPalette : piPalette);
-        applyFont(mode === "ollama" ? ollamaFont : piFont);
+        await loadLibrarySettings();
+        await loadLibraryStatus();
+        await pollLibraryIndexJob();
+        applyPalette(
+          mode === "ollama"
+            ? ollamaPalette
+            : mode === "pi"
+              ? piPalette
+              : cloudPalette,
+        );
+        applyFont(
+          mode === "ollama" ? ollamaFont : mode === "pi" ? piFont : cloudFont,
+        );
         setMode(mode);
         renderPiSettingsForm();
 
@@ -5848,6 +8447,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         await loadPrompts();
         await loadCustomSkills();
         await loadPiSettings();
+        await loadCloudSettings();
         await loadOllamaSkillsConfig();
         const permissionPolicySelect = document.getElementById(
           "piPermissionPolicySelect",
@@ -5954,7 +8554,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
             optionsContainer.classList.remove("open");
 
-            selectEl.dispatchEvent(new Event("change"));
+            selectEl.dispatchEvent(new Event("change", { bubbles: true }));
           });
           optionsContainer.appendChild(optDiv);
         });
@@ -6004,12 +8604,100 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           .forEach((c) => c.classList.remove("open"));
       });
 
+      document.addEventListener("click", (event) => {
+        const tab = event.target.closest(".settings-tab");
+        if (!tab) return;
+        switchSettingsTab(tab.dataset.settingsTab);
+      });
+
       // Initialize static selects
+      organizeSettingsTabs();
+      switchSettingsTab(activeSettingsTab);
       document.querySelectorAll("select").forEach(syncCustomSelect);
 
       // --- REFACTORED ONCLICK LISTENERS ---
       document.addEventListener("DOMContentLoaded", function () {
+        document.addEventListener("change", function (e) {
+          if (e.target.classList.contains("builtin-skill-toggle")) {
+            toggleBuiltinSkill(
+              e.target.getAttribute("data-skill"),
+              e.target.checked,
+            );
+          } else if (
+            e.target.id === "topbarPromptSelect" ||
+            e.target.id === "settingActivePrompt"
+          ) {
+            selectActivePrompt(e.target.value);
+          } else if (e.target.id === "settingOllamaPalette") {
+            changeOllamaPalette(e.target.value);
+          } else if (e.target.id === "settingPiPalette") {
+            changePiPalette(e.target.value);
+          } else if (e.target.id === "settingCloudPalette") {
+            changeCloudPalette(e.target.value);
+          } else if (e.target.id === "settingOllamaFontPreset") {
+            onOllamaFontPresetChange(e.target.value);
+          } else if (e.target.id === "settingOllamaFontCustom") {
+            changeOllamaFont(e.target.value);
+          } else if (e.target.id === "settingPiFontPreset") {
+            onPiFontPresetChange(e.target.value);
+          } else if (e.target.id === "settingPiFontCustom") {
+            changePiFont(e.target.value);
+          } else if (e.target.id === "settingCloudFontPreset") {
+            onCloudFontPresetChange(e.target.value);
+          } else if (e.target.id === "settingCloudFontCustom") {
+            changeCloudFont(e.target.value);
+          } else if (e.target.id === "cloudProviderSelect") {
+            cloudSettings.provider = e.target.value;
+            renderCloudSettingsForm();
+          } else if (
+            e.target.id === "cloudModelInput" ||
+            e.target.id === "cloudBaseUrlInput" ||
+            e.target.id === "cloudMaxTokensInput"
+          ) {
+            const provider = cloudSettings.provider || "openai";
+            if (e.target.id === "cloudModelInput") {
+              cloudSettings.models[provider] =
+                e.target.value.trim() || CLOUD_DEFAULT_MODELS[provider];
+            } else if (e.target.id === "cloudBaseUrlInput") {
+              cloudSettings.baseUrls[provider] =
+                e.target.value.trim() || CLOUD_DEFAULT_BASE_URLS[provider];
+            } else {
+              cloudSettings.maxTokens = clampInteger(
+                e.target.value,
+                2048,
+                1,
+                128000,
+              );
+            }
+            updateModeStatus();
+          } else if (
+            e.target.closest("#ollamaGenGroup") &&
+            e.target.tagName !== "SELECT" &&
+            e.target.tagName !== "BUTTON"
+          ) {
+            saveOllamaOptionsFromForm();
+          } else if (
+            e.target.id === "databaseEmbeddingModelSelect"
+          ) {
+            const customInput = document.getElementById(
+              "databaseEmbeddingModelCustomInput",
+            );
+            if (customInput) {
+              customInput.style.display =
+                e.target.value === "__custom__" ? "" : "none";
+              if (e.target.value === "__custom__") customInput.focus();
+            }
+          }
+        });
+
         document.addEventListener("click", function (e) {
+          const removeSourceButton = e.target.closest(
+            ".database-source-remove",
+          );
+          if (removeSourceButton) {
+            removeDatabaseSource(Number(removeSourceButton.dataset.index || 0));
+            return;
+          }
           if (e.target && e.target.classList.contains("prompt-item-delete")) {
             const idx = e.target.getAttribute("data-idx");
             if (idx !== null) {
@@ -6032,6 +8720,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (btn_btnPi) {
           btn_btnPi.addEventListener("click", function (event) {
             setMode("pi");
+          });
+        }
+
+        const btn_btnCloud = document.getElementById("btnCloud");
+        if (btn_btnCloud) {
+          btn_btnCloud.addEventListener("click", function (event) {
+            setMode("cloud");
           });
         }
 
@@ -6124,6 +8819,99 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (btn_closeSettingsBtn) {
           btn_closeSettingsBtn.addEventListener("click", function (event) {
             toggleSettings();
+          });
+        }
+
+        const btn_saveCloudSettingsBtn = document.getElementById(
+          "saveCloudSettingsBtn",
+        );
+        if (btn_saveCloudSettingsBtn) {
+          btn_saveCloudSettingsBtn.addEventListener("click", function () {
+            saveCloudSettingsUi(false);
+          });
+        }
+
+        const btn_reloadCloudSettingsBtn = document.getElementById(
+          "reloadCloudSettingsBtn",
+        );
+        if (btn_reloadCloudSettingsBtn) {
+          btn_reloadCloudSettingsBtn.addEventListener("click", function () {
+            loadCloudSettings();
+          });
+        }
+
+        const btn_clearCloudApiKeyBtn = document.getElementById(
+          "clearCloudApiKeyBtn",
+        );
+        if (btn_clearCloudApiKeyBtn) {
+          btn_clearCloudApiKeyBtn.addEventListener("click", function () {
+            if (!confirm("Clear the saved API key for this Cloud provider?")) {
+              return;
+            }
+            saveCloudSettingsUi(true);
+          });
+        }
+
+        const btn_saveDatabaseSettingsBtn = document.getElementById(
+          "saveDatabaseSettingsBtn",
+        );
+        if (btn_saveDatabaseSettingsBtn) {
+          btn_saveDatabaseSettingsBtn.addEventListener("click", function () {
+            saveLibrarySettingsFromForm();
+          });
+        }
+
+        const btn_reloadLibraryStatusBtn = document.getElementById(
+          "reloadLibraryStatusBtn",
+        );
+        if (btn_reloadLibraryStatusBtn) {
+          btn_reloadLibraryStatusBtn.addEventListener("click", function () {
+            loadLibraryStatus();
+          });
+        }
+
+        const btn_addDatabaseSourceBtn = document.getElementById(
+          "addDatabaseSourceBtn",
+        );
+        if (btn_addDatabaseSourceBtn) {
+          btn_addDatabaseSourceBtn.addEventListener("click", function () {
+            addDatabaseSource();
+          });
+        }
+
+        const btn_runLibraryIndexBtn =
+          document.getElementById("runLibraryIndexBtn");
+        if (btn_runLibraryIndexBtn) {
+          btn_runLibraryIndexBtn.addEventListener("click", function () {
+            startLibraryIndex(false);
+          });
+        }
+
+        const btn_estimateLibraryIndexBtn = document.getElementById(
+          "estimateLibraryIndexBtn",
+        );
+        if (btn_estimateLibraryIndexBtn) {
+          btn_estimateLibraryIndexBtn.addEventListener("click", function () {
+            estimateLibraryIndexSize();
+          });
+        }
+
+        const btn_forceLibraryReindexBtn = document.getElementById(
+          "forceLibraryReindexBtn",
+        );
+        if (btn_forceLibraryReindexBtn) {
+          btn_forceLibraryReindexBtn.addEventListener("click", function () {
+            if (!confirm("Reindex all configured source files?")) return;
+            startLibraryIndex(true);
+          });
+        }
+
+        const btn_cancelLibraryIndexBtn = document.getElementById(
+          "cancelLibraryIndexBtn",
+        );
+        if (btn_cancelLibraryIndexBtn) {
+          btn_cancelLibraryIndexBtn.addEventListener("click", function () {
+            cancelLibraryIndex();
           });
         }
 

@@ -1,10 +1,12 @@
-# 🦙 Ollama Pi Chat
+# Ollama Pi Chat
 
-## A Beautiful, Secure, & Local-First Web Interface for Ollama and the Pi Agent
+![Cover Image](promo/cover.png)
 
-Welcome to **Ollama Pi Chat**! This is a local-only desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models and agent systems.
+## A Beautiful, Secure, & Local-First Web Interface for Ollama, Pi, and Cloud Models
 
-Everything runs directly on your macOS machine. **No data ever leaves your computer, and no internet connection is required to chat.** It is 100% private, secure, and under your control.
+Welcome to **Ollama Pi Chat**! This is a local-first desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models, agent systems, and optional cloud model providers.
+
+The core chat server and desktop wrapper run directly on your macOS machine. **Offline Ollama chat does not require an internet connection.** Pi mode runs through your local Pi CLI. Cloud mode is optional and only contacts the provider you configure. Optional web/MCP/shell skills can contact external services or run local commands only when enabled and invoked, so review those settings before using them with sensitive prompts.
 
 > [!IMPORTANT]
 > **macOS Gatekeeper Warning**: The developer of this project does not have a paid Apple Developer Account, so the pre-built desktop applications and binaries are not digitally signed.
@@ -12,39 +14,41 @@ Everything runs directly on your macOS machine. **No data ever leaves your compu
 
 ---
 
-## 📖 Table of Contents
+## Table of Contents
 
-1. [What is Ollama Pi Chat?](#-what-is-ollama-pi-chat)
-2. [The Two Chat Modes Explained](#-the-two-chat-modes-explained)
-3. [Core Features Tour](#-core-features-tour)
-4. [Requirements & Downloads](#-requirements--downloads)
-5. [How to Run & Install (Choose Your Path)](#-how-to-run--install-choose-your-path)
-6. [Understanding the Settings Panel](#-understanding-the-settings-panel)
-7. [Privacy, Security, & Where Data is Stored](#-privacy-security--where-data-is-stored)
-8. [Troubleshooting Common Issues](#-troubleshooting-common-issues)
-9. [Pre-publishing Checks (For Developers)](#-pre-publishing-checks-for-developers)
+1. [What is Ollama Pi Chat?](#what-is-ollama-pi-chat)
+2. [The Three Chat Modes Explained](#the-three-chat-modes-explained)
+3. [Core Features Tour](#core-features-tour)
+4. [Requirements & Downloads](#requirements--downloads)
+5. [How to Run & Install (Choose Your Path)](#how-to-run--install-choose-your-path)
+6. [Understanding the Settings Panel](#understanding-the-settings-panel)
+7. [Database Research From Scratch](#database-research-from-scratch)
+8. [Privacy, Security, & Where Data is Stored](#privacy-security--where-data-is-stored)
+9. [Troubleshooting Common Issues](#troubleshooting-common-issues)
+10. [Pre-publishing Checks (For Developers)](#pre-publishing-checks-for-developers)
 
 ---
 
-## 💡 What is Ollama Pi Chat?
+## What is Ollama Pi Chat?
 
-For non-technical users, think of Ollama Pi Chat as a **private control deck for Artificial Intelligence**. Instead of sending your sensitive data, personal notes, or proprietary code to external cloud providers (like OpenAI or Anthropic), Ollama Pi Chat runs models directly on your computer's chip (Mac Apple Silicon or Intel).
+For non-technical users, think of Ollama Pi Chat as a **private control deck for Artificial Intelligence**. You can keep work fully local with Ollama, use Pi for terminal-grade agent tasks, or intentionally switch to Cloud mode when you want to use your own provider API keys.
 
-It combines **two powerful systems** under one beautiful user interface:
+It combines **three powerful systems** under one beautiful user interface:
 
 - **Ollama**: An engine that runs massive AI models on your local hardware.
 - **Pi**: An agent system that can perform actions (like read files, write files, search local directories, and run terminal scripts).
+- **Cloud**: A direct chat mode for provider APIs such as OpenAI, Anthropic Claude, and Mistral.
 
 ---
 
-## 🔄 The Two Chat Modes Explained
+## The Three Chat Modes Explained
 
-You can toggle between the two modes instantly using the switch at the top-left of the application bar.
+You can toggle between the three modes instantly using the icon switch at the top-left of the application bar.
 
-```
-┌──────────────────────────────────────────────┐
-│  [ OLLAMA ]  [ PI ]   <-- Toggle here        │
-└──────────────────────────────────────────────┘
+```text
++--------------------------------------------+
+| [ Ollama icon ] [ Pi icon ] [ Cloud icon ] |
++--------------------------------------------+
 ```
 
 ### 1. Ollama Mode (Pure Offline Chat)
@@ -61,24 +65,36 @@ In Pi Mode, the app acts as a secure bridge to the **Pi agent command-line tool*
 
 - **Best for**: Complex automation, programming tasks, searching local project folders, reviewing codebase directories, or performing system actions.
 - **Interactive Browser Permissions (The Security Guards)**: When Pi runs a tool to modify files, run command terminal lines, or query sensitive folders, it requests permission. Ollama Pi Chat captures this request and pops up a clear, non-technical interactive dialog in your browser. You can **Allow**, **Deny**, input custom variables, or edit the command before it runs. This prevents the command-line tool from silently hanging or executing unauthorized actions on your machine.
+- **Live Status**: The title bar can show the active Pi model, state, cost label, and thinking level when your Pi CLI exposes those values through RPC.
+
+### 3. Cloud Mode (Bring Your Own API Key)
+
+In Cloud Mode, the app sends chat requests directly from the local server to the cloud provider you configure.
+
+- **Best for**: Using hosted models when you want higher capacity, a specific provider model, or a fallback when local models are not enough.
+- **Supported providers**: OpenAI, Anthropic Claude, and Mistral.
+- **How it works**: Open Settings, choose the Cloud provider, paste your API key, set the model id, and save. Then switch to the Cloud icon in the top-left mode selector and chat normally.
+- **Privacy note**: Cloud prompts and uploaded text are sent to the selected provider. Use Ollama or Pi mode for workflows that must remain fully local.
 
 ---
 
-## 🎨 Core Features Tour
+## Core Features Tour
 
 Ollama Pi Chat is packed with premium, user-friendly utilities:
 
-- 📱 **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
-- 🔌 **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models!
-- 📝 **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
-- 📁 **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
-- 📋 **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
-- 📜 **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
-- 🔒 **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
+- **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
+- **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models.
+- **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
+- **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
+- **Local Library Research**: Build a private SQLite index from Calibre EPUB books plus configured TXT or Markdown note folders, then let Ollama retrieve relevant passages before answering.
+- **Cloud Mode**: Use OpenAI, Anthropic Claude, or Mistral models with your own API keys while keeping the app UI, history, and settings local.
+- **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
+- **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
+- **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
 
 ---
 
-## 📋 Requirements & Downloads
+## Requirements & Downloads
 
 To run this application locally, you will need a few simple components installed on your Mac:
 
@@ -89,14 +105,16 @@ To run this application locally, you will need a few simple components installed
      ollama run llama3
      ```
 3. **Pi CLI (Only required for Pi Mode)**: The agent execution engine. Make sure the `pi` command is installed and accessible in your environment PATH.
-4. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install it via Homebrew:
+4. **Cloud Provider API Key (Only required for Cloud Mode)**: Bring an API key from OpenAI, Anthropic, or Mistral if you want to use hosted models.
+5. **SQLite (Optional - for Local Library Research)**: Keyword database search works with normal SQLite. Semantic vector search requires a SQLite build that can load extensions, the sqlite-vec extension, and a local Ollama embedding model. Apple `/usr/bin/sqlite3` cannot load sqlite-vec because it is built with `OMIT_LOAD_EXTENSION`; install Homebrew SQLite for semantic search.
+6. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install it via Homebrew:
    ```bash
    brew install poppler
    ```
 
 ---
 
-## 🚀 How to Run & Install (Choose Your Path)
+## How to Run & Install (Choose Your Path)
 
 Depending on your technical comfort level, select one of the following methods to start using the app.
 
@@ -156,11 +174,11 @@ If you want the Ollama Pi Chat server to start automatically whenever you turn o
 - **How it works**: This creates a macOS LaunchAgent plist at `~/Library/LaunchAgents/com.user.ollamapichat.plist`. The server now boots silently at login and listens securely at `http://127.0.0.1:8080`.
 - **To stop the service later**, run:
   ```bash
-  launchctl unload "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
+  launchctl bootout "gui/$UID/com.user.ollamapichat"
   ```
 - **To restart the service later**, run:
   ```bash
-  launchctl load "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
+  launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
   ```
 
 ---
@@ -182,14 +200,14 @@ You can package Node.js, the local server code, and the frontend web pages into 
 
 ---
 
-## ⚙️ Understanding the Settings Panel
+## Understanding the Settings Panel
 
 Click the slider icon (**Settings**) in the top right to configure your system. Here is a breakdown of what these settings mean in plain English:
 
 ### 1. Appearance & Presets
 
-- **Ollama/Pi Color Palette**: Swap between custom-designed color schemes. Different palettes can be set for Ollama and Pi mode so you instantly know which mode is active.
-- **Ollama Font Family**: Change the typography style of the chat messages. You can use standard monospaced fonts, serif fonts, or type in a custom font installed on your system.
+- **Ollama/Pi/Cloud Color Palette**: Swap between custom-designed color schemes. Different palettes can be set for each mode so you instantly know which mode is active.
+- **Ollama/Pi/Cloud Font Family**: Change the typography style of the chat messages. You can use standard monospaced fonts, serif fonts, or type in a custom font installed on your system.
 
 ### 2. AI Sampling Sliders (Ollama Generation Options)
 
@@ -203,7 +221,24 @@ These parameters let you control the "personality" and behavior of the local Oll
 | **Repeat Penalty**           | Punishes the model for repeating the exact same phrases.                         | **1.0**: No penalty. Might loop or repeat.                                                         | **1.5**: Strong penalty. Forces the AI to find alternative wording.                                         | **1.15**  |
 | **Context Window (num_ctx)** | The AI's short-term memory limit (including prompt and response history).        | **2048**: Fast response times, but forgets earlier details quickly.                                | **32768 - 131072**: Can remember entire uploaded books or long codebases, but consumes more RAM/GPU memory. | **32768** |
 
-### 3. Pi Configuration Settings
+### 3. Database
+
+- **Database File**: Chooses where the generated SQLite index is stored. The default is `~/ollama-pi-chat/library.sqlite`.
+- **Enable for Ollama Chat**: Searches your private SQLite library before sending the prompt to Ollama. When this is disabled, Ollama answers normally without database context.
+- **Passages**: Controls how many retrieved chunks are inserted into the model context.
+- **Context Chars**: Caps how much retrieved library text is sent to the model.
+- **Source Paths**: When enabled, the model receives source file paths with the passages so it can cite where the evidence came from.
+- **Semantic Vector Search**: Enables embedding-based retrieval when sqlite-vec is configured. This is the recommended default for large libraries.
+- **Keyword FTS Index**: Optional exact-term fallback search. It increases database size, so leave it off unless you specifically need keyword matching.
+- **Embedding Model**: Choose an installed Ollama model for embeddings. `nomic-embed-text-v2-moe:latest` is a good multilingual choice for English and Spanish libraries.
+- **Vector Dims**: Controls stored embedding dimensions. The default is `256`, which keeps the index smaller while still using the compact Matryoshka representation from Nomic-style embedding models.
+- **Source Folders**: Add, remove, and edit folders from the UI. The default Books source indexes EPUB files only, while note sources can index `.md` and `.txt`.
+- **Estimate Index Size**: Samples the configured source folders and estimates final passage count and database size before a full index run.
+- **Build / Update Index**: Scans changed source files and updates `library.sqlite`. It also repairs missing embeddings for unchanged files, so a temporary embedding failure can be retried without re-reading every EPUB.
+- **Reindex All**: Rebuilds every configured source even if the file did not change.
+- **Pause Index**: Pauses the running index job between files or embedding batches. A paused job will not auto-resume until you start indexing again.
+
+### 4. Pi Configuration Settings
 
 - **Pi Command Path**: If your system has multiple installations of the Pi tool, you can paste the exact file path here (e.g., `/usr/local/bin/pi`).
 - **Pi Working Directory**: The default directory where Pi runs code. By default, this is set to your storage directory.
@@ -212,30 +247,286 @@ These parameters let you control the "personality" and behavior of the local Oll
   - **Normal**: Prompts you for critical operations but automates standard lookups.
   - **Strict**: Hard-blocks root access, shortens decision timers, and prompts you for everything to ensure maximum security.
 
-### 4. Built-in Agent Skills (Ollama)
+### 5. Built-in Agent Skills (Ollama)
 
 Ollama Pi Chat comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
 
-- **Wikipedia**: Searches Wikipedia for factual information and summaries.
-- **Britannica**: Searches the Encyclopedia Britannica for curated facts.
-- **Wiktionary**: Looks up deep dictionary definitions.
-- **Deep Etymology**: Cross-references multiple multilingual etymological dictionaries (Etymonline, RAE, CNRTL, DeChile) to find word origins, cognates, and false friends.
-- **DuckDuckGo**: Performs general, privacy-respecting web searches for recent news and events.
-- **Web Scraper**: Extracts raw, readable text content from any provided web URL.
+- **Wikipedia**: Searches Wikipedia for factual information and summaries. Requires internet access.
+- **Britannica**: Searches the Encyclopedia Britannica for curated facts. Requires internet access.
+- **Wiktionary**: Looks up deep dictionary definitions. Requires internet access.
+- **Deep Etymology**: Cross-references multiple multilingual etymological dictionaries (Etymonline, RAE, CNRTL, DeChile) to find word origins, cognates, and false friends. Requires internet access.
+- **DuckDuckGo**: Performs general, privacy-respecting web searches for recent news and events. Requires internet access.
+- **Web Scraper**: Extracts raw, readable text content from any provided web URL. Requires internet access.
 - **Calculator**: Securely evaluates complex mathematical expressions.
 - **Time & Date**: Retrieves the current local time, date, and day of the week, with support for global IANA timezones (e.g., `Australia/Sydney`).
-- **Fact Check**: Fact-checks specific claims against multiple sources.
-- **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety).
+- **Fact Check**: Fact-checks specific claims against multiple sources. Requires internet access.
+- **Shell Command**: Executes bash terminal commands directly from the chat (requires explicit interactive confirmation for safety). Custom shell skills use the same confirmation gate.
 - **Local Notes**: Allows the model to directly read from or append text to your persistent local notes file.
 
-### 5. MCP (Model Context Protocol) Integration
+### 6. Cloud Mode Settings
 
-Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models. 
+- **Provider**: Choose OpenAI, Anthropic Claude, or Mistral.
+- **API Key**: Paste your provider key. Keys are saved on disk by the local server and are never returned to the browser UI after saving.
+- **Model**: Enter the exact model id you want to use for that provider.
+- **Base URL**: Keep the provider default unless you use a compatible gateway or proxy.
+- **Max Output Tokens**: Caps the maximum response length requested from the provider.
+
+### 7. MCP (Model Context Protocol) Integration
+
+Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models.
 Click the **Plug Icon** in the top title bar to open the MCP Panel. You can paste standard `mcpServers` JSON configuration directly into the box. The app will automatically parse your config, spin up the external servers in the background, map their tools, and dynamically render sleek plain-English badges (like `MEMORY`, `FILESYSTEM`) below the editor so you always know what tools are locked and loaded.
 
 ---
 
-## 🔒 Privacy, Security, & Where Data is Stored
+## Database Research From Scratch
+
+The Database feature lets Ollama answer with passages retrieved from your own local files. It is not automatic until you configure sources and build the index. The generated index lives in SQLite, usually at `~/ollama-pi-chat/library.sqlite`.
+
+### What the Database Does
+
+1. Reads configured source folders.
+2. Extracts text from supported files.
+3. Splits the text into searchable passages.
+4. Stores compressed passage text and metadata in SQLite.
+5. Creates embeddings for semantic vector search when enabled.
+6. Optionally creates a lightweight FTS5 keyword index when enabled.
+7. Retrieves relevant passages before an Ollama chat request.
+8. Injects those passages into the Ollama prompt with source information.
+
+When **Enable for Ollama Chat** is off, none of this retrieval context is added and Ollama answers normally.
+
+### First-Time Setup
+
+1. Open the app.
+2. Open **Settings**.
+3. Find the **Database** section with the database icon.
+4. Confirm **Database File**. The default is:
+   ```text
+   ~/ollama-pi-chat/library.sqlite
+   ```
+5. Under **Source Folders**, add one row per folder you want indexed.
+6. For a Calibre EPUB library, use:
+   ```text
+   Name: Books
+   Type: book
+   Folder Path: ~/Libros
+   Extensions: .epub
+   ```
+7. For Obsidian or notes, add a separate source:
+   ```text
+   Name: Obsidian
+   Type: note
+   Folder Path: /path/to/your/Obsidian/vault
+   Extensions: .md, .txt
+   ```
+8. Turn on **Enable Semantic Vector Search** if sqlite-vec and your embedding model are ready.
+9. Leave **Enable Keyword FTS Index** off unless you need exact-term fallback search.
+10. Click **Save Database Settings**.
+11. Click **Estimate Index Size** to preview projected passage count and database size.
+12. Click **Build / Update Index**.
+13. Watch the progress bar and status line until indexing completes.
+14. Turn on **Enable for Ollama Chat**.
+15. Ask normally in Ollama mode.
+
+### What Gets Indexed
+
+- Calibre EPUB books are indexed from `.epub` files.
+- Markdown notes can be indexed from `.md` files.
+- Plain text notes can be indexed from `.txt` files.
+- Calibre `metadata.opf` is not indexed as content. It is only used as fallback title/author metadata.
+- `cover.jpg`, cover images, EPUB images, PDFs, and standalone image files are not indexed.
+- Image-only comics and EPUBs with too little extractable text are skipped and reported as skipped documents.
+
+The indexer only reads your source files. It does not edit, convert, rename, or delete your books or notes.
+
+### Search Modes
+
+**Keyword Search**
+
+Keyword search uses SQLite FTS5. It does not require embeddings or sqlite-vec, but it increases `library.sqlite` because SQLite must store a keyword index for the passage text. It is useful for exact names, titles, words, and phrases. For very large EPUB libraries, leave **Enable Keyword FTS Index** off unless you need exact-term fallback search.
+
+**Semantic Vector Search**
+
+Semantic search uses embeddings and sqlite-vec. It is the recommended mode for large personal libraries because it can stay compact and is better when your question and the book use different words for the same idea. For example, a question like `What did Freud say about incest?` may need passages containing `tabu del incesto`, `Oedipus complex`, `Totem and Taboo`, or related Spanish terms.
+
+**Compact Storage**
+
+The index stores passage text compressed in SQLite. The model still receives normal readable passages at chat time, but the database does not keep a large plain-text copy of every passage. Keyword FTS is optional because it adds a second search structure.
+
+### SQLite and sqlite-vec Setup
+
+This section matters if you want **Semantic Vector Search**, which is recommended for large libraries. If you only want optional keyword FTS search, you can leave semantic search off and skip these steps.
+
+There are two different pieces involved:
+
+- **SQLite**: The database program that stores and searches the index.
+- **sqlite-vec**: The extension that adds vector search to SQLite.
+
+macOS includes SQLite at:
+
+```text
+/usr/bin/sqlite3
+```
+
+That Apple SQLite is fine for basic SQLite work, but it cannot load sqlite-vec. It is built with:
+
+```text
+OMIT_LOAD_EXTENSION
+```
+
+If semantic search tries to use Apple SQLite, you may see an error like:
+
+```text
+unknown command or invalid arguments: "load"
+```
+
+That means the wrong SQLite binary is being used. The fix is to install Homebrew SQLite and use the official sqlite-vec Python package.
+
+#### Step 1: Install Homebrew SQLite
+
+Open Terminal and run:
+
+```bash
+brew install sqlite
+```
+
+Homebrew may say SQLite is already installed. That is fine.
+
+The app looks for Homebrew SQLite here:
+
+```text
+/opt/homebrew/opt/sqlite/bin/sqlite3
+```
+
+On older Intel Macs, Homebrew may use:
+
+```text
+/usr/local/opt/sqlite/bin/sqlite3
+```
+
+The app checks these Homebrew paths before Apple `/usr/bin/sqlite3`.
+
+To verify Homebrew SQLite exists, run:
+
+```bash
+/opt/homebrew/opt/sqlite/bin/sqlite3 -version
+```
+
+If that command prints a SQLite version, the SQLite side is ready.
+
+#### Step 2: Install sqlite-vec Safely
+
+Do not download a random `vec0.dylib` manually from a browser unless you know exactly where it came from. The recommended path is to install the official `sqlite-vec` Python package inside a virtual environment.
+
+First create a small isolated Python environment:
+
+```bash
+python3 -m venv ~/sqlite-vec-env
+```
+
+Activate it:
+
+```bash
+source ~/sqlite-vec-env/bin/activate
+```
+
+Install sqlite-vec:
+
+```bash
+pip install sqlite-vec
+```
+
+Find the installed `vec0.dylib` path:
+
+```bash
+python -c "import sqlite_vec, pathlib; print(pathlib.Path(sqlite_vec.__file__).parent / 'vec0.dylib')"
+```
+
+The output will look similar to:
+
+```text
+/Users/your-name/sqlite-vec-env/lib/python3.14/site-packages/sqlite_vec/vec0.dylib
+```
+
+Copy the exact path printed by your Terminal.
+
+#### Step 3: Paste the Path Into the App
+
+Open the app:
+
+1. Go to **Settings**.
+2. Go to **Database**.
+3. Turn on **Enable Semantic Vector Search**.
+4. Paste the `vec0.dylib` path into **SQLite-Vec Extension Path**.
+5. Choose your embedding model.
+6. Keep **Vector Dims** at `256` unless you have a specific reason to use larger vectors.
+7. Click **Save Database Settings**.
+8. Click **Reindex All**.
+
+Use the path printed on your own machine. Do not copy another user's path.
+
+To enable semantic search:
+
+1. Install Homebrew SQLite.
+2. Install sqlite-vec in a Python virtual environment.
+3. In **Settings > Database**, turn on **Enable Semantic Vector Search**.
+4. Set **SQLite-Vec Extension Path** to the `vec0.dylib` file from the virtual environment.
+5. Choose an **Embedding Model** from the dropdown.
+6. Keep **Vector Dims** at `256` unless you have a specific reason to store larger vectors.
+7. For English and Spanish libraries, `nomic-embed-text-v2-moe:latest` is recommended if it is installed in Ollama.
+8. Click **Save Database Settings**.
+9. Click **Reindex All** so embeddings are generated for every passage.
+
+If semantic search is enabled but sqlite-vec or Ollama embeddings are not available, the app still stores compressed passages but cannot perform semantic retrieval. Turn on **Enable Keyword FTS Index** only if you want keyword fallback. The index status shows the embedding preflight error instead of silently leaving embeddings at zero.
+
+The indexer stores compressed passage text. If keyword FTS is enabled, it creates a separate lightweight FTS5 keyword index. The app also compacts the SQLite file after an index run so old deleted pages are returned to disk.
+
+If you previously built an older plain-text/FTS-heavy database, create a fresh compact index. Pause any active index job, quit the app, delete the old `~/ollama-pi-chat/library.sqlite` file, reopen the app, run **Estimate Index Size**, then run **Build / Update Index**. The old database format will still be readable, but it will not become compact until files are reindexed.
+
+### Embedding Model Dropdown
+
+The dropdown is populated from your installed Ollama models. If your embedding model is not listed, pull it first in Terminal, for example:
+
+```bash
+ollama pull nomic-embed-text-v2-moe:latest
+```
+
+Then reopen or refresh the app. You can also choose **Custom model id** and type the exact model name.
+
+Changing the embedding model requires **Reindex All**. Old embeddings were created with the previous model and should not be mixed with a new embedding model.
+
+### Indexing Buttons
+
+- **Estimate Index Size**: Samples configured source files and estimates passage count, compressed text size, vector size, and projected total database size. Use this before indexing thousands of books.
+- **Build / Update Index**: Scans configured sources and indexes only new or changed files.
+- **Reindex All**: Processes every configured file again. Use this after changing the embedding model, enabling semantic search, changing sqlite-vec, enabling/disabling keyword FTS, or changing chunking/search assumptions.
+- **Refresh Status**: Reloads the database status, including file count, passage count, embedding count, source count, and whether sqlite-vec is active.
+- **Pause Index**: Requests a pause. If the job is compacting SQLite, the pause waits until the current database operation finishes.
+
+Large libraries can take a long time on the first run. A library with thousands of EPUBs may take hours depending on EPUB quality, disk speed, and whether embeddings are enabled. If you close the app while indexing, the local server process stops and the active batch is interrupted. The app writes the job state to `~/ollama-pi-chat/library-index-job.json`, and on the next launch it automatically resumes a job that was still marked as running. If you press **Pause Index**, the job is marked as paused and will not auto-resume until you start indexing again.
+
+### Asking Questions With Sources
+
+For source-grounded answers:
+
+1. Make sure the index exists and status shows files/passages.
+2. Turn on **Enable for Ollama Chat**.
+3. Keep **Include Source Paths in Model Context** enabled.
+4. Set **Passages** to `5` or `8`.
+5. Ask a direct question, for example:
+   ```text
+   What did Freud say about incest?
+   ```
+
+The app retrieves passages, sends them to Ollama as temporary context, and asks the model to use those passages only when relevant. The model receives title, author, heading, and source path when available.
+
+### Current Limitation
+
+Database retrieval is currently injected into Ollama chat. Pi integration is technically possible, but the current release does not yet wire database retrieval into Pi mode.
+
+---
+
+## Privacy, Security, & Where Data is Stored
 
 Ollama Pi Chat is designed from the ground up to respect your digital sovereignty.
 
@@ -248,24 +539,33 @@ Ollama Pi Chat is designed from the ground up to respect your digital sovereignt
   Inside this folder, you will find:
   - `conversations.json`: Your entire chat history, locally cached.
   - `prompts.json`: Your custom overlay prompts.
+  - `ui-settings.json`: Mode-specific palettes and font settings.
+  - `cloud-settings.json`: Cloud provider settings and saved API keys. This file is written with owner-only permissions (`0600`) when possible.
+  - `library-config.json`: Local Library Research source paths, search limits, and optional embedding settings.
+  - `library-index-job.json`: Last index job state. This is used to auto-resume interrupted running jobs after reopening the app.
+  - `library.sqlite`: Generated local library database containing compressed indexed passages, optional embeddings, and optional keyword FTS data.
   - `security-events.jsonl`: The security audit trace showing permission requests and execution logs.
   - `daemon.log` / `daemon.error.log`: Output logs when running the LaunchAgent background daemon.
-- **Browser localStorage**: Font preferences, themes, active prompts, and your notes panel text are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage will reset these UI settings.
+- **Browser localStorage**: Browser-side fallbacks, active prompt selection, and some UI state are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage may reset browser-only UI state.
+
+### Cloud Mode Privacy
+
+Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/ollama-pi-chat/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY`).
 
 ### Network Safety Protections
 
 The local Node.js server implements active security headers to protect your local system from web-based attacks:
 
-1. **Origin Verification**: The server automatically rejects any inbound HTTP request whose `Host` or `Origin` header does not match `127.0.0.1:8080` or `localhost:8080`. This prevents malicious websites you visit in other tabs from talking to your local AI server.
+1. **Origin Verification**: The server automatically rejects any inbound HTTP request whose `Host` or `Origin` header does not match the active local server port on `127.0.0.1` or `localhost`. This prevents malicious websites you visit in other tabs from talking to your local AI server.
 2. **CSP (Content Security Policy)**: Blocks execution of injected scripts and strictly restricts style sheet, font, and connect sources.
 3. **MIME Sniffing & Framing Protections**: Anti-clickjacking headers are applied to prevent the local chat interface from being framed by external sites.
 4. **Root Block**: The server will immediately shutdown and refuse to boot if started as the root administrator user (`UID 0`).
 
 ---
 
-## 🛠️ Troubleshooting Common Issues
+## Troubleshooting Common Issues
 
-### ❌ Error: `listen EADDRINUSE 127.0.0.1:8080`
+### Error: `listen EADDRINUSE 127.0.0.1:8080`
 
 - **What it means**: The network port `8080` is already occupied. This usually happens if an old instance of the Ollama Pi Chat server is still running in the background, or another application (like a development project) is using that port.
 - **How to fix it**:
@@ -279,7 +579,7 @@ The local Node.js server implements active security headers to protect your loca
      ```
   3. Alternatively, you can open `server.js` and change `DEFAULT_PORT = 8080` to an open port (e.g., `8082`).
 
-### ❌ Models are not showing up in the selector
+### Models are not showing up in the selector
 
 - **What it means**: Ollama Pi Chat cannot establish a connection with the local Ollama engine.
 - **How to fix it**:
@@ -290,7 +590,7 @@ The local Node.js server implements active security headers to protect your loca
      ollama pull llama3
      ```
 
-### ❌ PDF uploads are failing
+### PDF uploads are failing
 
 - **What it means**: Your system is missing the text extractor utility.
 - **How to fix it**:
@@ -300,14 +600,72 @@ The local Node.js server implements active security headers to protect your loca
     ```
   - Confirm it is installed by running `which pdftotext`.
 
-### ❌ Pi Mode hangs when I run a command
+### Pi Mode hangs when I run a command
 
 - **What it means**: Pi CLI is not installed or the permission prompt is waiting.
 - **How to fix it**:
   1. Confirm the Pi tool is available by running `which pi` in terminal. If missing, check your Pi CLI setup path.
   2. Ensure the permissions extension (`@gotgenes/pi-permission-system`) is properly registered in your Pi runtime configurations.
 
-### ❌ "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
+### Cloud Mode says the API key is missing
+
+- **What it means**: No key is saved for the selected provider, and no matching environment variable is available to the server.
+- **How to fix it**:
+  1. Open **Settings** and switch to the Cloud Mode section.
+  2. Choose your provider, paste the API key, confirm the model id, and click **Save Cloud Settings**.
+  3. Alternatively, start the server with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY` set in the environment.
+
+### Local Library Research shows zero files
+
+- **What it means**: The indexer has not found readable EPUB, TXT, or Markdown files in the configured source folders.
+- **How to fix it**:
+  1. Open `~/ollama-pi-chat/library-config.json` and confirm your source paths exist.
+  2. Confirm your DRM-free EPUB books are in the configured books folder, for example `~/Libros`. Calibre `metadata.opf`, cover images, PDFs, and image-only comics are not indexed as content.
+  3. Run:
+     ```bash
+     npm run library:index
+     npm run library:status
+     ```
+  4. If semantic search is enabled, confirm your embedding model is available in Ollama and that `embedding.sqliteVecExtensionPath` points to a valid sqlite-vec extension file.
+
+### Semantic search says `unknown command or invalid arguments: "load"`
+
+- **What it means**: The app is trying to load sqlite-vec with a SQLite binary that does not support loadable extensions. On macOS, Apple `/usr/bin/sqlite3` is built with `OMIT_LOAD_EXTENSION`, so it cannot load `vec0.dylib`.
+- **How to fix it**:
+  1. Install Homebrew SQLite:
+     ```bash
+     brew install sqlite
+     ```
+  2. Confirm Homebrew SQLite exists:
+     ```bash
+     /opt/homebrew/opt/sqlite/bin/sqlite3 -version
+     ```
+  3. Quit and reopen the app. The app automatically prefers `/opt/homebrew/opt/sqlite/bin/sqlite3` when it exists.
+  4. Confirm **Settings > Database > SQLite-Vec Extension Path** points to the official `vec0.dylib` installed from `sqlite-vec`.
+  5. Click **Reindex All**.
+
+### `pip install sqlite-vec` says `externally-managed-environment`
+
+- **What it means**: Your Python is managed by Homebrew or macOS, and Python is blocking direct package installation into that shared environment.
+- **How to fix it**: Use a virtual environment:
+  ```bash
+  python3 -m venv ~/sqlite-vec-env
+  source ~/sqlite-vec-env/bin/activate
+  pip install sqlite-vec
+  python -c "import sqlite_vec, pathlib; print(pathlib.Path(sqlite_vec.__file__).parent / 'vec0.dylib')"
+  ```
+  Paste the printed `vec0.dylib` path into **Settings > Database > SQLite-Vec Extension Path**.
+
+### macOS says Apple cannot verify `vec0.dylib`
+
+- **What it means**: macOS Gatekeeper has quarantined the downloaded dynamic library. This can happen when a `.dylib` is downloaded through a browser.
+- **Recommended fix**: Do not use a random browser-downloaded `vec0.dylib`. Install sqlite-vec through the Python virtual environment steps above, then use the `vec0.dylib` path printed by Python.
+- **If you still see the warning for a known official file**: You can remove the quarantine attribute only after you are comfortable with the file source:
+  ```bash
+  xattr -d com.apple.quarantine "/path/to/vec0.dylib"
+  ```
+
+### "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
 
 - **What it means**: The developer of this project does not have a paid Apple Developer Account, so the packaged applications and binaries are unsigned. On newer macOS versions, Gatekeeper will automatically flag and block unsigned apps downloaded from the internet.
 - **How to fix it**:
@@ -320,7 +678,7 @@ The local Node.js server implements active security headers to protect your loca
 
 ---
 
-## 🛠️ Pre-publishing Checks (For Developers)
+## Pre-publishing Checks (For Developers)
 
 Before committing modifications or publishing this folder to a shared repository:
 
