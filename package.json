@@ -1,6 +1,6 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "engines": {
     "node": ">=20.0.0"

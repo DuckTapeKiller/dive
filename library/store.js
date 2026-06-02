@@ -14,6 +14,7 @@ const SQLITE_TIMEOUT_MS = 120000;
 const SQLITE_MAX_BUFFER = 64 * 1024 * 1024;
 const EMBEDDING_RETRY_ATTEMPTS = 3;
 const EMBEDDING_RETRY_BASE_DELAY_MS = 500;
+const EMBEDDING_DOCUMENT_MAX_CHARS = 1200;
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
   ".obsidian",
@@ -1078,8 +1079,19 @@ function shouldPrefixEmbeddingInput(model) {
   return String(model || "").toLowerCase().includes("nomic-embed-text");
 }
 
-function formatEmbeddingInput(config, text, purpose) {
+function compactDocumentEmbeddingText(text) {
   const cleanText = String(text || "");
+  if (cleanText.length <= EMBEDDING_DOCUMENT_MAX_CHARS) return cleanText;
+  const separator = "\n\n...\n\n";
+  const budget = Math.max(100, EMBEDDING_DOCUMENT_MAX_CHARS - separator.length);
+  const headChars = Math.ceil(budget / 2);
+  const tailChars = Math.floor(budget / 2);
+  return `${cleanText.slice(0, headChars)}${separator}${cleanText.slice(-tailChars)}`;
+}
+
+function formatEmbeddingInput(config, text, purpose) {
+  const cleanText =
+    purpose === "document" ? compactDocumentEmbeddingText(text) : String(text || "");
   if (!shouldPrefixEmbeddingInput(config.embedding.model)) return cleanText;
   const prefix = purpose === "query" ? "search_query" : "search_document";
   return `${prefix}: ${cleanText}`;
@@ -1110,6 +1122,25 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
   }
 }
 
+async function readOllamaError(response) {
+  let body = "";
+  try {
+    body = await response.text();
+  } catch (_error) {}
+  if (!body) return "";
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed?.error === "string") return parsed.error;
+  } catch (_error) {}
+  return body.slice(0, 500);
+}
+
+function formatOllamaHttpError(status, detail) {
+  return detail
+    ? `Ollama embedding request failed (${status}): ${detail}`
+    : `Ollama embedding request failed (${status}).`;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1131,6 +1162,10 @@ async function embedTexts(config, texts, purpose = "document") {
       );
     }
   }
+  const embedError = await readOllamaError(embedResponse);
+  if (embedResponse.status !== 404 && embedResponse.status !== 405) {
+    throw new Error(formatOllamaHttpError(embedResponse.status, embedError));
+  }
 
   const embeddings = [];
   for (const text of inputs) {
@@ -1140,8 +1175,9 @@ async function embedTexts(config, texts, purpose = "document") {
       body: JSON.stringify({ model, prompt: text }),
     });
     if (!legacyResponse.ok) {
+      const legacyError = await readOllamaError(legacyResponse);
       throw new Error(
-        `Ollama embedding request failed (${legacyResponse.status}).`,
+        formatOllamaHttpError(legacyResponse.status, legacyError || embedError),
       );
     }
     const payload = await legacyResponse.json();

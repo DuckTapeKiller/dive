@@ -509,6 +509,8 @@ Large libraries can take a long time on the first run. A library with thousands 
 
 **Embed Errors** are final embedding failures after automatic retries. They are separate from **Skipped docs**. Skipped docs are usually files that could not produce enough readable text, such as image-only comics or malformed EPUBs. Embedding errors are written to `~/ollama-pi-chat/library-index-errors.jsonl` with the file path, chunk ids, and error message. The Settings database panel also shows recent issues while the job is running.
 
+For compactness, the database stores full retrieved passages, but semantic embeddings are generated from a shorter head/tail excerpt of long passages. This avoids Ollama embedding-model context-length failures without increasing the number of stored passages.
+
 ### Asking Questions With Sources
 
 For source-grounded answers:
