@@ -92,6 +92,12 @@ Ollama Pi Chat is packed with premium, user-friendly utilities:
 - **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
 - **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
 
+
+
+https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
+
+
+
 ---
 
 ## Requirements & Downloads
