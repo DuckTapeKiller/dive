@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
+  buildLibraryContext,
   collectSourceFiles,
   indexLibrary,
   normalizeConfig,
@@ -70,6 +71,26 @@ test("legacy chunk defaults are upgraded to compact defaults", () => {
   assert.deepStrictEqual(previousDefaultConfig.chunking, compactDefaults);
   assert.strictEqual(legacyConfig.embedding.dimensions, 256);
   assert.strictEqual(legacyConfig.search.keywordEnabled, false);
+});
+
+test("library context does not expose local paths or bracket citation instructions", () => {
+  const context = buildLibraryContext(
+    [
+      {
+        title: "The Outsider",
+        author: "Colin Wilson",
+        path: "/Users/orlandoeb/Libros/Colin Wilson/The Outsider (5126)/The Outsider - Colin Wilson.epub",
+        heading: "The Attempt to Gain Control",
+        text: "Madame Nijinsky consulted a psychiatrist.",
+      },
+    ],
+    { includeSourcePaths: true },
+  );
+
+  assert.match(context, /Work: The Outsider by Colin Wilson/);
+  assert.doesNotMatch(context, /\/Users\/orlandoeb/);
+  assert.doesNotMatch(context, /\[1\]/);
+  assert.doesNotMatch(context, /Cite retrieved passages/i);
 });
 
 test("source collection skips Calibre sidecar files", () => {

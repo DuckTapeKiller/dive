@@ -7,10 +7,17 @@ const { randomUUID, randomBytes } = require("crypto");
 const { executeSkill, skillRequiresShellConfirmation } = require("./skills");
 const { initMcpServers, getMcpOllamaTools, executeMcpTool } = require("./mcp");
 const {
+  buildForcedSkillToolCall,
+  isDatabaseSlashCommand,
+  isSkillSlashCommand,
+  parseSlashCommand,
+} = require("./slash_commands");
+const {
   buildChatLibraryContext,
   estimateLibraryIndex,
   getLibraryStatus,
   indexLibrary,
+  listIndexedLibraryFiles,
   loadLibraryConfig,
   saveLibraryConfig,
   saveLibraryChatSettings,
@@ -78,6 +85,10 @@ const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
 const LIBRARY_INDEX_ERROR_FILE = path.join(DATA_DIR, "library-index-errors.jsonl");
+const LIBRARY_INDEXED_FILES_EXPORT_FILE = path.join(
+  DATA_DIR,
+  "indexed-epub-files.txt",
+);
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
 const FONTS_DIR = path.join(__dirname, "fonts");
 const VENDOR_SCRIPT_FILES = {
@@ -281,6 +292,7 @@ function upsertConversation(
   messages,
   response,
   mode = "ollama",
+  metadata = {},
 ) {
   const piSessionFile =
     mode === "pi" && saveConv && piConvProcesses.has(saveConv)
@@ -288,7 +300,14 @@ function upsertConversation(
       : null;
   if (!saveConv) return;
   const convs = loadConversations();
-  const newHistory = [...messages, { role: "assistant", content: response }];
+  const assistantMessage = { role: "assistant", content: response };
+  if (Array.isArray(metadata.librarySources) && metadata.librarySources.length) {
+    assistantMessage.librarySources = metadata.librarySources;
+  }
+  const newHistory = [
+    ...messages.filter((item) => !isTransientLibraryContextMessage(item)),
+    assistantMessage,
+  ];
   const title = convTitle || message.slice(0, 40);
   const existing = convs.findIndex((c) => c.id === saveConv);
 
@@ -1014,6 +1033,222 @@ function normalizeCloudHistoryMessages(history, message) {
   return messages;
 }
 
+function isTransientLibraryContextMessage(item) {
+  return (
+    item?.role === "system" &&
+    typeof item.content === "string" &&
+    item.content.startsWith("Local library passages retrieved for the user's question.")
+  );
+}
+
+function sanitizeModelMessages(messages) {
+  const allowedRoles = new Set(["system", "user", "assistant", "tool"]);
+  return (Array.isArray(messages) ? messages : [])
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !isTransientLibraryContextMessage(item) &&
+        allowedRoles.has(item.role) &&
+        typeof item.content === "string",
+    )
+    .map((item) => {
+      const clean = {
+        role: item.role,
+        content: item.content,
+      };
+      if (Array.isArray(item.tool_calls)) clean.tool_calls = item.tool_calls;
+      if (typeof item.name === "string") clean.name = item.name;
+      if (typeof item.tool_call_id === "string") {
+        clean.tool_call_id = item.tool_call_id;
+      }
+      return clean;
+    });
+}
+
+function normalizeStoredConversationMessages(history, message) {
+  const stored = [];
+  const sourceHistory = Array.isArray(history) ? history : [];
+  for (const item of sourceHistory) {
+    if (!item || typeof item !== "object") continue;
+    if (item.role !== "user" && item.role !== "assistant") continue;
+    if (typeof item.content !== "string") continue;
+    const clean = {
+      role: item.role,
+      content: item.content,
+    };
+    if (item.role === "assistant" && Array.isArray(item.librarySources)) {
+      clean.librarySources = item.librarySources;
+    }
+    stored.push(clean);
+  }
+  stored.push({ role: "user", content: message });
+  if (stored.length > MAX_HISTORY_MESSAGES) {
+    return stored.slice(stored.length - MAX_HISTORY_MESSAGES);
+  }
+  return stored;
+}
+
+function serializeLibraryResults(results, options = {}) {
+  const includeSourcePaths = options?.includeSourcePaths !== false;
+  return (Array.isArray(results) ? results : []).map((result) => ({
+    chunkId: result.chunkId,
+    title: result.title,
+    author: result.author,
+    path: includeSourcePaths ? result.path : "",
+    heading: result.heading,
+    kind: result.kind,
+    score: result.score,
+    snippet: result.snippet,
+  }));
+}
+
+function insertLibraryContextMessage(messages, contextMessage) {
+  if (!contextMessage) return messages;
+  const nextMessages = Array.isArray(messages) ? [...messages] : [];
+  const firstNonSystemIndex = nextMessages.findIndex(
+    (item) => item.role !== "system",
+  );
+  if (firstNonSystemIndex === -1) {
+    nextMessages.push(contextMessage);
+  } else {
+    nextMessages.splice(firstNonSystemIndex, 0, contextMessage);
+  }
+  return nextMessages;
+}
+
+function buildPiPromptWithLibraryContext(message, contextMessage) {
+  if (!contextMessage?.content) return message;
+  return `${contextMessage.content}\n\nUser request:\n${message}`;
+}
+
+function getCommandMessage(command, fallbackMessage) {
+  if (!command) return fallbackMessage;
+  return command.input || fallbackMessage;
+}
+
+function getLibraryRequestForCommand(library, command) {
+  if (!isDatabaseSlashCommand(command)) return library;
+  return {
+    ...(library && typeof library === "object" ? library : {}),
+    enabled: true,
+    strict: true,
+  };
+}
+
+function emitSlashCommand(emit, command) {
+  if (!command || typeof emit !== "function") return;
+  emit({
+    type: "slash_command",
+    command: command.name,
+    commandType: command.type,
+    skillName: command.skillName,
+    label: command.label,
+  });
+}
+
+function appendForcedSkillResult(messages, command, result) {
+  messages.push({
+    role: "user",
+    content: `[FORCED SKILL RESULT: ${command.skillName}]\n\n${result}\n\nAnswer the user's request using this forced skill result. If the result is insufficient, say so. Do not call another skill unless the user asked for it explicitly.`,
+  });
+}
+
+async function requestShellConfirmation({ emit, title, command, toolName }) {
+  return await new Promise((resolve) => {
+    const reqId = "ollama_req_" + Date.now() + "_" + randomUUID();
+    const denialTimer = setTimeout(
+      () => {
+        if (ollamaToolRequests.has(reqId)) {
+          ollamaToolRequests.delete(reqId);
+          resolve(false);
+          appendSecurityEvent("shell_command_timeout_denied", { reqId });
+        }
+      },
+      5 * 60 * 1000,
+    );
+    ollamaToolRequests.set(reqId, {
+      resolve,
+      timer: denialTimer,
+    });
+    emit({
+      type: "needs_ui",
+      sessionId: reqId,
+      request: {
+        method: "confirm",
+        title,
+        message: `The AI wants to run the following shell command:\n\n${command}\n\nDo you want to allow this?`,
+        requireUserInteraction: true,
+        danger: true,
+      },
+    });
+    appendSecurityEvent("shell_command_confirmation_requested", {
+      reqId,
+      tool: toolName,
+    });
+  });
+}
+
+async function executeToolCallWithConfirmation(toolCall, emit) {
+  const requiresShellConfirmation = skillRequiresShellConfirmation(
+    toolCall.function.name,
+    DATA_DIR,
+  );
+  let executeAllowed = true;
+  if (requiresShellConfirmation) {
+    executeAllowed = await requestShellConfirmation({
+      emit,
+      title: "Shell Command Execution Request",
+      command: toolCall.function.arguments,
+      toolName: toolCall.function.name,
+    });
+  }
+
+  if (!executeAllowed) {
+    appendSecurityEvent("shell_command_denied", {
+      command: toolCall.function.arguments,
+      tool: toolCall.function.name,
+    });
+    return "User denied permission to execute this shell command.";
+  }
+
+  if (toolCall.function.name.startsWith("mcp__")) {
+    return await executeMcpTool(toolCall);
+  }
+
+  if (requiresShellConfirmation) {
+    appendSecurityEvent("shell_command_executed", {
+      command: toolCall.function.arguments,
+      tool: toolCall.function.name,
+    });
+  }
+  return await executeSkill(toolCall, {
+    dataDir: DATA_DIR,
+    allowShellCommand: requiresShellConfirmation,
+  });
+}
+
+function formatIndexedLibraryFilesExport(files, config) {
+  const lines = [
+    "Ollama Pi Chat Indexed EPUB Files",
+    `Generated: ${new Date().toISOString()}`,
+    `Database: ${config.databasePath}`,
+    `Total indexed EPUB files: ${files.length}`,
+    "",
+  ];
+  files.forEach((file, index) => {
+    const title = file.title || path.basename(file.path || "") || "Untitled";
+    const author = file.author ? ` - ${file.author}` : "";
+    lines.push(`${index + 1}. ${title}${author}`);
+    lines.push(`   Path: ${file.path || ""}`);
+    lines.push(`   Source: ${file.sourceName || file.sourceType || "unknown"}`);
+    lines.push(`   Passages: ${file.chunkCount || 0}`);
+    lines.push(`   Indexed: ${file.indexedAt || "unknown"}`);
+    lines.push("");
+  });
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 function buildCloudEndpoint(baseUrl, pathSuffix) {
   const normalized = String(baseUrl || "").replace(/\/+$/, "");
   return `${normalized}${pathSuffix}`;
@@ -1284,7 +1519,11 @@ function sanitizeOllamaOptions(raw) {
 function ollamaChat(model, messages, options, tools = null) {
   let clientReq = null;
   const promise = new Promise((resolve, reject) => {
-    const payloadObject = { model, messages, stream: false };
+    const payloadObject = {
+      model,
+      messages: sanitizeModelMessages(messages),
+      stream: false,
+    };
     if (options && typeof options === "object") {
       payloadObject.options = options;
     }
@@ -2595,6 +2834,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && urlPath === "/api/library/export-indexed-files") {
+    try {
+      const config = loadLibraryConfig();
+      const files = await listIndexedLibraryFiles({ extension: ".epub" });
+      const text = formatIndexedLibraryFilesExport(files, config);
+      fs.writeFileSync(LIBRARY_INDEXED_FILES_EXPORT_FILE, text, "utf8");
+      const stat = fs.statSync(LIBRARY_INDEXED_FILES_EXPORT_FILE);
+      send(200, {
+        ok: true,
+        count: files.length,
+        path: LIBRARY_INDEXED_FILES_EXPORT_FILE,
+        directory: DATA_DIR,
+        bytes: stat.size,
+      });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (
+    req.method === "POST" &&
+    urlPath === "/api/library/export-indexed-files/open"
+  ) {
+    const args = fs.existsSync(LIBRARY_INDEXED_FILES_EXPORT_FILE)
+      ? ["-R", LIBRARY_INDEXED_FILES_EXPORT_FILE]
+      : [DATA_DIR];
+    execFile("open", args, (error) => {
+      if (error) {
+        send(500, { error: `Failed to open export folder: ${error.message}` });
+        return;
+      }
+      send(200, {
+        ok: true,
+        path: LIBRARY_INDEXED_FILES_EXPORT_FILE,
+        directory: DATA_DIR,
+      });
+    });
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/library/index") {
     try {
       const body = await parseJsonBody(req);
@@ -3098,9 +3378,23 @@ const server = http.createServer(async (req, res) => {
       const provider = CLOUD_PROVIDER_SET.has(settings.provider)
         ? settings.provider
         : "openai";
-      const { history = [], saveConv, convTitle, mode = "cloud" } = body;
-      const message = body.message;
+      const {
+        history = [],
+        saveConv,
+        convTitle,
+        mode = "cloud",
+        library,
+      } = body;
+      const originalMessage = body.message;
+      const slashCommand = parseSlashCommand(originalMessage);
+      const message = getCommandMessage(slashCommand, originalMessage);
       const messages = normalizeCloudHistoryMessages(history, message);
+      const storedMessages = normalizeStoredConversationMessages(
+        history,
+        originalMessage,
+      );
+      let requestMessages = messages;
+      let librarySourceResults = [];
       let output = "";
       let usage = null;
 
@@ -3117,10 +3411,43 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
+      emitSlashCommand(emit, slashCommand);
+      if (isSkillSlashCommand(slashCommand)) {
+        emit({
+          type: "error",
+          error: `/${slashCommand.name} is only supported in Ollama mode.`,
+        });
+        if (!res.writableEnded) res.end();
+        return;
+      }
+
+      try {
+        const libraryContext = await buildChatLibraryContext(
+          message,
+          getLibraryRequestForCommand(library, slashCommand),
+        );
+        if (libraryContext.enabled) {
+          requestMessages = insertLibraryContextMessage(
+            requestMessages,
+            libraryContext.contextMessage,
+          );
+          librarySourceResults = serializeLibraryResults(
+            libraryContext.results,
+            getLibraryRequestForCommand(library, slashCommand),
+          );
+          emit({
+            type: "library_results",
+            results: librarySourceResults,
+          });
+        }
+      } catch (e) {
+        emit({ type: "library_error", error: e.message });
+      }
+
       usage = await streamCloudCompletion({
         provider,
         settings,
-        messages,
+        messages: requestMessages,
         signal: abortController.signal,
         onDelta: (delta) => {
           output += delta;
@@ -3132,7 +3459,17 @@ const server = http.createServer(async (req, res) => {
       });
 
       finished = true;
-      upsertConversation(saveConv, convTitle, message, messages, output, mode);
+      upsertConversation(
+        saveConv,
+        convTitle,
+        originalMessage,
+        storedMessages,
+        output,
+        mode,
+        {
+          librarySources: librarySourceResults,
+        },
+      );
       emit({
         type: "done",
         response: output,
@@ -3170,7 +3507,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await parseJsonBody(req);
       const {
-        message,
+        message: requestMessage,
         model,
         history = [],
         saveConv,
@@ -3179,7 +3516,11 @@ const server = http.createServer(async (req, res) => {
         options,
         library,
       } = body;
+      const originalMessage = requestMessage;
+      const slashCommand = parseSlashCommand(originalMessage);
+      const message = getCommandMessage(slashCommand, originalMessage);
       const messages = [...history, { role: "user", content: message }];
+      const storedMessages = [...history, { role: "user", content: originalMessage }];
       const safeOptions = sanitizeOllamaOptions(options);
 
       res.writeHead(200, {
@@ -3200,6 +3541,8 @@ const server = http.createServer(async (req, res) => {
       let output = "";
       let thinking = "";
       let emittedThinkingStart = false;
+      let librarySourceResults = [];
+      let transientLibraryContextMessage = null;
 
       const emit = (event) => {
         if (!res.writableEnded) {
@@ -3207,35 +3550,63 @@ const server = http.createServer(async (req, res) => {
         }
       };
 
+      emitSlashCommand(emit, slashCommand);
+
       try {
-        const libraryContext = await buildChatLibraryContext(message, library);
+        const libraryContext = await buildChatLibraryContext(
+          message,
+          getLibraryRequestForCommand(library, slashCommand),
+        );
         if (libraryContext.enabled) {
           if (libraryContext.contextMessage) {
+            transientLibraryContextMessage = libraryContext.contextMessage;
             const firstNonSystemIndex = messages.findIndex(
               (item) => item.role !== "system",
             );
             if (firstNonSystemIndex === -1) {
-              messages.push(libraryContext.contextMessage);
+              messages.push(transientLibraryContextMessage);
             } else {
-              messages.splice(firstNonSystemIndex, 0, libraryContext.contextMessage);
+              messages.splice(firstNonSystemIndex, 0, transientLibraryContextMessage);
             }
           }
+          librarySourceResults = serializeLibraryResults(
+            libraryContext.results,
+            getLibraryRequestForCommand(library, slashCommand),
+          );
           emit({
             type: "library_results",
-            results: libraryContext.results.map((result) => ({
-              chunkId: result.chunkId,
-              title: result.title,
-              author: result.author,
-              path: result.path,
-              heading: result.heading,
-              kind: result.kind,
-              score: result.score,
-              snippet: result.snippet,
-            })),
+            results: librarySourceResults,
           });
         }
       } catch (e) {
         emit({ type: "library_error", error: e.message });
+      }
+
+      if (isSkillSlashCommand(slashCommand)) {
+        try {
+          const toolCall = buildForcedSkillToolCall(slashCommand);
+          if (!emittedThinkingStart) {
+            emittedThinkingStart = true;
+            emit({ type: "thinking_start" });
+          }
+          emit({
+            type: "tool_start",
+            toolName: slashCommand.skillName,
+            argsPreview: toolCall.function.arguments.slice(0, 300),
+          });
+          const result = await executeToolCallWithConfirmation(toolCall, emit);
+          appendForcedSkillResult(messages, slashCommand, result);
+          emit({
+            type: "tool_end",
+            toolName: slashCommand.skillName,
+            outputPreview: String(result || "").slice(0, 300),
+            isError: /^Error:/i.test(String(result || "")),
+          });
+        } catch (e) {
+          emit({ type: "error", error: e.message });
+          if (!res.writableEnded) res.end();
+          return;
+        }
       }
 
       const startStream = (depth = 0) => {
@@ -3244,12 +3615,18 @@ const server = http.createServer(async (req, res) => {
           if (!res.writableEnded) res.end();
           return;
         }
-        const payloadObject = { model, messages, stream: true };
+        const payloadObject = {
+          model,
+          messages: sanitizeModelMessages(messages),
+          stream: true,
+        };
         if (safeOptions) payloadObject.options = safeOptions;
 
-        const mcpTools = getMcpOllamaTools();
-        if (mcpTools.length > 0) {
-          payloadObject.tools = mcpTools;
+        if (!isDatabaseSlashCommand(slashCommand)) {
+          const mcpTools = getMcpOllamaTools();
+          if (mcpTools.length > 0) {
+            payloadObject.tools = mcpTools;
+          }
         }
 
         const payload = JSON.stringify(payloadObject);
@@ -3316,6 +3693,9 @@ const server = http.createServer(async (req, res) => {
                   });
                   output = output.replace(xmlMatch[0], "").trim();
                 }
+                if (slashCommand) {
+                  outputToolCalls = [];
+                }
 
                 if (outputToolCalls.length > 0) {
                   messages.push({ role: "assistant", content: output });
@@ -3333,69 +3713,10 @@ const server = http.createServer(async (req, res) => {
                         thinking,
                       });
 
-                      const requiresShellConfirmation =
-                        skillRequiresShellConfirmation(
-                          tc.function.name,
-                          DATA_DIR,
-                        );
-                      let executeAllowed = true;
-                      if (requiresShellConfirmation) {
-                        executeAllowed = await new Promise((resolve) => {
-                          const reqId =
-                            "ollama_req_" + Date.now() + "_" + randomUUID();
-                          const denialTimer = setTimeout(
-                            () => {
-                              if (ollamaToolRequests.has(reqId)) {
-                                ollamaToolRequests.delete(reqId);
-                                resolve(false);
-                                appendSecurityEvent(
-                                  "shell_command_timeout_denied",
-                                  { reqId },
-                                );
-                              }
-                            },
-                            5 * 60 * 1000,
-                          ); // 5 minute auto-deny timeout
-                          ollamaToolRequests.set(reqId, {
-                            resolve,
-                            timer: denialTimer,
-                          });
-                          emit({
-                            type: "needs_ui",
-                            sessionId: reqId,
-                            request: {
-                              method: "confirm",
-                              title: "Shell Command Execution Request",
-                              message: `The AI wants to run the following shell command:\n\n${tc.function.arguments}\n\nDo you want to allow this?`,
-                              requireUserInteraction: true,
-                              danger: true,
-                            },
-                          });
-                        });
-                      }
-
-                      let result;
-                      if (tc.function.name.startsWith("mcp__")) {
-                        result = await executeMcpTool(tc);
-                      } else if (executeAllowed) {
-                        if (requiresShellConfirmation) {
-                          appendSecurityEvent("shell_command_executed", {
-                            command: tc.function.arguments,
-                            tool: tc.function.name,
-                          });
-                        }
-                        result = await executeSkill(tc, {
-                          dataDir: DATA_DIR,
-                          allowShellCommand: requiresShellConfirmation,
-                        });
-                      } else {
-                        appendSecurityEvent("shell_command_denied", {
-                          command: tc.function.arguments,
-                          tool: tc.function.name,
-                        });
-                        result =
-                          "User denied permission to execute this shell command.";
-                      }
+                      const result = await executeToolCallWithConfirmation(
+                        tc,
+                        emit,
+                      );
 
                       messages.push({
                         role: "user",
@@ -3426,10 +3747,11 @@ const server = http.createServer(async (req, res) => {
                 upsertConversation(
                   saveConv,
                   convTitle,
-                  message,
-                  messages,
+                  originalMessage,
+                  storedMessages,
                   output,
                   mode,
+                  { librarySources: librarySourceResults },
                 );
                 emit({
                   type: "done",
@@ -3449,10 +3771,11 @@ const server = http.createServer(async (req, res) => {
               upsertConversation(
                 saveConv,
                 convTitle,
-                message,
-                messages,
+                originalMessage,
+                storedMessages,
                 output,
                 mode,
+                { librarySources: librarySourceResults },
               );
               emit({ type: "done", response: output, thinking });
               if (!res.writableEnded) res.end();
@@ -3659,7 +3982,12 @@ const server = http.createServer(async (req, res) => {
           ? body.source.trim()
           : "manual";
       const { history = [], saveConv, convTitle, mode = "pi" } = body;
-      const messages = [...history, { role: "user", content: body.message }];
+      const originalMessage = body.message;
+      const slashCommand = parseSlashCommand(originalMessage);
+      const promptQuestion = getCommandMessage(slashCommand, originalMessage);
+      const messages = [...history, { role: "user", content: originalMessage }];
+      let promptMessage = promptQuestion;
+      let librarySourceResults = [];
 
       res.writeHead(200, {
         "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -3668,10 +3996,43 @@ const server = http.createServer(async (req, res) => {
         "X-Accel-Buffering": "no",
       });
 
+      emitSlashCommand(writeStreamEvent, slashCommand);
+      if (isSkillSlashCommand(slashCommand)) {
+        writeStreamEvent({
+          type: "error",
+          error: `/${slashCommand.name} is only supported in Ollama mode.`,
+        });
+        if (!res.writableEnded) res.end();
+        return;
+      }
+
+      try {
+        const libraryContext = await buildChatLibraryContext(
+          promptQuestion,
+          getLibraryRequestForCommand(body.library, slashCommand),
+        );
+        if (libraryContext.enabled) {
+          promptMessage = buildPiPromptWithLibraryContext(
+            promptMessage,
+            libraryContext.contextMessage,
+          );
+          librarySourceResults = serializeLibraryResults(
+            libraryContext.results,
+            getLibraryRequestForCommand(body.library, slashCommand),
+          );
+          writeStreamEvent({
+            type: "library_results",
+            results: librarySourceResults,
+          });
+        }
+      } catch (e) {
+        writeStreamEvent({ type: "library_error", error: e.message });
+      }
+
       const piSettings = loadPiSettings();
       const convId = body.saveConv || "default";
       const convProc = getOrCreatePiConvProcess(convId, piSettings);
-      session = sendPiPrompt(convProc, body.message, source);
+      session = sendPiPrompt(convProc, promptMessage, source);
       writeStreamEvent({ type: "session_start", sessionId: session.id });
 
       unsubscribe = addPiSessionListener(session, (evt) => {
@@ -3685,6 +4046,7 @@ const server = http.createServer(async (req, res) => {
               messages,
               session.response || "",
               mode,
+              { librarySources: librarySourceResults },
             );
           }
           if (typeof unsubscribe === "function") unsubscribe();
@@ -3742,17 +4104,43 @@ const server = http.createServer(async (req, res) => {
         typeof body.source === "string" && body.source.trim()
           ? body.source.trim()
           : "manual";
+      const slashCommand = parseSlashCommand(body.message);
+      if (isSkillSlashCommand(slashCommand)) {
+        send(400, {
+          error: `/${slashCommand.name} is only supported in Ollama mode.`,
+        });
+        return;
+      }
+      const promptQuestion = getCommandMessage(slashCommand, body.message);
+      let promptMessage = promptQuestion;
+      let libraryResults = [];
+      try {
+        const libraryContext = await buildChatLibraryContext(
+          promptQuestion,
+          getLibraryRequestForCommand(body.library, slashCommand),
+        );
+        if (libraryContext.enabled) {
+          promptMessage = buildPiPromptWithLibraryContext(
+            promptMessage,
+            libraryContext.contextMessage,
+          );
+          libraryResults = serializeLibraryResults(
+            libraryContext.results,
+            getLibraryRequestForCommand(body.library, slashCommand),
+          );
+        }
+      } catch (_e) {}
       const piSettings = loadPiSettings();
       const convId = body.saveConv || "default";
       const convProc = getOrCreatePiConvProcess(convId, piSettings);
-      session = sendPiPrompt(convProc, body.message, source);
+      session = sendPiPrompt(convProc, promptMessage, source);
       req.on("close", () => {
         if (session && !res.writableEnded) {
           cleanupPiSession(session.id, "client_disconnected_start");
         }
       });
       const result = await waitForPiSessionStep(session);
-      send(200, result);
+      send(200, { ...result, libraryResults });
     } catch (e) {
       if (req.destroyed) {
         console.log(

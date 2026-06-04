@@ -2059,19 +2059,24 @@ function buildLibraryContext(results, options = {}) {
     50000,
     12000,
   );
-  const includeSourcePaths = options.includeSourcePaths !== false;
   const trimmed = trimToContext(results, maxContextChars);
-  if (!trimmed.length) return "";
+  const strict = options.strict === true;
+  if (!trimmed.length) {
+    return strict
+      ? `Strict database-only mode is enabled for this question. No relevant local library passages were retrieved. Tell the user that the local database did not provide enough evidence to answer. Do not use general knowledge, tools, web results, or assumptions.`
+      : "";
+  }
   const passages = trimmed
     .map((result, index) => {
-      const sourceLine = includeSourcePaths
-        ? `${result.title}${result.author ? ` by ${result.author}` : ""} | ${result.path}`
-        : `${result.title}${result.author ? ` by ${result.author}` : ""}`;
+      const sourceLine = `${result.title}${result.author ? ` by ${result.author}` : ""}`;
       const headingLine = result.heading ? `\nHeading: ${result.heading}` : "";
-      return `[${index + 1}] ${sourceLine}${headingLine}\n${result.text}`;
+      return `Passage ${index + 1}\nWork: ${sourceLine}${headingLine}\nText:\n${result.text}`;
     })
     .join("\n\n");
-  return `Local library passages retrieved for the user's question. Use them only when relevant. If the passages do not contain the answer, say that the local library did not provide enough evidence.\n\n${passages}`;
+  const modeInstruction = strict
+    ? "Strict database-only mode is enabled for this question. Answer only from the local library passages below. If the passages do not contain enough evidence, say that the local database did not provide enough evidence. Do not use general knowledge, tools, web results, or assumptions."
+    : "Local library passages retrieved for the user's question. Use them only when relevant. If the passages do not contain the answer, say that the local library did not provide enough evidence.";
+  return `${modeInstruction} Answer naturally. Do not print passage numbers, bracket citations, local file paths, a "Source:" line, or a "Retrieved passages" section in your final answer. The app displays source files separately below the response.\n\n${passages}`;
 }
 
 async function buildChatLibraryContext(query, requestOptions = {}) {
@@ -2083,6 +2088,7 @@ async function buildChatLibraryContext(query, requestOptions = {}) {
     },
     config.search,
   );
+  chatSettings.strict = requestOptions?.strict === true;
   if (!chatSettings.enabled) {
     return { enabled: false, results: [], contextMessage: null };
   }
@@ -2161,6 +2167,45 @@ async function getLibraryStatus() {
   return status;
 }
 
+async function listIndexedLibraryFiles(options = {}) {
+  const config = loadLibraryConfig();
+  if (!fs.existsSync(config.databasePath)) return [];
+  const extension =
+    typeof options.extension === "string" && options.extension.trim()
+      ? options.extension.trim().toLowerCase()
+      : "";
+  const whereClause = extension
+    ? `WHERE lower(path) LIKE ${sqlLiteral(`%${extension.startsWith(".") ? extension : `.${extension}`}`)}`
+    : "";
+  const rows = await runSqliteJson(
+    config.databasePath,
+    `SELECT
+  id,
+  source_name AS sourceName,
+  source_type AS sourceType,
+  path,
+  title,
+  author,
+  size_bytes AS sizeBytes,
+  indexed_at AS indexedAt,
+  chunk_count AS chunkCount
+FROM library_files
+${whereClause}
+ORDER BY lower(path);`,
+  );
+  return rows.map((row) => ({
+    id: Number(row.id || 0),
+    sourceName: row.sourceName || "",
+    sourceType: row.sourceType || "",
+    path: row.path || "",
+    title: row.title || "",
+    author: row.author || "",
+    sizeBytes: Number(row.sizeBytes || 0),
+    indexedAt: row.indexedAt || "",
+    chunkCount: Number(row.chunkCount || 0),
+  }));
+}
+
 module.exports = {
   CONFIG_FILE,
   buildChatLibraryContext,
@@ -2171,6 +2216,7 @@ module.exports = {
   getLibraryStatus,
   indexLibrary,
   initDatabase,
+  listIndexedLibraryFiles,
   loadLibraryConfig,
   normalizeChatIntegration,
   normalizeConfig,

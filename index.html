@@ -1570,6 +1570,19 @@
         background-color: var(--accent);
         color: var(--bg-inverse);
       }
+      .library-sources-container {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--border-color);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .library-source-pill {
+        cursor: pointer;
+        font-family: inherit;
+        text-align: left;
+      }
       .custom-select-wrapper {
         position: relative;
         display: inline-block;
@@ -2571,7 +2584,8 @@
             </div>
             <div class="setting-help">
               Build and use the local SQLite library index for retrieval before
-              Ollama responses.
+              model responses. In Cloud mode, retrieved passages are sent to
+              the selected provider.
             </div>
             <div class="setting-row">
               <label style="font-size: 10px">DATABASE FILE</label>
@@ -2580,7 +2594,7 @@
             <div class="setting-row-inline">
               <label style="font-size: 10px">
                 <input id="librarySearchEnabledInput" type="checkbox" />
-                ENABLE FOR OLLAMA CHAT
+                ENABLE DATABASE CONTEXT
               </label>
             </div>
             <div class="setting-row-inline">
@@ -2648,7 +2662,7 @@
             <div class="setting-row-inline">
               <label style="font-size: 10px">
                 <input id="libraryIncludePathsInput" type="checkbox" />
-                INCLUDE SOURCE PATHS IN MODEL CONTEXT
+                INCLUDE SOURCE PATHS IN SOURCE BOXES
               </label>
             </div>
             <div class="setting-row-inline">
@@ -3028,6 +3042,32 @@
               </button>
               <button id="reloadLibraryStatusBtn" class="settings-action-btn">
                 REFRESH STATUS
+              </button>
+              <button id="exportIndexedFilesBtn" class="settings-action-btn">
+                EXPORT INDEXED FILES
+              </button>
+            </div>
+            <div
+              id="libraryExportStatusText"
+              class="setting-help"
+              style="display: none"
+            ></div>
+            <div
+              id="libraryExportActions"
+              class="setting-row-inline"
+              style="display: none"
+            >
+              <button
+                id="openIndexedFilesExportBtn"
+                class="settings-action-btn"
+              >
+                OPEN EXPORT
+              </button>
+              <button
+                id="copyIndexedFilesExportPathBtn"
+                class="settings-action-btn"
+              >
+                COPY EXPORT PATH
               </button>
             </div>
             <div class="setting-row-inline">
@@ -3862,6 +3902,7 @@
           rescanIntervalMs: 60000,
         },
       };
+      let lastIndexedFilesExportPath = "";
       let availableOllamaModels = [];
       let libraryIndexPollTimer = null;
       let promptsList = [];
@@ -5011,6 +5052,78 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
       }
 
+      async function exportIndexedFiles() {
+        const statusEl = document.getElementById("libraryStatusText");
+        const exportStatusEl = document.getElementById("libraryExportStatusText");
+        const exportActions = document.getElementById("libraryExportActions");
+        const button = document.getElementById("exportIndexedFilesBtn");
+        if (statusEl) statusEl.textContent = "Exporting indexed EPUB list...";
+        if (exportStatusEl) {
+          exportStatusEl.style.display = "";
+          exportStatusEl.textContent = "Exporting indexed EPUB list...";
+        }
+        if (exportActions) exportActions.style.display = "none";
+        if (button) button.disabled = true;
+        try {
+          const res = await fetch(apiUrl("/api/library/export-indexed-files"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          const payload = await readJsonResponse(res, "Export indexed files");
+          lastIndexedFilesExportPath = payload.path || "";
+          if (statusEl) {
+            statusEl.textContent = `Exported ${formatMetricNumber(payload.count)} indexed EPUB files to ${payload.path}.`;
+          }
+          if (exportStatusEl) {
+            exportStatusEl.textContent = `Exported ${formatMetricNumber(payload.count)} indexed EPUB files. ${payload.path}`;
+          }
+          if (exportActions) exportActions.style.display = "";
+          openIndexedFilesExport().catch((error) => {
+            console.error("Could not open indexed file export", error);
+          });
+        } catch (error) {
+          console.error("Could not export indexed files", error);
+          if (statusEl) statusEl.textContent = "Indexed file export failed.";
+          if (exportStatusEl) {
+            exportStatusEl.style.display = "";
+            exportStatusEl.textContent = "Indexed file export failed.";
+          }
+          alert(error.message || "Failed to export indexed files.");
+        } finally {
+          if (button) button.disabled = false;
+        }
+      }
+
+      async function openIndexedFilesExport() {
+        const res = await fetch(
+          apiUrl("/api/library/export-indexed-files/open"),
+          {
+            method: "POST",
+          },
+        );
+        await readJsonResponse(res, "Open indexed files export");
+      }
+
+      async function copyIndexedFilesExportPath() {
+        if (!lastIndexedFilesExportPath) return;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(lastIndexedFilesExportPath);
+          } else {
+            const temp = document.createElement("textarea");
+            temp.value = lastIndexedFilesExportPath;
+            document.body.appendChild(temp);
+            temp.select();
+            document.execCommand("copy");
+            temp.remove();
+          }
+        } catch (error) {
+          console.error("Could not copy indexed files export path", error);
+          alert("Could not copy export path.");
+        }
+      }
+
       function renderLibraryEstimate(estimate) {
         setElementText(
           "libraryEstimateFilesValue",
@@ -5698,7 +5811,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (saved.convId && saved.history.length) {
           saved.history.forEach((msg) => {
             if (msg.role === "user" || msg.role === "assistant")
-              addMessage(msg.content, msg.role);
+              addMessage(msg.content, msg.role, {
+                librarySources: getMessageLibrarySources(msg),
+              });
           });
         }
         document.getElementById("btnOllama").className =
@@ -5988,6 +6103,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             saveConv,
             convTitle,
             mode: "pi",
+            library: getLibraryRequestPayload(),
           }),
           signal,
         });
@@ -6044,7 +6160,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "thinking_end" ||
               evt.type === "skill_links" ||
               evt.type === "library_results" ||
-              evt.type === "library_error"
+              evt.type === "library_error" ||
+              evt.type === "slash_command"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -6188,7 +6305,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "thinking_start" ||
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
-              evt.type === "skill_links"
+              evt.type === "skill_links" ||
+              evt.type === "library_results" ||
+              evt.type === "library_error" ||
+              evt.type === "slash_command"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -6250,6 +6370,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             saveConv,
             convTitle,
             mode: "cloud",
+            library: getLibraryRequestPayload(),
           }),
           signal,
         });
@@ -6291,6 +6412,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               if (typeof onDelta === "function") {
                 onDelta(finalResponse, evt.delta || "");
               }
+              continue;
+            }
+
+            if (
+              evt.type === "library_results" ||
+              evt.type === "library_error" ||
+              evt.type === "slash_command"
+            ) {
+              if (typeof onEvent === "function") onEvent(evt);
               continue;
             }
 
@@ -6390,7 +6520,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         currentConvId = conv.id;
         history.forEach((msg) => {
           if (msg.role === "user" || msg.role === "assistant")
-            addMessage(msg.content, msg.role);
+            addMessage(msg.content, msg.role, {
+              librarySources: getMessageLibrarySources(msg),
+            });
         });
         if (typeof updateTokenCounter === "function") updateTokenCounter();
         if (conv.mode === "pi" && conv.piSessionFile) {
@@ -6462,15 +6594,105 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       });
 
       // MESSAGES AND RENDERING
-      function renderAssistantMessage(div, text) {
+      function normalizeLibrarySourceResults(results) {
+        const normalized = [];
+        const seen = new Set();
+        for (const result of Array.isArray(results) ? results : []) {
+          if (!result || typeof result !== "object") continue;
+          const pathValue = String(result.path || "").trim();
+          const titleValue = String(result.title || "").trim();
+          const authorValue = String(result.author || "").trim();
+          const key = pathValue || `${titleValue}|${authorValue}`;
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          normalized.push({
+            title: titleValue || basenameFromPath(pathValue) || "Untitled",
+            author: authorValue,
+            path: pathValue,
+            heading: String(result.heading || "").trim(),
+          });
+        }
+        return normalized;
+      }
+
+      function readLibrarySourcesFromMessage(div) {
+        if (!div?.dataset?.librarySources) return [];
+        try {
+          return normalizeLibrarySourceResults(
+            JSON.parse(div.dataset.librarySources),
+          );
+        } catch (_error) {
+          return [];
+        }
+      }
+
+      function getMessageLibrarySources(message) {
+        if (!message || typeof message !== "object") return [];
+        return normalizeLibrarySourceResults(
+          message.librarySources || message.libraryResults || message.sources,
+        );
+      }
+
+      function buildAssistantHistoryMessage(content, librarySources) {
+        const message = { role: "assistant", content: content || "" };
+        const normalized = normalizeLibrarySourceResults(librarySources);
+        if (normalized.length) message.librarySources = normalized;
+        return message;
+      }
+
+      function renderLibrarySources(div, sources) {
+        div.querySelector(".library-sources-container")?.remove();
+        const normalized = normalizeLibrarySourceResults(sources);
+        if (!normalized.length) return;
+
+        const container = document.createElement("div");
+        container.className = "library-sources-container";
+
+        const label = document.createElement("div");
+        label.className = "sources-label";
+        label.textContent = "SOURCES";
+        container.appendChild(label);
+
+        const list = document.createElement("div");
+        list.className = "sources-list";
+        normalized.forEach((source, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "source-pill library-source-pill";
+          const author = source.author ? ` - ${source.author}` : "";
+          button.textContent = `${index + 1}. ${source.title}${author}`;
+          button.title = source.path || source.heading || source.title;
+          button.addEventListener("click", () => {
+            if (!source.path || !navigator.clipboard) return;
+            navigator.clipboard.writeText(source.path);
+            const prior = button.textContent;
+            button.textContent = "COPIED PATH";
+            setTimeout(() => {
+              button.textContent = prior;
+            }, 1200);
+          });
+          list.appendChild(button);
+        });
+        container.appendChild(list);
+        div.appendChild(container);
+      }
+
+      function renderAssistantMessage(div, text, librarySources) {
         if (!div) return;
         div.dataset.rawText = text || "";
+        if (Array.isArray(librarySources)) {
+          div.dataset.librarySources = JSON.stringify(
+            normalizeLibrarySourceResults(librarySources),
+          );
+        }
+        const sourceResults = readLibrarySourcesFromMessage(div);
 
         let finalText = text || "";
 
         if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
           div.innerHTML = DOMPurify.sanitize(marked.parse(finalText));
           forceLinksToNewTab(div);
+          renderLibrarySources(div, sourceResults);
 
           // Add copy buttons to code blocks
           div.querySelectorAll("pre").forEach((pre) => {
@@ -6507,10 +6729,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           });
         } else {
           div.textContent = finalText;
+          renderLibrarySources(div, sourceResults);
         }
       }
 
-      function addMessage(text, role) {
+      function addMessage(text, role, options = {}) {
         const wrap = document.createElement("div");
         wrap.className = "msg-wrap " + role;
         const div = document.createElement("div");
@@ -6518,7 +6741,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         div.dataset.rawText = text || "";
 
         if (role === "assistant") {
-          renderAssistantMessage(div, text);
+          renderAssistantMessage(div, text, options.librarySources);
         } else {
           div.textContent = text;
         }
@@ -7318,6 +7541,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           return;
         }
 
+        if (evt.type === "slash_command") {
+          thinking.addTraceLine(`Command: ${evt.label || evt.command || "slash"}`);
+          return;
+        }
+
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
           const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
@@ -7393,6 +7621,18 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         if (evt.type === "error") {
           thinking.markFailure(evt.error || "Unknown error");
+        }
+      }
+
+      function captureLibrarySources(evt, state, assistantDiv) {
+        if (evt?.type !== "library_results" || !state) return;
+        state.results = Array.isArray(evt.results) ? evt.results : [];
+        if (assistantDiv?.isConnected) {
+          renderAssistantMessage(
+            assistantDiv,
+            assistantDiv.dataset.rawText || "",
+            state.results,
+          );
         }
       }
 
@@ -7609,6 +7849,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         activeAbortController = new AbortController();
         updateSendButtonState();
         let streamingAssistantDiv = null;
+        const activeLibrarySources = { results: [] };
 
         try {
           let response;
@@ -7641,7 +7882,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   if (showDrumIcon) {
                     streamingAssistantDiv.insertAdjacentHTML(
                       "beforeend",
@@ -7652,6 +7897,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (evt.type === "skill_links") {
                   if (!streamingAssistantDiv) {
                     streamingAssistantDiv = addMessage("", "assistant");
@@ -7668,6 +7918,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                     renderAssistantMessage(
                       streamingAssistantDiv,
                       streamingAssistantDiv.dataset.rawText,
+                      activeLibrarySources.results,
                     );
                   }
                 }
@@ -7688,14 +7939,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             if (persistToHistory) {
               history.push({ role: "user", content: messageToSend });
-              history.push({ role: "assistant", content: response });
+              history.push(
+                buildAssistantHistoryMessage(
+                  response,
+                  activeLibrarySources.results,
+                ),
+              );
             }
             lastExchangePersisted = persistToHistory;
           } else if (mode === "pi") {
@@ -7715,11 +7975,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   chat.scrollTop = chat.scrollHeight;
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (evt.type === "session_start") {
                   piStatusInfo = {
                     ...(piStatusInfo || {}),
@@ -7737,13 +8006,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             history.push({ role: "user", content: messageToSend });
-            history.push({ role: "assistant", content: response });
+            history.push(
+              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+            );
             lastExchangePersisted = true;
           } else {
             cloudStreamState = "STREAMING";
@@ -7763,28 +8038,44 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   chat.scrollTop = chat.scrollHeight;
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (evt.type === "done") {
                   cloudStreamState = "IDLE";
                   updateModeStatus();
                 }
+                handleStreamEventTrace(evt, thinking);
               },
             );
             if (!streamingAssistantDiv && (response || "").trim()) {
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             history.push({ role: "user", content: messageToSend });
-            history.push({ role: "assistant", content: response });
+            history.push(
+              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+            );
             lastExchangePersisted = true;
           }
         } catch (e) {
@@ -7857,6 +8148,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         activeAbortController = new AbortController();
         updateSendButtonState();
         let streamingAssistantDiv = null;
+        const activeLibrarySources = { results: [] };
 
         try {
           let response;
@@ -7877,11 +8169,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   chat.scrollTop = chat.scrollHeight;
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (
                   evt.type === "done" &&
                   evt.promptTokens !== undefined &&
@@ -7897,14 +8198,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             if (persistToHistory) {
               history.push({ role: "user", content: messageToSend });
-              history.push({ role: "assistant", content: response });
+              history.push(
+                buildAssistantHistoryMessage(
+                  response,
+                  activeLibrarySources.results,
+                ),
+              );
             }
             lastExchangePersisted = persistToHistory;
           } else if (mode === "pi") {
@@ -7924,11 +8234,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   chat.scrollTop = chat.scrollHeight;
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (evt.type === "session_start") {
                   piStatusInfo = {
                     ...(piStatusInfo || {}),
@@ -7946,13 +8265,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             history.push({ role: "user", content: messageToSend });
-            history.push({ role: "assistant", content: response });
+            history.push(
+              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+            );
             lastExchangePersisted = true;
           } else {
             cloudStreamState = "STREAMING";
@@ -7972,28 +8297,44 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   streamingAssistantDiv = addMessage("", "assistant");
                 }
                 if (streamingAssistantDiv) {
-                  renderAssistantMessage(streamingAssistantDiv, nextText);
+                  renderAssistantMessage(
+                    streamingAssistantDiv,
+                    nextText,
+                    activeLibrarySources.results,
+                  );
                   chat.scrollTop = chat.scrollHeight;
                 }
               },
               (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  streamingAssistantDiv,
+                );
                 if (evt.type === "done") {
                   cloudStreamState = "IDLE";
                   updateModeStatus();
                 }
+                handleStreamEventTrace(evt, thinking);
               },
             );
             if (!streamingAssistantDiv && (response || "").trim()) {
               streamingAssistantDiv = addMessage("", "assistant");
             }
             if (streamingAssistantDiv) {
-              renderAssistantMessage(streamingAssistantDiv, response || "");
+              renderAssistantMessage(
+                streamingAssistantDiv,
+                response || "",
+                activeLibrarySources.results,
+              );
             }
             if (thinking?.isConnected && !thinking.hadReasoning) {
               thinking.remove();
             }
             history.push({ role: "user", content: messageToSend });
-            history.push({ role: "assistant", content: response });
+            history.push(
+              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+            );
             lastExchangePersisted = true;
           }
         } catch (e) {
@@ -8925,6 +9266,39 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           btn_reloadLibraryStatusBtn.addEventListener("click", function () {
             loadLibraryStatus();
           });
+        }
+
+        const btn_exportIndexedFilesBtn = document.getElementById(
+          "exportIndexedFilesBtn",
+        );
+        if (btn_exportIndexedFilesBtn) {
+          btn_exportIndexedFilesBtn.addEventListener("click", function () {
+            exportIndexedFiles();
+          });
+        }
+
+        const btn_openIndexedFilesExportBtn = document.getElementById(
+          "openIndexedFilesExportBtn",
+        );
+        if (btn_openIndexedFilesExportBtn) {
+          btn_openIndexedFilesExportBtn.addEventListener("click", function () {
+            openIndexedFilesExport().catch((error) => {
+              console.error("Could not open indexed file export", error);
+              alert(error.message || "Failed to open export.");
+            });
+          });
+        }
+
+        const btn_copyIndexedFilesExportPathBtn = document.getElementById(
+          "copyIndexedFilesExportPathBtn",
+        );
+        if (btn_copyIndexedFilesExportPathBtn) {
+          btn_copyIndexedFilesExportPathBtn.addEventListener(
+            "click",
+            function () {
+              copyIndexedFilesExportPath();
+            },
+          );
         }
 
         const btn_addDatabaseSourceBtn = document.getElementById(

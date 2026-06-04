@@ -230,10 +230,10 @@ These parameters let you control the "personality" and behavior of the local Oll
 ### 3. Database
 
 - **Database File**: Chooses where the generated SQLite index is stored. The default is `~/ollama-pi-chat/library.sqlite`.
-- **Enable for Ollama Chat**: Searches your private SQLite library before sending the prompt to Ollama. When this is disabled, Ollama answers normally without database context.
+- **Enable Database Context**: Searches your private SQLite library before sending the prompt to the active chat mode. When this is disabled, Ollama, Pi, and Cloud answer normally without database context. In Cloud mode, retrieved passages are sent to the selected provider.
 - **Passages**: Controls how many retrieved chunks are inserted into the model context.
 - **Context Chars**: Caps how much retrieved library text is sent to the model.
-- **Source Paths**: When enabled, the model receives source file paths with the passages so it can cite where the evidence came from.
+- **Source Paths**: When enabled, source boxes can copy the local file path. The model does not receive local file paths.
 - **Semantic Vector Search**: Enables embedding-based retrieval when sqlite-vec is configured. This is the recommended default for large libraries.
 - **Keyword FTS Index**: Optional exact-term fallback search. It increases database size, so leave it off unless you specifically need keyword matching.
 - **Embedding Model**: Choose an installed Ollama model for embeddings. `nomic-embed-text-v2-moe:latest` is a good multilingual choice for English and Spanish libraries.
@@ -243,6 +243,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 - **Build / Update Index**: Scans changed source files and updates `library.sqlite`. It also repairs missing embeddings for unchanged files, so a temporary embedding failure can be retried without re-reading every EPUB.
 - **Retry Embeddings**: Scans the existing index for passages missing embedding/vector rows and retries them. This is useful after Ollama, sqlite-vec, or the embedding model temporarily failed.
 - **Reindex All**: Rebuilds every configured source even if the file did not change.
+- **Export Indexed Files**: Writes a plain text list of indexed EPUB files to `~/ollama-pi-chat/indexed-epub-files.txt` and reveals the file in Finder.
 - **Pause Index**: Pauses the running index job between files or embedding batches. A paused job will not auto-resume until you start indexing again.
 
 ### 4. Pi Configuration Settings
@@ -287,7 +288,7 @@ Click the **Plug Icon** in the top title bar to open the MCP Panel. You can past
 
 ## Database Research From Scratch
 
-The Database feature lets Ollama answer with passages retrieved from your own local files. It is not automatic until you configure sources and build the index. The generated index lives in SQLite, usually at `~/ollama-pi-chat/library.sqlite`.
+The Database feature lets Ollama, Pi, and Cloud modes answer with passages retrieved from your own local files. It is not automatic until you configure sources, build the index, and turn on Database Context. The generated index lives in SQLite, usually at `~/ollama-pi-chat/library.sqlite`. In Cloud mode, retrieved passages are sent to the selected provider with your prompt.
 
 ### What the Database Does
 
@@ -297,10 +298,10 @@ The Database feature lets Ollama answer with passages retrieved from your own lo
 4. Stores compressed passage text and metadata in SQLite.
 5. Creates embeddings for semantic vector search when enabled.
 6. Optionally creates a lightweight FTS5 keyword index when enabled.
-7. Retrieves relevant passages before an Ollama chat request.
-8. Injects those passages into the Ollama prompt with source information.
+7. Retrieves relevant passages before a chat request.
+8. Injects those passages into the active model prompt with source information.
 
-When **Enable for Ollama Chat** is off, none of this retrieval context is added and Ollama answers normally.
+When **Enable Database Context** is off, none of this retrieval context is added and the active mode answers normally.
 
 ### First-Time Setup
 
@@ -332,8 +333,8 @@ When **Enable for Ollama Chat** is off, none of this retrieval context is added 
 11. Click **Estimate Index Size** to preview projected passage count and database size.
 12. Click **Build / Update Index**.
 13. Watch the progress bar and status line until indexing completes.
-14. Turn on **Enable for Ollama Chat**.
-15. Ask normally in Ollama mode.
+14. Turn on **Enable Database Context**.
+15. Ask normally in Ollama, Pi, or Cloud mode. Use Cloud only when you are comfortable sending the retrieved passages to that provider.
 
 ### What Gets Indexed
 
@@ -509,6 +510,7 @@ Changing the embedding model requires **Reindex All**. Old embeddings were creat
 - **Retry Embeddings**: Retries missing embedding/vector rows without forcing every EPUB to be re-extracted.
 - **Reindex All**: Processes every configured file again. Use this after changing the embedding model, enabling semantic search, changing sqlite-vec, enabling/disabling keyword FTS, or changing chunking/search assumptions.
 - **Refresh Status**: Reloads the database status, including file count, passage count, embedding count, source count, and whether sqlite-vec is active.
+- **Export Indexed Files**: Writes `~/ollama-pi-chat/indexed-epub-files.txt`, a plain text report of every indexed EPUB path, title, author, passage count, and index date, then reveals the file in Finder.
 - **Pause Index**: Requests a pause. If the job is compacting SQLite, the pause waits until the current database operation finishes.
 
 Large libraries can take a long time on the first run. A library with thousands of EPUBs may take hours depending on EPUB quality, disk speed, and whether embeddings are enabled. If you close the app while indexing, the local server process stops and the active batch is interrupted. The app writes the job state to `~/ollama-pi-chat/library-index-job.json`, and on the next launch it automatically resumes a job that was still marked as running. If you press **Pause Index**, the job is marked as paused and will not auto-resume until you start indexing again.
@@ -522,19 +524,38 @@ For compactness, the database stores full retrieved passages, but semantic embed
 For source-grounded answers:
 
 1. Make sure the index exists and status shows files/passages.
-2. Turn on **Enable for Ollama Chat**.
-3. Keep **Include Source Paths in Model Context** enabled.
+2. Turn on **Enable Database Context**.
+3. Keep **Include Source Paths in Source Boxes** enabled if you want source buttons to copy local paths.
 4. Set **Passages** to `5` or `8`.
 5. Ask a direct question, for example:
    ```text
    What did Freud say about incest?
    ```
 
-The app retrieves passages, sends them to Ollama as temporary context, and asks the model to use those passages only when relevant. The model receives title, author, heading, and source path when available.
+The app retrieves passages, sends them to the active model as temporary context, and asks the model to use those passages only when relevant. The model receives title, author, heading, and passage text, but not local file paths. The app renders retrieved sources as separate source buttons below the assistant response; clicking a source copies the local path when source paths are enabled. Source boxes are saved with the assistant message and remain visible when switching modes or reloading a conversation.
 
-### Current Limitation
+### Slash Commands
 
-Database retrieval is currently injected into Ollama chat. Pi integration is technically possible, but the current release does not yet wire database retrieval into Pi mode.
+Slash commands are optional overrides. If you do not type a slash command, normal behavior is unchanged: Ollama can still decide to call enabled skills automatically, and Database Context follows the Settings toggle.
+
+- `/db question`: Global database-only mode for Ollama, Pi, and Cloud. This forces a database search for that prompt, even if Database Context is off, and instructs the model to answer only from retrieved passages.
+- `/wiki query`: Force Wikipedia in Ollama mode.
+- `/britannica query`: Force Britannica in Ollama mode.
+- `/wiktionary word`: Force Wiktionary in Ollama mode.
+- `/etymology word`: Force Deep Etymology in Ollama mode.
+- `/duckduckgo query`: Force DuckDuckGo search in Ollama mode.
+- `/scrape URL`: Force Web Scraper in Ollama mode.
+- `/calc expression`: Force Calculator in Ollama mode.
+- `/time timezone`: Force Time & Date in Ollama mode. The timezone is optional.
+- `/factcheck claim`: Force Fact Check in Ollama mode.
+- `/notes read` or `/notes append text`: Force Local Notes in Ollama mode.
+- `/shell command`: Force Shell Command in Ollama mode. It still requires explicit confirmation.
+
+For language-sensitive commands, prefix the query with `en:`, `es:`, or `fr:` when useful, for example `/wiki es: Nijinsky` or `/etymology es: eventualmente`.
+
+### Mode Support
+
+Database retrieval is wired into Ollama, Pi, and Cloud modes. Ollama and Pi keep the retrieved passages local. Cloud mode sends retrieved passages to the selected cloud provider, so leave **Enable Database Context** off in Cloud mode when you do not want private excerpts sent externally.
 
 ---
 
@@ -557,6 +578,7 @@ Ollama Pi Chat is designed from the ground up to respect your digital sovereignt
   - `library-index-job.json`: Last index job state. This is used to auto-resume interrupted running jobs after reopening the app.
   - `library-index-errors.jsonl`: Structured index issue log with embedding failures, skipped documents, and file-level index errors.
   - `library.sqlite`: Generated local library database containing compressed indexed passages, optional embeddings, and optional keyword FTS data.
+  - `indexed-epub-files.txt`: Plain text export created by **Export Indexed Files** in Settings > Database.
   - `security-events.jsonl`: The security audit trace showing permission requests and execution logs.
   - `daemon.log` / `daemon.error.log`: Output logs when running the LaunchAgent background daemon.
 - **Browser localStorage**: Browser-side fallbacks, active prompt selection, and some UI state are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage may reset browser-only UI state.

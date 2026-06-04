@@ -1,6 +1,6 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -39,6 +39,7 @@
     "asarUnpack": [
       "server.js",
       "skills.js",
+      "slash_commands.js",
       "mcp.js",
       "index.html",
       "font_faces.css",
@@ -56,6 +57,7 @@
       "index.html",
       "server.js",
       "skills.js",
+      "slash_commands.js",
       "mcp.js",
       "prompts.json",
       "font_faces.css",
