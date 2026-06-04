@@ -24,13 +24,14 @@
   "search": {
     "keywordEnabled": false,
     "defaultLimit": 5,
-    "maxLimit": 20,
+    "maxLimit": 50,
     "maxContextChars": 12000
   },
   "embedding": {
     "enabled": false,
     "model": "nomic-embed-text-v2-moe:latest",
-    "dimensions": 256,
+    "dimensions": 0,
+    "quantization": "int8",
     "ollamaBaseUrl": "http://127.0.0.1:11434",
     "batchSize": 16,
     "sqliteVecExtensionPath": ""

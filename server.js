@@ -84,7 +84,10 @@ const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
-const LIBRARY_INDEX_ERROR_FILE = path.join(DATA_DIR, "library-index-errors.jsonl");
+const LIBRARY_INDEX_ERROR_FILE = path.join(
+  DATA_DIR,
+  "library-index-errors.jsonl",
+);
 const LIBRARY_INDEXED_FILES_EXPORT_FILE = path.join(
   DATA_DIR,
   "indexed-epub-files.txt",
@@ -100,7 +103,13 @@ const VENDOR_SCRIPT_FILES = {
   "/vendor/purify.min.js": {
     assetName: "vendor/purify.min.js",
     resolveFilePath: () =>
-      path.join(__dirname, "node_modules", "dompurify", "dist", "purify.min.js"),
+      path.join(
+        __dirname,
+        "node_modules",
+        "dompurify",
+        "dist",
+        "purify.min.js",
+      ),
   },
 };
 const SECURITY_EVENTS_FILE = path.join(DATA_DIR, "security-events.jsonl");
@@ -301,7 +310,10 @@ function upsertConversation(
   if (!saveConv) return;
   const convs = loadConversations();
   const assistantMessage = { role: "assistant", content: response };
-  if (Array.isArray(metadata.librarySources) && metadata.librarySources.length) {
+  if (
+    Array.isArray(metadata.librarySources) &&
+    metadata.librarySources.length
+  ) {
     assistantMessage.librarySources = metadata.librarySources;
   }
   const newHistory = [
@@ -647,11 +659,7 @@ function sanitizeUiSettings(rawInput) {
     }
   }
 
-  if (
-    raw.fonts &&
-    typeof raw.fonts === "object" &&
-    !Array.isArray(raw.fonts)
-  ) {
+  if (raw.fonts && typeof raw.fonts === "object" && !Array.isArray(raw.fonts)) {
     for (const modeName of ["ollama", "pi", "cloud"]) {
       if (typeof raw.fonts[modeName] === "string") {
         next.fonts[modeName] = normalizeFontStackValue(raw.fonts[modeName]);
@@ -1037,7 +1045,18 @@ function isTransientLibraryContextMessage(item) {
   return (
     item?.role === "system" &&
     typeof item.content === "string" &&
-    item.content.startsWith("Local library passages retrieved for the user's question.")
+    (item.content.startsWith(
+      "Local library passages retrieved for the user's question.",
+    ) ||
+      item.content.startsWith(
+        "Local library passages have already been retrieved for the user's question.",
+      ) ||
+      item.content.startsWith(
+        "Database Context is enabled, so the local library has priority for this question.",
+      ) ||
+      item.content.startsWith(
+        "Strict database-only mode is enabled for this question.",
+      ))
   );
 }
 
@@ -1048,7 +1067,6 @@ function sanitizeModelMessages(messages) {
       (item) =>
         item &&
         typeof item === "object" &&
-        !isTransientLibraryContextMessage(item) &&
         allowedRoles.has(item.role) &&
         typeof item.content === "string",
     )
@@ -1103,6 +1121,42 @@ function serializeLibraryResults(results, options = {}) {
   }));
 }
 
+function getLibraryContextSourceResults(libraryContext) {
+  return Array.isArray(libraryContext?.contextResults)
+    ? libraryContext.contextResults
+    : libraryContext?.results;
+}
+
+function extractRecentLibrarySourceHints(history, limit = 4) {
+  const hints = [];
+  const seen = new Set();
+  const items = Array.isArray(history) ? history : [];
+  for (
+    let index = items.length - 1;
+    index >= 0 && hints.length < limit;
+    index -= 1
+  ) {
+    const item = items[index];
+    const sources = Array.isArray(item?.librarySources)
+      ? item.librarySources
+      : Array.isArray(item?.libraryResults)
+        ? item.libraryResults
+        : [];
+    for (const source of sources) {
+      const title = String(source?.title || "").trim();
+      const author = String(source?.author || "").trim();
+      const filePath = String(source?.path || "").trim();
+      const key = `${title}|${author}|${filePath}`;
+      if (!title && !author && !filePath) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      hints.push({ title, author, path: filePath });
+      if (hints.length >= limit) break;
+    }
+  }
+  return hints;
+}
+
 function insertLibraryContextMessage(messages, contextMessage) {
   if (!contextMessage) return messages;
   const nextMessages = Array.isArray(messages) ? [...messages] : [];
@@ -1127,12 +1181,17 @@ function getCommandMessage(command, fallbackMessage) {
   return command.input || fallbackMessage;
 }
 
-function getLibraryRequestForCommand(library, command) {
-  if (!isDatabaseSlashCommand(command)) return library;
+function getLibraryRequestForCommand(library, command, history = []) {
+  const base = library && typeof library === "object" ? library : {};
+  const sourceHints = extractRecentLibrarySourceHints(history);
+  if (!isDatabaseSlashCommand(command)) {
+    return sourceHints.length ? { ...base, sourceHints } : library;
+  }
   return {
-    ...(library && typeof library === "object" ? library : {}),
+    ...base,
     enabled: true,
     strict: true,
+    sourceHints,
   };
 }
 
@@ -1498,13 +1557,13 @@ function sanitizeOllamaOptions(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const options = {
     temperature: clampOllamaNumber(raw.temperature, 0.3, 0, 2),
-    top_p: clampOllamaNumber(raw.top_p, 0.6, 0, 1),
-    top_k: clampOllamaInteger(raw.top_k, 20, 1, 1000),
-    repeat_penalty: clampOllamaNumber(raw.repeat_penalty, 1.15, 0, 2),
-    repeat_last_n: clampOllamaInteger(raw.repeat_last_n, 128, -1, 131072),
-    num_predict: clampOllamaInteger(raw.num_predict, 320, -1, 200000),
+    top_p: clampOllamaNumber(raw.top_p, 0.75, 0, 1),
+    top_k: clampOllamaInteger(raw.top_k, 40, 1, 1000),
+    repeat_penalty: clampOllamaNumber(raw.repeat_penalty, 1.1, 0, 2),
+    repeat_last_n: clampOllamaInteger(raw.repeat_last_n, 256, -1, 131072),
+    num_predict: clampOllamaInteger(raw.num_predict, 2048, -1, 200000),
     num_ctx: clampOllamaInteger(raw.num_ctx, OLLAMA_DEFAULT_CTX, 256, 131072),
-    seed: clampOllamaInteger(raw.seed, 42, -2147483648, 2147483647),
+    seed: clampOllamaInteger(raw.seed, -1, -2147483648, 2147483647),
   };
   if (Array.isArray(raw.stop)) {
     const stop = raw.stop
@@ -1651,7 +1710,9 @@ function persistedJobStartFileIndex(job) {
   const fileErrors = Number(progress.errors || 0);
   if (embeddingErrors > 0 || fileErrors > 0) return 0;
   const processed = Number(job?.progress?.processed || 0);
-  return Number.isFinite(processed) && processed > 0 ? Math.floor(processed) : 0;
+  return Number.isFinite(processed) && processed > 0
+    ? Math.floor(processed)
+    : 0;
 }
 
 function appendLibraryIndexError(job, entry) {
@@ -1661,7 +1722,10 @@ function appendLibraryIndexError(job, entry) {
     ...entry,
   };
   job.recentErrors = [...(job.recentErrors || []), record].slice(-10);
-  appendFileWithRotation(LIBRARY_INDEX_ERROR_FILE, `${JSON.stringify(record)}\n`);
+  appendFileWithRotation(
+    LIBRARY_INDEX_ERROR_FILE,
+    `${JSON.stringify(record)}\n`,
+  );
 }
 
 function readRecentLibraryIndexErrors(limit = 50) {
@@ -2291,7 +2355,9 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
 function requestPiState(convProc, timeoutMs = 5000) {
   if (!convProc || convProc.closed) return Promise.resolve(null);
   if (convProc.pendingStateResolver) {
-    return Promise.reject(createHttpError(409, "State request already in progress"));
+    return Promise.reject(
+      createHttpError(409, "State request already in progress"),
+    );
   }
   return new Promise((resolve) => {
     let settled = false;
@@ -2312,7 +2378,9 @@ function requestPiState(convProc, timeoutMs = 5000) {
 function requestPiStats(convProc, timeoutMs = 5000) {
   if (!convProc || convProc.closed) return Promise.resolve(null);
   if (convProc.pendingStatsResolver) {
-    return Promise.reject(createHttpError(409, "Stats request already in progress"));
+    return Promise.reject(
+      createHttpError(409, "Stats request already in progress"),
+    );
   }
   return new Promise((resolve) => {
     let settled = false;
@@ -2348,7 +2416,8 @@ function formatPiContextUsage(stats) {
 }
 
 function summarizePiStatus(state, stats = null) {
-  const model = state?.model && typeof state.model === "object" ? state.model : {};
+  const model =
+    state?.model && typeof state.model === "object" ? state.model : {};
   const provider = typeof model.provider === "string" ? model.provider : "";
   const zeroCost =
     model.cost &&
@@ -2826,7 +2895,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && urlPath === "/api/library/index/errors") {
-    const limit = Number.parseInt(requestUrl.searchParams.get("limit") || "", 10);
+    const limit = Number.parseInt(
+      requestUrl.searchParams.get("limit") || "",
+      10,
+    );
     send(200, {
       errors: readRecentLibraryIndexErrors(Number.isFinite(limit) ? limit : 50),
       path: LIBRARY_INDEX_ERROR_FILE,
@@ -2834,7 +2906,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && urlPath === "/api/library/export-indexed-files") {
+  if (
+    req.method === "POST" &&
+    urlPath === "/api/library/export-indexed-files"
+  ) {
     try {
       const config = loadLibraryConfig();
       const files = await listIndexedLibraryFiles({ extension: ".epub" });
@@ -2889,7 +2964,9 @@ const server = http.createServer(async (req, res) => {
       send(e.statusCode || 500, {
         error: e.message,
         running: !!activeLibraryIndexJob,
-        job: publicLibraryIndexJob(activeLibraryIndexJob || lastLibraryIndexJob),
+        job: publicLibraryIndexJob(
+          activeLibraryIndexJob || lastLibraryIndexJob,
+        ),
       });
     }
     return;
@@ -3011,6 +3088,31 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && urlPath === "/api/conversations") {
     send(200, loadConversations());
+    return;
+  }
+
+  const deleteModeMatch =
+    req.method === "DELETE" &&
+    urlPath.match(/^\/api\/conversations\/mode\/([^/]+)$/);
+  if (deleteModeMatch) {
+    const requestedMode = decodeURIComponent(deleteModeMatch[1] || "");
+    const allowedModes = new Set(["ollama", "pi", "cloud"]);
+    if (!allowedModes.has(requestedMode)) {
+      send(400, { error: "Invalid conversation mode" });
+      return;
+    }
+    const convs = loadConversations();
+    const next = convs.filter((conv) => {
+      const convMode =
+        typeof conv.mode === "string" && conv.mode ? conv.mode : "ollama";
+      return convMode !== requestedMode;
+    });
+    saveConversations(next);
+    send(200, {
+      ok: true,
+      mode: requestedMode,
+      deleted: convs.length - next.length,
+    });
     return;
   }
 
@@ -3424,7 +3526,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           message,
-          getLibraryRequestForCommand(library, slashCommand),
+          getLibraryRequestForCommand(library, slashCommand, history),
         );
         if (libraryContext.enabled) {
           requestMessages = insertLibraryContextMessage(
@@ -3432,12 +3534,13 @@ const server = http.createServer(async (req, res) => {
             libraryContext.contextMessage,
           );
           librarySourceResults = serializeLibraryResults(
-            libraryContext.results,
-            getLibraryRequestForCommand(library, slashCommand),
+            getLibraryContextSourceResults(libraryContext),
+            getLibraryRequestForCommand(library, slashCommand, history),
           );
           emit({
             type: "library_results",
             results: librarySourceResults,
+            meta: libraryContext.contextMeta,
           });
         }
       } catch (e) {
@@ -3520,7 +3623,10 @@ const server = http.createServer(async (req, res) => {
       const slashCommand = parseSlashCommand(originalMessage);
       const message = getCommandMessage(slashCommand, originalMessage);
       const messages = [...history, { role: "user", content: message }];
-      const storedMessages = [...history, { role: "user", content: originalMessage }];
+      const storedMessages = [
+        ...history,
+        { role: "user", content: originalMessage },
+      ];
       const safeOptions = sanitizeOllamaOptions(options);
 
       res.writeHead(200, {
@@ -3543,6 +3649,7 @@ const server = http.createServer(async (req, res) => {
       let emittedThinkingStart = false;
       let librarySourceResults = [];
       let transientLibraryContextMessage = null;
+      let databasePriorityForLibraryTurn = false;
 
       const emit = (event) => {
         if (!res.writableEnded) {
@@ -3555,7 +3662,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           message,
-          getLibraryRequestForCommand(library, slashCommand),
+          getLibraryRequestForCommand(library, slashCommand, history),
         );
         if (libraryContext.enabled) {
           if (libraryContext.contextMessage) {
@@ -3566,16 +3673,23 @@ const server = http.createServer(async (req, res) => {
             if (firstNonSystemIndex === -1) {
               messages.push(transientLibraryContextMessage);
             } else {
-              messages.splice(firstNonSystemIndex, 0, transientLibraryContextMessage);
+              messages.splice(
+                firstNonSystemIndex,
+                0,
+                transientLibraryContextMessage,
+              );
             }
           }
           librarySourceResults = serializeLibraryResults(
-            libraryContext.results,
-            getLibraryRequestForCommand(library, slashCommand),
+            getLibraryContextSourceResults(libraryContext),
+            getLibraryRequestForCommand(library, slashCommand, history),
           );
+          databasePriorityForLibraryTurn =
+            !slashCommand && librarySourceResults.length > 0;
           emit({
             type: "library_results",
             results: librarySourceResults,
+            meta: libraryContext.contextMeta,
           });
         }
       } catch (e) {
@@ -3622,7 +3736,10 @@ const server = http.createServer(async (req, res) => {
         };
         if (safeOptions) payloadObject.options = safeOptions;
 
-        if (!isDatabaseSlashCommand(slashCommand)) {
+        if (
+          !isDatabaseSlashCommand(slashCommand) &&
+          !databasePriorityForLibraryTurn
+        ) {
           const mcpTools = getMcpOllamaTools();
           if (mcpTools.length > 0) {
             payloadObject.tools = mcpTools;
@@ -3684,6 +3801,17 @@ const server = http.createServer(async (req, res) => {
 
               if (evt.done === true) {
                 const xmlMatch = output.match(/<call:([^>]+)>(.*?)<\/call>/is);
+                if (databasePriorityForLibraryTurn && xmlMatch) {
+                  output = "";
+                  outputToolCalls = [];
+                  messages.push({
+                    role: "user",
+                    content:
+                      "Database Context returned local library passages for this turn. Do not call tools. Answer the user's original question using the provided database passages. If the passages contain multiple accounts, causes, or origin details, explain each relevant distinction clearly.",
+                  });
+                  startStream(depth + 1);
+                  return;
+                }
                 if (xmlMatch) {
                   outputToolCalls.push({
                     function: {
@@ -4009,7 +4137,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           promptQuestion,
-          getLibraryRequestForCommand(body.library, slashCommand),
+          getLibraryRequestForCommand(body.library, slashCommand, history),
         );
         if (libraryContext.enabled) {
           promptMessage = buildPiPromptWithLibraryContext(
@@ -4017,12 +4145,13 @@ const server = http.createServer(async (req, res) => {
             libraryContext.contextMessage,
           );
           librarySourceResults = serializeLibraryResults(
-            libraryContext.results,
-            getLibraryRequestForCommand(body.library, slashCommand),
+            getLibraryContextSourceResults(libraryContext),
+            getLibraryRequestForCommand(body.library, slashCommand, history),
           );
           writeStreamEvent({
             type: "library_results",
             results: librarySourceResults,
+            meta: libraryContext.contextMeta,
           });
         }
       } catch (e) {
@@ -4117,7 +4246,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           promptQuestion,
-          getLibraryRequestForCommand(body.library, slashCommand),
+          getLibraryRequestForCommand(body.library, slashCommand, body.history),
         );
         if (libraryContext.enabled) {
           promptMessage = buildPiPromptWithLibraryContext(
@@ -4126,7 +4255,11 @@ const server = http.createServer(async (req, res) => {
           );
           libraryResults = serializeLibraryResults(
             libraryContext.results,
-            getLibraryRequestForCommand(body.library, slashCommand),
+            getLibraryRequestForCommand(
+              body.library,
+              slashCommand,
+              body.history,
+            ),
           );
         }
       } catch (_e) {}

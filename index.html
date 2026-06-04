@@ -1793,12 +1793,11 @@
         </button>
       </div>
       <select id="modelSelect"></select>
-      <select
-        id="topbarPromptSelect"
-        
-        title="Active System Prompt"
-      ></select>
-      <span id="modeStatus" class="token-counter mode-status" title="Mode Status"
+      <select id="topbarPromptSelect" title="Active System Prompt"></select>
+      <span
+        id="modeStatus"
+        class="token-counter mode-status"
+        title="Mode Status"
         >Ollama</span
       >
       <span id="tokenCounter" class="token-counter" title="Token Usage"
@@ -2096,7 +2095,11 @@
           <button id="closeSettingsBtn">✕</button>
         </div>
         <div id="settingsBody">
-          <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <div
+            class="settings-tabs"
+            role="tablist"
+            aria-label="Settings sections"
+          >
             <button
               type="button"
               class="settings-tab active"
@@ -2164,10 +2167,7 @@
           ></div>
           <div id="ollamaPaletteGroup" class="setting-group">
             <label>OLLAMA COLOR PALETTE</label>
-            <select
-              id="settingOllamaPalette"
-              
-            >
+            <select id="settingOllamaPalette">
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
               <option value="solarised">Solarised Everforest (Default)</option>
@@ -2182,10 +2182,7 @@
           </div>
           <div id="piPaletteGroup" class="setting-group">
             <label>PI COLOR PALETTE</label>
-            <select
-              id="settingPiPalette"
-              
-            >
+            <select id="settingPiPalette">
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
               <option value="solarised">Solarised Everforest</option>
@@ -2198,11 +2195,13 @@
               Theme used when chat mode is set to `PI`.
             </div>
           </div>
-          <div id="cloudPaletteGroup" class="setting-group" style="display: none">
+          <div
+            id="cloudPaletteGroup"
+            class="setting-group"
+            style="display: none"
+          >
             <label>CLOUD COLOR PALETTE</label>
-            <select
-              id="settingCloudPalette"
-            >
+            <select id="settingCloudPalette">
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
               <option value="solarised">Solarised Everforest</option>
@@ -2217,10 +2216,7 @@
           </div>
           <div id="ollamaFontGroup" class="setting-group">
             <label>OLLAMA FONT FAMILY</label>
-            <select
-              id="settingOllamaFontPreset"
-              
-            >
+            <select id="settingOllamaFontPreset">
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
@@ -2237,7 +2233,6 @@
               id="settingOllamaFontCustom"
               type="text"
               placeholder='"Space Mono", monospace'
-              
               style="display: none"
             />
             <div class="setting-help">
@@ -2261,7 +2256,6 @@
                     min="0"
                     max="2"
                     step="0.1"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2297,7 +2291,6 @@
                     min="0"
                     max="1"
                     step="0.01"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2329,13 +2322,7 @@
               <div class="setting-row" style="flex: 1">
                 <label style="font-size: 10px">TOP K</label>
                 <div class="setting-number">
-                  <input
-                    id="ollamaTopKInput"
-                    type="number"
-                    min="1"
-                    step="1"
-                    
-                  />
+                  <input id="ollamaTopKInput" type="number" min="1" step="1" />
                   <div class="setting-number-controls">
                     <button
                       type="button"
@@ -2368,7 +2355,6 @@
                     type="number"
                     min="-1"
                     step="1"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2404,7 +2390,6 @@
                     type="number"
                     min="256"
                     step="256"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2434,12 +2419,7 @@
               <div class="setting-row" style="flex: 1">
                 <label style="font-size: 10px">SEED</label>
                 <div class="setting-number">
-                  <input
-                    id="ollamaSeedInput"
-                    type="number"
-                    step="1"
-                    
-                  />
+                  <input id="ollamaSeedInput" type="number" step="1" />
                   <div class="setting-number-controls">
                     <button
                       type="button"
@@ -2476,7 +2456,6 @@
                     min="0"
                     max="2"
                     step="0.05"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2510,7 +2489,6 @@
                     type="number"
                     min="-1"
                     step="1"
-                    
                   />
                   <div class="setting-number-controls">
                     <button
@@ -2584,8 +2562,8 @@
             </div>
             <div class="setting-help">
               Build and use the local SQLite library index for retrieval before
-              model responses. In Cloud mode, retrieved passages are sent to
-              the selected provider.
+              model responses. In Cloud mode, retrieved passages are sent to the
+              selected provider.
             </div>
             <div class="setting-row">
               <label style="font-size: 10px">DATABASE FILE</label>
@@ -2599,13 +2577,13 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">PASSAGES</label>
+                <label style="font-size: 10px">CHAT PASSAGES</label>
                 <div class="setting-number">
                   <input
                     id="libraryLimitInput"
                     type="number"
                     min="1"
-                    max="20"
+                    max="50"
                     step="1"
                   />
                   <div class="setting-number-controls">
@@ -2788,6 +2766,17 @@
               </div>
             </div>
             <div class="setting-row">
+              <label style="font-size: 10px">VECTOR STORAGE</label>
+              <select id="databaseEmbeddingQuantizationSelect">
+                <option value="int8">Int8 compact</option>
+                <option value="float32">Float32 compatibility</option>
+              </select>
+              <div class="setting-help">
+                Int8 uses roughly one quarter of float32 vector storage. Use 0
+                dimensions for the embedding model's native size.
+              </div>
+            </div>
+            <div class="setting-row">
               <label style="font-size: 10px">SQLITE-VEC EXTENSION PATH</label>
               <input
                 id="databaseSqliteVecPathInput"
@@ -2816,7 +2805,10 @@
               <div class="database-metrics-grid">
                 <div class="database-metric">
                   <div class="database-metric-label">FILES</div>
-                  <div id="libraryStatusFilesValue" class="database-metric-value">
+                  <div
+                    id="libraryStatusFilesValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -2849,25 +2841,37 @@
                 </div>
                 <div class="database-metric">
                   <div class="database-metric-label">VECTOR</div>
-                  <div id="libraryStatusVectorValue" class="database-metric-value">
+                  <div
+                    id="libraryStatusVectorValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
                 <div class="database-metric">
                   <div class="database-metric-label">DIMS</div>
-                  <div id="libraryStatusDimsValue" class="database-metric-value">
+                  <div
+                    id="libraryStatusDimsValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
                 <div class="database-metric database-metric-wide">
                   <div class="database-metric-label">MODEL</div>
-                  <div id="libraryStatusModelValue" class="database-metric-value">
+                  <div
+                    id="libraryStatusModelValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
                 <div class="database-metric database-metric-wide">
                   <div class="database-metric-label">SQLITE</div>
-                  <div id="libraryStatusSqliteValue" class="database-metric-value">
+                  <div
+                    id="libraryStatusSqliteValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -2884,7 +2888,10 @@
               <div class="database-metrics-grid">
                 <div class="database-metric">
                   <div class="database-metric-label">FILES</div>
-                  <div id="libraryEstimateFilesValue" class="database-metric-value">
+                  <div
+                    id="libraryEstimateFilesValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -2899,7 +2906,10 @@
                 </div>
                 <div class="database-metric">
                   <div class="database-metric-label">TEXT</div>
-                  <div id="libraryEstimateTextValue" class="database-metric-value">
+                  <div
+                    id="libraryEstimateTextValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -2914,7 +2924,10 @@
                 </div>
                 <div class="database-metric database-metric-wide">
                   <div class="database-metric-label">PROJECTED SIZE</div>
-                  <div id="libraryEstimateTotalValue" class="database-metric-value">
+                  <div
+                    id="libraryEstimateTotalValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -2951,7 +2964,10 @@
                 </div>
                 <div class="database-metric">
                   <div class="database-metric-label">PROGRESS</div>
-                  <div id="libraryJobProgressValue" class="database-metric-value">
+                  <div
+                    id="libraryJobProgressValue"
+                    class="database-metric-value"
+                  >
                     0%
                   </div>
                 </div>
@@ -2963,7 +2979,10 @@
                 </div>
                 <div class="database-metric">
                   <div class="database-metric-label">PASSAGES</div>
-                  <div id="libraryJobPassagesValue" class="database-metric-value">
+                  <div
+                    id="libraryJobPassagesValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -3002,7 +3021,10 @@
                 </div>
                 <div class="database-metric database-metric-wide">
                   <div class="database-metric-label">SKIPPED</div>
-                  <div id="libraryJobSkippedValue" class="database-metric-value">
+                  <div
+                    id="libraryJobSkippedValue"
+                    class="database-metric-value"
+                  >
                     --
                   </div>
                 </div>
@@ -3074,7 +3096,10 @@
               <button id="runLibraryIndexBtn" class="settings-action-btn">
                 BUILD / UPDATE INDEX
               </button>
-              <button id="retryLibraryEmbeddingsBtn" class="settings-action-btn">
+              <button
+                id="retryLibraryEmbeddingsBtn"
+                class="settings-action-btn"
+              >
                 RETRY EMBEDDINGS
               </button>
               <button id="forceLibraryReindexBtn" class="settings-action-btn">
@@ -3087,9 +3112,7 @@
           </div>
           <div id="piFontGroup" class="setting-group">
             <label>PI FONT FAMILY</label>
-            <select
-              id="settingPiFontPreset"
-            >
+            <select id="settingPiFontPreset">
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
@@ -3115,9 +3138,7 @@
           </div>
           <div id="cloudFontGroup" class="setting-group" style="display: none">
             <label>CLOUD FONT FAMILY</label>
-            <select
-              id="settingCloudFontPreset"
-            >
+            <select id="settingCloudFontPreset">
               <option value="space-mono">Space Mono (Default)</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
@@ -3393,7 +3414,11 @@
             </div>
           </div>
 
-          <div id="cloudSettingsGroup" class="setting-group" style="display: none">
+          <div
+            id="cloudSettingsGroup"
+            class="setting-group"
+            style="display: none"
+          >
             <label>CLOUD MODE</label>
             <div class="setting-help">
               Configure direct cloud model access for the independent `Cloud`
@@ -3480,10 +3505,7 @@
 
           <div id="promptSettingsGroup" class="setting-group">
             <label>CUSTOM OVERLAY PROMPT</label>
-            <select
-              id="settingActivePrompt"
-              
-            >
+            <select id="settingActivePrompt">
               <option value="">None (Built-in Default)</option>
             </select>
             <div class="setting-help">
@@ -3819,6 +3841,28 @@
       let cloudFont = '"Space Mono", monospace';
       let piStatusInfo = null;
       let cloudStreamState = "IDLE";
+      const OLLAMA_DEFAULT_OPTIONS = Object.freeze({
+        temperature: 0.3,
+        topP: 0.75,
+        topK: 40,
+        repeatPenalty: 1.1,
+        repeatLastN: 256,
+        numPredict: 2048,
+        numCtx: 32768,
+        seed: -1,
+        stop: [],
+      });
+      const OLLAMA_LEGACY_DEFAULT_OPTIONS = Object.freeze({
+        temperature: 0.3,
+        topP: 0.6,
+        topK: 20,
+        repeatPenalty: 1.15,
+        repeatLastN: 128,
+        numPredict: 320,
+        numCtx: 32768,
+        seed: 42,
+        stop: [],
+      });
       const CLOUD_DEFAULT_MODELS = {
         openai: "gpt-5",
         anthropic: "claude-sonnet-4-20250514",
@@ -3841,17 +3885,7 @@
           mistral: "MISTRAL_API_KEY",
         },
       };
-      let ollamaOptions = {
-        temperature: 0.3,
-        topP: 0.6,
-        topK: 20,
-        repeatPenalty: 1.15,
-        repeatLastN: 128,
-        numPredict: 320,
-        numCtx: 32768,
-        seed: 42,
-        stop: [],
-      };
+      let ollamaOptions = { ...OLLAMA_DEFAULT_OPTIONS };
       let librarySettings = {
         enabled: false,
         limit: 5,
@@ -3884,7 +3918,7 @@
         search: {
           keywordEnabled: false,
           defaultLimit: 5,
-          maxLimit: 20,
+          maxLimit: 50,
           maxContextChars: 12000,
         },
         embedding: {
@@ -3892,7 +3926,8 @@
           model: "nomic-embed-text-v2-moe:latest",
           ollamaBaseUrl: "http://127.0.0.1:11434",
           batchSize: 16,
-          dimensions: 256,
+          dimensions: 0,
+          quantization: "int8",
           sqliteVecExtensionPath: "",
         },
         chatIntegration: { ...librarySettings },
@@ -3989,7 +4024,8 @@
         `Always respond in the language the user speaks to you in.`,
         `### SKILLS & TOOL USAGE
 You have access to external tools (skills) to fetch real-time information or perform actions.
-You MUST use these tools whenever a user asks for information outside your immediate memory, asks you to perform a calculation, or explicitly requests a search.
+Use these tools when the user explicitly asks for a skill, web lookup, recent/current information, calculation, or external action.
+If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not call tools unless the database passages are insufficient or the user explicitly requested a specific tool.
 
 `,
       ];
@@ -4194,8 +4230,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       );
       const promptManageGroup = document.getElementById("promptManageGroup");
       const piSettingsGroup = document.getElementById("piSettingsGroup");
-      const cloudSettingsGroup =
-        document.getElementById("cloudSettingsGroup");
+      const cloudSettingsGroup = document.getElementById("cloudSettingsGroup");
       const piPermissionBtn = document.getElementById("piPermissionBtn");
       const fileInput = document.getElementById("fileInput");
       const fileLabel = document.getElementById("fileLabel");
@@ -4315,17 +4350,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           : localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
         cloudPalette = useServer
           ? palettes.cloud || "calmblue"
-          : localStorage.getItem("ollama-pi-chat-cloud-palette") ||
-            "calmblue";
+          : localStorage.getItem("ollama-pi-chat-cloud-palette") || "calmblue";
         ollamaFont = normalizeFontStack(
           useServer
             ? fonts.ollama
             : localStorage.getItem("ollama-pi-chat-ollama-font"),
         );
         piFont = normalizeFontStack(
-          useServer
-            ? fonts.pi
-            : localStorage.getItem("ollama-pi-chat-pi-font"),
+          useServer ? fonts.pi : localStorage.getItem("ollama-pi-chat-pi-font"),
         );
         cloudFont = normalizeFontStack(
           useServer
@@ -4410,16 +4442,61 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 .filter(Boolean)
             : [];
         return {
-          temperature: clampFloat(source.temperature, 0.3, 0, 2),
-          topP: clampFloat(source.topP, 0.6, 0, 1),
-          topK: clampInteger(source.topK, 20, 1, 1000),
-          repeatPenalty: clampFloat(source.repeatPenalty, 1.15, 0, 2),
-          repeatLastN: clampInteger(source.repeatLastN, 128, -1, 131072),
-          numPredict: clampInteger(source.numPredict, 320, -1, 200000),
-          numCtx: clampInteger(source.numCtx, 32768, 256, 131072),
-          seed: clampInteger(source.seed, 42, -2147483648, 2147483647),
+          temperature: clampFloat(
+            source.temperature,
+            OLLAMA_DEFAULT_OPTIONS.temperature,
+            0,
+            2,
+          ),
+          topP: clampFloat(source.topP, OLLAMA_DEFAULT_OPTIONS.topP, 0, 1),
+          topK: clampInteger(source.topK, OLLAMA_DEFAULT_OPTIONS.topK, 1, 1000),
+          repeatPenalty: clampFloat(
+            source.repeatPenalty,
+            OLLAMA_DEFAULT_OPTIONS.repeatPenalty,
+            0,
+            2,
+          ),
+          repeatLastN: clampInteger(
+            source.repeatLastN,
+            OLLAMA_DEFAULT_OPTIONS.repeatLastN,
+            -1,
+            131072,
+          ),
+          numPredict: clampInteger(
+            source.numPredict,
+            OLLAMA_DEFAULT_OPTIONS.numPredict,
+            -1,
+            200000,
+          ),
+          numCtx: clampInteger(
+            source.numCtx,
+            OLLAMA_DEFAULT_OPTIONS.numCtx,
+            256,
+            131072,
+          ),
+          seed: clampInteger(
+            source.seed,
+            OLLAMA_DEFAULT_OPTIONS.seed,
+            -2147483648,
+            2147483647,
+          ),
           stop,
         };
+      }
+
+      function isSameOllamaOptionSet(options, expected) {
+        const normalized = normalizeOllamaOptions(options);
+        return (
+          normalized.temperature === expected.temperature &&
+          normalized.topP === expected.topP &&
+          normalized.topK === expected.topK &&
+          normalized.repeatPenalty === expected.repeatPenalty &&
+          normalized.repeatLastN === expected.repeatLastN &&
+          normalized.numPredict === expected.numPredict &&
+          normalized.numCtx === expected.numCtx &&
+          normalized.seed === expected.seed &&
+          normalized.stop.length === 0
+        );
       }
 
       function loadOllamaOptionsFromStorage() {
@@ -4429,7 +4506,18 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             ollamaOptions = normalizeOllamaOptions(ollamaOptions);
             return;
           }
-          ollamaOptions = normalizeOllamaOptions(JSON.parse(raw));
+          const storedOptions = normalizeOllamaOptions(JSON.parse(raw));
+          if (
+            isSameOllamaOptionSet(storedOptions, OLLAMA_LEGACY_DEFAULT_OPTIONS)
+          ) {
+            ollamaOptions = normalizeOllamaOptions({});
+            localStorage.setItem(
+              OLLAMA_OPTIONS_STORAGE_KEY,
+              JSON.stringify(ollamaOptions),
+            );
+            return;
+          }
+          ollamaOptions = storedOptions;
         } catch (_error) {
           ollamaOptions = normalizeOllamaOptions(ollamaOptions);
         }
@@ -4523,7 +4611,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const source = raw && typeof raw === "object" ? raw : {};
         return {
           enabled: source.enabled === true,
-          limit: clampInteger(source.limit, 5, 1, 20),
+          limit: clampInteger(source.limit, 5, 1, 50),
           maxContextChars: clampInteger(
             source.maxContextChars,
             12000,
@@ -4539,7 +4627,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           ? value
           : String(value || "").split(/[, ]+/);
         const extensions = raw
-          .map((extension) => String(extension || "").trim().toLowerCase())
+          .map((extension) =>
+            String(extension || "")
+              .trim()
+              .toLowerCase(),
+          )
           .filter(Boolean)
           .map((extension) =>
             extension.startsWith(".") ? extension : `.${extension}`,
@@ -4569,6 +4661,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             Number(chunking.maxChars) === 6500);
         const normalizedChunking = usesLegacyChunkDefaults ? {} : chunking;
         const watch = source.watch || {};
+        const quantization = String(
+          embedding.quantization || "int8",
+        ).toLowerCase();
         const sources = Array.isArray(source.sources)
           ? source.sources.map((item, index) => ({
               name: String(item?.name || `Source ${index + 1}`).trim(),
@@ -4615,7 +4710,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           search: {
             keywordEnabled: search.keywordEnabled === true,
             defaultLimit: clampInteger(search.defaultLimit, 5, 1, 50),
-            maxLimit: clampInteger(search.maxLimit, 20, 1, 50),
+            maxLimit: clampInteger(search.maxLimit, 50, 1, 50),
             maxContextChars: clampInteger(
               search.maxContextChars,
               12000,
@@ -4632,7 +4727,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               String(embedding.ollamaBaseUrl || "").trim() ||
               "http://127.0.0.1:11434",
             batchSize: clampInteger(embedding.batchSize, 16, 1, 64),
-            dimensions: clampInteger(embedding.dimensions, 256, 0, 4096),
+            dimensions: clampInteger(embedding.dimensions, 0, 0, 4096),
+            quantization:
+              quantization === "float" || quantization === "float32"
+                ? "float32"
+                : "int8",
             sqliteVecExtensionPath: String(
               embedding.sqliteVecExtensionPath || "",
             ).trim(),
@@ -4658,11 +4757,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
         if (!select) return;
         const models = [
-          ...new Set([
-            "nomic-embed-text-v2-moe:latest",
-            ...availableOllamaModels,
-            currentModel,
-          ].filter(Boolean)),
+          ...new Set(
+            [
+              "nomic-embed-text-v2-moe:latest",
+              ...availableOllamaModels,
+              currentModel,
+            ].filter(Boolean),
+          ),
         ];
         const currentKnown = models.includes(currentModel);
         select.innerHTML = "";
@@ -4678,7 +4779,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         select.appendChild(customOption);
         select.value = currentKnown ? currentModel : "__custom__";
         if (customInput) {
-          customInput.style.display = select.value === "__custom__" ? "" : "none";
+          customInput.style.display =
+            select.value === "__custom__" ? "" : "none";
           customInput.value = currentKnown ? "" : currentModel || "";
         }
         refreshCustomSelectUi(select);
@@ -4806,6 +4908,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const dimensionsInput = document.getElementById(
           "databaseEmbeddingDimensionsInput",
         );
+        const quantizationSelect = document.getElementById(
+          "databaseEmbeddingQuantizationSelect",
+        );
         const defaultLimitInput = document.getElementById(
           "databaseDefaultLimitInput",
         );
@@ -4837,18 +4942,25 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (dimensionsInput) {
           dimensionsInput.value = String(databaseConfig.embedding.dimensions);
         }
+        if (quantizationSelect) {
+          quantizationSelect.value =
+            databaseConfig.embedding.quantization || "int8";
+          refreshCustomSelectUi(quantizationSelect);
+        }
         if (defaultLimitInput) {
           defaultLimitInput.value = String(databaseConfig.search.defaultLimit);
         }
         if (sqliteVecInput) {
-          sqliteVecInput.value = databaseConfig.embedding.sqliteVecExtensionPath;
+          sqliteVecInput.value =
+            databaseConfig.embedding.sqliteVecExtensionPath;
         }
         renderDatabaseSources(databaseConfig.sources);
       }
 
       function collectLibrarySettingsFromForm() {
         return normalizeLibrarySettings({
-          enabled: document.getElementById("librarySearchEnabledInput")?.checked,
+          enabled: document.getElementById("librarySearchEnabledInput")
+            ?.checked,
           limit: document.getElementById("libraryLimitInput")?.value,
           maxContextChars: document.getElementById("libraryMaxContextInput")
             ?.value,
@@ -4867,9 +4979,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               row.querySelector(".database-source-name")?.value.trim() ||
               `Source ${index + 1}`,
             type:
-              row.querySelector(".database-source-type")?.value ||
-              "document",
-            path: row.querySelector(".database-source-path")?.value.trim() || "",
+              row.querySelector(".database-source-type")?.value || "document",
+            path:
+              row.querySelector(".database-source-path")?.value.trim() || "",
             extensions: normalizeSourceExtensionsInput(
               row.querySelector(".database-source-extensions")?.value || "",
             ),
@@ -4894,6 +5006,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function collectDatabaseConfigFromForm() {
         const current = normalizeDatabaseConfig(databaseConfig);
+        const requestedDefaultLimit = clampInteger(
+          document.getElementById("databaseDefaultLimitInput")?.value,
+          current.search.defaultLimit,
+          1,
+          50,
+        );
+        const requestedChatLimit = clampInteger(
+          document.getElementById("libraryLimitInput")?.value,
+          current.chatIntegration.limit,
+          1,
+          50,
+        );
+        const requestedMaxLimit = Math.max(
+          current.search.maxLimit,
+          requestedDefaultLimit,
+          requestedChatLimit,
+        );
         return normalizeDatabaseConfig({
           ...current,
           databasePath:
@@ -4902,10 +5031,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           sources: collectDatabaseSourcesFromForm(),
           search: {
             ...current.search,
-            keywordEnabled: document.getElementById("databaseKeywordEnabledInput")
-              ?.checked,
-            defaultLimit: document.getElementById("databaseDefaultLimitInput")
-              ?.value,
+            keywordEnabled: document.getElementById(
+              "databaseKeywordEnabledInput",
+            )?.checked,
+            defaultLimit: requestedDefaultLimit,
+            maxLimit: requestedMaxLimit,
             maxContextChars: document.getElementById("libraryMaxContextInput")
               ?.value,
           },
@@ -4922,6 +5052,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             dimensions: document.getElementById(
               "databaseEmbeddingDimensionsInput",
             )?.value,
+            quantization:
+              document.getElementById("databaseEmbeddingQuantizationSelect")
+                ?.value ||
+              current.embedding.quantization ||
+              "int8",
             sqliteVecExtensionPath:
               document.getElementById("databaseSqliteVecPathInput")?.value ||
               "",
@@ -4944,8 +5079,62 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         renderDatabaseConfigForm();
       }
 
+      function describeDatabaseIndexSettingChanges(previous, next) {
+        const changes = [];
+        const prev = normalizeDatabaseConfig(previous);
+        const curr = normalizeDatabaseConfig(next);
+        if (prev.search.keywordEnabled !== curr.search.keywordEnabled) {
+          changes.push(
+            curr.search.keywordEnabled
+              ? "Keyword FTS will be built from existing passages. This can take time and increase database size, but it should not delete EPUB/chunk progress."
+              : "Keyword FTS will be removed. Semantic vectors and extracted passages should remain intact.",
+          );
+        }
+        if (
+          prev.embedding.enabled !== curr.embedding.enabled ||
+          prev.embedding.model !== curr.embedding.model ||
+          Number(prev.embedding.dimensions || 0) !==
+            Number(curr.embedding.dimensions || 0) ||
+          prev.embedding.quantization !== curr.embedding.quantization ||
+          prev.embedding.sqliteVecExtensionPath !==
+            curr.embedding.sqliteVecExtensionPath
+        ) {
+          changes.push(
+            "Vector settings changed. Existing passages should remain, but vector rows may need to be rebuilt or retried.",
+          );
+        }
+        if (
+          prev.chunking.targetChars !== curr.chunking.targetChars ||
+          prev.chunking.overlapChars !== curr.chunking.overlapChars ||
+          prev.chunking.minChars !== curr.chunking.minChars ||
+          prev.chunking.maxChars !== curr.chunking.maxChars
+        ) {
+          changes.push(
+            "Chunking changed. This requires re-extracting and rebuilding affected document passages.",
+          );
+        }
+        return changes;
+      }
+
       async function saveLibrarySettingsFromForm() {
-        databaseConfig = collectDatabaseConfigFromForm();
+        const previousConfig = normalizeDatabaseConfig(databaseConfig);
+        const nextConfig = collectDatabaseConfigFromForm();
+        const indexChanges = describeDatabaseIndexSettingChanges(
+          previousConfig,
+          nextConfig,
+        );
+        if (indexChanges.length) {
+          const ok = window.confirm(
+            `Database index setting changes:\n\n${indexChanges.join(
+              "\n\n",
+            )}\n\nContinue saving these settings?`,
+          );
+          if (!ok) {
+            renderDatabaseConfigForm();
+            return false;
+          }
+        }
+        databaseConfig = nextConfig;
         librarySettings = databaseConfig.chatIntegration;
         renderDatabaseConfigForm();
         try {
@@ -4996,7 +5185,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           ? status.sources.filter((source) => source.exists).length
           : 0;
         const vectorLabel = status.embedding?.sqliteVecConfigured
-          ? "sqlite-vec on"
+          ? `sqlite-vec ${status.embedding?.quantization || "int8"}`
           : status.embedding?.enabled
             ? "semantic waiting"
             : status.search?.keywordEnabled
@@ -5008,7 +5197,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             : `no extensions | ${basenameFromPath(status.sqlitePath)}`
           : "not available";
 
-        setElementText("libraryStatusFilesValue", formatMetricNumber(status.files));
+        setElementText(
+          "libraryStatusFilesValue",
+          formatMetricNumber(status.files),
+        );
         setElementText(
           "libraryStatusPassagesValue",
           formatMetricNumber(status.chunks),
@@ -5022,10 +5214,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           formatMetricNumber(sourceCount),
         );
         setElementText("libraryStatusVectorValue", vectorLabel);
-        setElementText(
-          "libraryStatusDimsValue",
-          formatMetricNumber(status.embedding?.dimensions || 0),
-        );
+        const configuredDims = Number(status.embedding?.dimensions || 0);
+        const storedDims = Number(status.embedding?.storedDimensions || 0);
+        const dimsLabel = configuredDims
+          ? formatMetricNumber(configuredDims)
+          : storedDims
+            ? `native | ${formatMetricNumber(storedDims)} stored`
+            : "native";
+        setElementText("libraryStatusDimsValue", dimsLabel);
         setElementText(
           "libraryStatusModelValue",
           status.embedding?.model || "no embedding model",
@@ -5054,7 +5250,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       async function exportIndexedFiles() {
         const statusEl = document.getElementById("libraryStatusText");
-        const exportStatusEl = document.getElementById("libraryExportStatusText");
+        const exportStatusEl = document.getElementById(
+          "libraryExportStatusText",
+        );
         const exportActions = document.getElementById("libraryExportActions");
         const button = document.getElementById("exportIndexedFilesBtn");
         if (statusEl) statusEl.textContent = "Exporting indexed EPUB list...";
@@ -5191,6 +5389,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "embedding-preflight": "Checking embeddings",
           resuming: "Resuming",
           indexing: "Indexing",
+          "keyword-indexing": "Keyword index",
           embedding: "Embedding",
           pruning: "Pruning removed files",
           compacting: "Compacting database",
@@ -5204,12 +5403,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function basenameFromPath(filePath) {
-        return String(filePath || "").split(/[\\/]/).filter(Boolean).pop() || "";
+        return (
+          String(filePath || "")
+            .split(/[\\/]/)
+            .filter(Boolean)
+            .pop() || ""
+        );
       }
 
       function setLibraryIndexProgress(percent, text) {
         const fill = document.getElementById("libraryIndexProgressFill");
-        const progressText = document.getElementById("libraryIndexProgressText");
+        const progressText = document.getElementById(
+          "libraryIndexProgressText",
+        );
         const safePercent = Math.max(
           0,
           Math.min(100, Number.isFinite(Number(percent)) ? Number(percent) : 0),
@@ -5220,7 +5426,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function setLibraryIndexButtons(running) {
         const runButton = document.getElementById("runLibraryIndexBtn");
-        const retryButton = document.getElementById("retryLibraryEmbeddingsBtn");
+        const retryButton = document.getElementById(
+          "retryLibraryEmbeddingsBtn",
+        );
         const forceButton = document.getElementById("forceLibraryReindexBtn");
         const cancelButton = document.getElementById("cancelLibraryIndexBtn");
         if (runButton) runButton.disabled = running;
@@ -5268,8 +5476,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           values.embeddingErrors || "--",
         );
         setElementText("libraryJobSkippedValue", values.skipped || "--");
-        setElementText("libraryJobCurrentFileValue", values.currentFile || "--");
-        setElementText("libraryJobRecentIssuesValue", values.recentIssues || "--");
+        setElementText(
+          "libraryJobCurrentFileValue",
+          values.currentFile || "--",
+        );
+        setElementText(
+          "libraryJobRecentIssuesValue",
+          values.recentIssues || "--",
+        );
       }
 
       function renderLibraryIndexJob(payload) {
@@ -5307,7 +5521,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             Number(chunks || 0) -
               Number(embedded || 0) -
               Number(embeddingErrors || 0) -
-              Number(progress.embeddingsSkipped ?? stats.embeddingsSkipped ?? 0),
+              Number(
+                progress.embeddingsSkipped ?? stats.embeddingsSkipped ?? 0,
+              ),
           );
         const jobErrors =
           progress.errors ??
@@ -5318,10 +5534,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             ? stats.skippedDocuments.length
             : 0);
         const recentIssues =
-          progress.recentErrors ||
-          job.recentErrors ||
-          stats.recentErrors ||
-          [];
+          progress.recentErrors || job.recentErrors || stats.recentErrors || [];
         const skippedUnchanged = progress.skipped ?? stats.skipped ?? 0;
         const phaseText = formatIndexPhase(progress.phase);
         const currentFile = basenameFromPath(progress.currentFile);
@@ -5335,7 +5548,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         renderIndexJobGrid({
           phase: phaseText,
           progress: `${Math.round(percent)}%`,
-          files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+          files: scanned
+            ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}`
+            : "--",
           passages: formatMetricNumber(chunks),
           embeddings: formatMetricNumber(embedded),
           pending: formatMetricNumber(embeddingPending),
@@ -5379,7 +5594,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderIndexJobGrid({
             phase: "Completed",
             progress: "100%",
-            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            files: scanned
+              ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}`
+              : "--",
             passages: formatMetricNumber(stats.chunks || chunks),
             embeddings: formatMetricNumber(stats.embedded || embedded),
             pending: formatMetricNumber(completedPending),
@@ -5397,7 +5614,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderIndexJobGrid({
             phase: "Paused",
             progress: `${Math.round(percent)}%`,
-            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            files: scanned
+              ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}`
+              : "--",
             passages: formatMetricNumber(chunks),
             embeddings: formatMetricNumber(embedded),
             pending: formatMetricNumber(embeddingPending),
@@ -5414,7 +5633,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderIndexJobGrid({
             phase: "Cancelled",
             progress: `${Math.round(percent)}%`,
-            files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+            files: scanned
+              ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}`
+              : "--",
             passages: formatMetricNumber(chunks),
             embeddings: formatMetricNumber(embedded),
             pending: formatMetricNumber(embeddingPending),
@@ -5430,7 +5651,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         renderIndexJobGrid({
           phase: "Failed",
           progress: `${Math.round(percent)}%`,
-          files: scanned ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}` : "--",
+          files: scanned
+            ? `${formatMetricNumber(processed)} / ${formatMetricNumber(scanned)}`
+            : "--",
           passages: formatMetricNumber(chunks),
           embeddings: formatMetricNumber(embedded),
           pending: formatMetricNumber(embeddingPending),
@@ -5564,12 +5787,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           cloud: ["settingCloudFontPreset", "settingCloudFontCustom"],
         }[scope];
         if (!ids) return;
-        const presetSelect = document.getElementById(
-          ids[0],
-        );
-        const customInput = document.getElementById(
-          ids[1],
-        );
+        const presetSelect = document.getElementById(ids[0]);
+        const customInput = document.getElementById(ids[1]);
         if (!presetSelect || !customInput) return;
         const presetId = getPresetIdByStack(fontStack);
         presetSelect.value = presetId;
@@ -5643,9 +5862,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function onCloudFontPresetChange(presetId) {
         if (presetId === "custom") {
-          const customInput = document.getElementById(
-            "settingCloudFontCustom",
-          );
+          const customInput = document.getElementById("settingCloudFontCustom");
           customInput.style.display = "";
           customInput.value = cloudFont;
           customInput.focus();
@@ -5834,9 +6051,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         cloudFontGroup.style.display = isCloudMode ? "" : "none";
         promptSettingsGroup.style.display = isOllamaMode ? "" : "none";
         promptManageGroup.style.display = isOllamaMode ? "" : "none";
-        const builtinSkillsGroup = document.getElementById(
-          "builtinSkillsGroup",
-        );
+        const builtinSkillsGroup =
+          document.getElementById("builtinSkillsGroup");
         const customSkillsGroup = document.getElementById("customSkillsGroup");
         if (builtinSkillsGroup) {
           builtinSkillsGroup.style.display = isOllamaMode ? "" : "none";
@@ -6555,23 +6771,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       async function deleteAllHistory() {
-        if (!confirm("Are you sure you want to delete all history?")) return;
-        const res = await fetch(apiUrl("/api/conversations"));
-        const convs = await readJsonResponse(res, "Load conversations");
-        const filteredConvs = convs.filter((conv) => {
-          const convMode = typeof conv.mode === "string" ? conv.mode : "ollama";
-          return convMode === mode;
-        });
-        await Promise.all(
-          filteredConvs.map((conv) =>
-            fetch(
-              apiUrl("/api/conversations/id/" + encodeURIComponent(conv.id)),
-              {
-                method: "DELETE",
-              },
-            ),
-          ),
+        const modeLabel =
+          mode === "pi" ? "Pi" : mode === "cloud" ? "Cloud" : "Ollama";
+        if (!confirm(`Delete all ${modeLabel} history?`)) return;
+        const res = await fetch(
+          apiUrl("/api/conversations/mode/" + encodeURIComponent(mode)),
+          {
+            method: "DELETE",
+          },
         );
+        await readJsonResponse(res, "Delete history");
         loadHistoryPanel();
       }
 
@@ -6981,8 +7190,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const model = document.getElementById("cloudModelInput")?.value || "";
         const baseUrl =
           document.getElementById("cloudBaseUrlInput")?.value || "";
-        const apiKey =
-          document.getElementById("cloudApiKeyInput")?.value || "";
+        const apiKey = document.getElementById("cloudApiKeyInput")?.value || "";
         const maxTokens = clampInteger(
           document.getElementById("cloudMaxTokensInput")?.value,
           2048,
@@ -7531,18 +7739,43 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
 
         if (evt.type === "library_results") {
-          const count = Array.isArray(evt.results) ? evt.results.length : 0;
-          thinking.addTraceLine(`Library search: ${count} passage(s)`);
+          const resultCount = Array.isArray(evt.results)
+            ? evt.results.length
+            : 0;
+          const meta = evt.meta && typeof evt.meta === "object" ? evt.meta : {};
+          const retrieved =
+            typeof meta.retrievedCount === "number"
+              ? meta.retrievedCount
+              : resultCount;
+          const injected =
+            typeof meta.injectedCount === "number"
+              ? meta.injectedCount
+              : resultCount;
+          const uniqueSources =
+            typeof meta.uniqueSourceCount === "number"
+              ? meta.uniqueSourceCount
+              : normalizeLibrarySourceResults(evt.results).length;
+          const contextCap =
+            typeof meta.maxContextChars === "number"
+              ? ` | cap: ${meta.maxContextChars.toLocaleString()} chars`
+              : "";
+          thinking.addTraceLine(
+            `Library search: ${retrieved} retrieved | ${injected} injected | ${uniqueSources} unique source(s)${contextCap}`,
+          );
           return;
         }
 
         if (evt.type === "library_error") {
-          thinking.addTraceLine(`Library search error: ${evt.error || "unknown"}`);
+          thinking.addTraceLine(
+            `Library search error: ${evt.error || "unknown"}`,
+          );
           return;
         }
 
         if (evt.type === "slash_command") {
-          thinking.addTraceLine(`Command: ${evt.label || evt.command || "slash"}`);
+          thinking.addTraceLine(
+            `Command: ${evt.label || evt.command || "slash"}`,
+          );
           return;
         }
 
@@ -8017,7 +8250,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             history.push({ role: "user", content: messageToSend });
             history.push(
-              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+              buildAssistantHistoryMessage(
+                response,
+                activeLibrarySources.results,
+              ),
             );
             lastExchangePersisted = true;
           } else {
@@ -8074,7 +8310,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             history.push({ role: "user", content: messageToSend });
             history.push(
-              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+              buildAssistantHistoryMessage(
+                response,
+                activeLibrarySources.results,
+              ),
             );
             lastExchangePersisted = true;
           }
@@ -8276,7 +8515,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             history.push({ role: "user", content: messageToSend });
             history.push(
-              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+              buildAssistantHistoryMessage(
+                response,
+                activeLibrarySources.results,
+              ),
             );
             lastExchangePersisted = true;
           } else {
@@ -8333,7 +8575,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             history.push({ role: "user", content: messageToSend });
             history.push(
-              buildAssistantHistoryMessage(response, activeLibrarySources.results),
+              buildAssistantHistoryMessage(
+                response,
+                activeLibrarySources.results,
+              ),
             );
             lastExchangePersisted = true;
           }
@@ -8608,7 +8853,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         const settingsBody = document.getElementById("settingsBody");
         const settingsFooter = document.querySelector(".settings-footer");
-        if (settingsBody && settingsFooter) settingsBody.appendChild(settingsFooter);
+        if (settingsBody && settingsFooter)
+          settingsBody.appendChild(settingsFooter);
       }
 
       function switchSettingsTab(tabName) {
@@ -8636,7 +8882,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           );
           if (tab) tab.style.display = isOllamaMode ? "" : "none";
         });
-        if (!isOllamaMode && ["prompts", "skills"].includes(activeSettingsTab)) {
+        if (
+          !isOllamaMode &&
+          ["prompts", "skills"].includes(activeSettingsTab)
+        ) {
           switchSettingsTab("main");
         }
       }
@@ -9074,9 +9323,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             e.target.tagName !== "BUTTON"
           ) {
             saveOllamaOptionsFromForm();
-          } else if (
-            e.target.id === "databaseEmbeddingModelSelect"
-          ) {
+          } else if (e.target.id === "databaseEmbeddingModelSelect") {
             const customInput = document.getElementById(
               "databaseEmbeddingModelCustomInput",
             );

@@ -276,7 +276,8 @@ test("frontend boots without network fetch crashes", async () => {
     "settingsTabMain",
   );
   assert.strictEqual(
-    dom.window.document.getElementById("databaseSettingsGroup").parentElement.id,
+    dom.window.document.getElementById("databaseSettingsGroup").parentElement
+      .id,
     "settingsTabDatabase",
   );
   assert.strictEqual(
@@ -288,13 +289,42 @@ test("frontend boots without network fetch crashes", async () => {
     "settingsTabSkills",
   );
   assert.strictEqual(
-    dom.window.document.querySelectorAll("#databaseSourcesList .database-source-row")
-      .length,
+    dom.window.document.querySelectorAll(
+      "#databaseSourcesList .database-source-row",
+    ).length,
     1,
   );
   assert.strictEqual(
     dom.window.document.getElementById("btnOllama").textContent.trim(),
     "",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaTemperatureInput").value,
+    "0.3",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaTopPInput").value,
+    "0.75",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaTopKInput").value,
+    "40",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaNumPredictInput").value,
+    "2048",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaSeedInput").value,
+    "-1",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaRepeatPenaltyInput").value,
+    "1.1",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("ollamaRepeatLastNInput").value,
+    "256",
   );
 });
 
