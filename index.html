@@ -1214,6 +1214,105 @@
         transition: color 0.2s;
       }
 
+      .app-dialog-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        background: rgba(0, 0, 0, 0.72);
+      }
+
+      .app-dialog-overlay.open {
+        display: flex;
+      }
+
+      .app-dialog {
+        width: min(560px, 100%);
+        max-height: min(78vh, 620px);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+        background: var(--bg-primary);
+        color: var(--text-normal);
+        border: 3px solid var(--border-color);
+        box-shadow: 8px 8px 0 0 var(--border-color);
+      }
+
+      .app-dialog-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .app-dialog-message {
+        max-height: 340px;
+        overflow: auto;
+        padding: 10px;
+        background: var(--bg-secondary);
+        border: var(--border-width) solid var(--border-color);
+        color: var(--text-normal);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.45;
+        font-size: 12px;
+      }
+
+      .app-dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .app-dialog-btn {
+        min-width: 96px;
+        padding: 8px 12px;
+        background: var(--bg-primary);
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        box-shadow: 3px 3px 0 0 var(--border-color);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .app-dialog-btn:hover,
+      .app-dialog-btn:focus-visible {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+        outline: none;
+      }
+
+      .app-dialog-btn.primary {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+      }
+
+      .app-dialog-btn.primary:hover,
+      .app-dialog-btn.primary:focus-visible {
+        background: var(--accent);
+        color: var(--text-normal);
+      }
+
+      .app-dialog-btn.danger {
+        border-color: #ff4444;
+        color: #ff4444;
+        box-shadow: 3px 3px 0 0 #ff4444;
+      }
+
+      .app-dialog-btn.danger:hover,
+      .app-dialog-btn.danger:focus-visible {
+        background: #ff4444;
+        color: #fff;
+      }
+
       /* CHAT */
       #chatWrap {
         flex: 1;
@@ -3698,6 +3797,34 @@
       </div>
     </div>
     <div
+      id="appDialogModal"
+      class="app-dialog-overlay"
+      aria-hidden="true"
+    >
+      <div
+        class="app-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="appDialogTitle"
+        aria-describedby="appDialogMessage"
+      >
+        <h2 id="appDialogTitle" class="app-dialog-title">Notice</h2>
+        <div id="appDialogMessage" class="app-dialog-message"></div>
+        <div class="app-dialog-actions">
+          <button id="appDialogCancelBtn" class="app-dialog-btn" type="button">
+            CANCEL
+          </button>
+          <button
+            id="appDialogConfirmBtn"
+            class="app-dialog-btn primary"
+            type="button"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>
+    <div
       id="piPermissionModal"
       style="
         display: none;
@@ -3947,6 +4074,8 @@
       let activePiPermissionRequest = null;
       let activePiPermissionResolver = null;
       let activePiPermissionTimer = null;
+      let activeAppDialogResolver = null;
+      let appDialogPreviousFocus = null;
       let piSettings = {
         commandPath: "",
         workingDirectory: "",
@@ -4273,6 +4402,95 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         });
         return readJsonResponse(res, contextLabel);
       }
+
+      function closeAppDialog(result) {
+        const modal = document.getElementById("appDialogModal");
+        const resolver = activeAppDialogResolver;
+        activeAppDialogResolver = null;
+        if (modal) {
+          modal.classList.remove("open");
+          modal.setAttribute("aria-hidden", "true");
+        }
+        if (
+          appDialogPreviousFocus &&
+          typeof appDialogPreviousFocus.focus === "function"
+        ) {
+          appDialogPreviousFocus.focus();
+        }
+        appDialogPreviousFocus = null;
+        if (typeof resolver === "function") resolver(result);
+      }
+
+      function showAppDialog(options = {}) {
+        const modal = document.getElementById("appDialogModal");
+        const titleEl = document.getElementById("appDialogTitle");
+        const messageEl = document.getElementById("appDialogMessage");
+        const cancelBtn = document.getElementById("appDialogCancelBtn");
+        const confirmBtn = document.getElementById("appDialogConfirmBtn");
+        if (!modal || !titleEl || !messageEl || !cancelBtn || !confirmBtn) {
+          return Promise.resolve(true);
+        }
+
+        if (activeAppDialogResolver) closeAppDialog(false);
+
+        const showCancel = options.cancelLabel !== false;
+        titleEl.textContent = options.title || "Notice";
+        messageEl.textContent = options.message || "";
+        cancelBtn.textContent = options.cancelLabel || "Cancel";
+        cancelBtn.style.display = showCancel ? "" : "none";
+        confirmBtn.textContent = options.confirmLabel || "OK";
+        confirmBtn.classList.toggle("danger", options.danger === true);
+        appDialogPreviousFocus = document.activeElement;
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+
+        return new Promise((resolve) => {
+          activeAppDialogResolver = resolve;
+          window.setTimeout(() => confirmBtn.focus(), 0);
+        });
+      }
+
+      function appAlert(message, title = "Notice") {
+        return showAppDialog({
+          title,
+          message,
+          confirmLabel: "OK",
+          cancelLabel: false,
+        });
+      }
+
+      function appConfirm(message, title = "Confirm", options = {}) {
+        return showAppDialog({
+          title,
+          message,
+          confirmLabel: options.confirmLabel || "Continue",
+          cancelLabel: options.cancelLabel || "Cancel",
+          danger: options.danger === true,
+        });
+      }
+
+      document
+        .getElementById("appDialogConfirmBtn")
+        ?.addEventListener("click", () => closeAppDialog(true));
+      document
+        .getElementById("appDialogCancelBtn")
+        ?.addEventListener("click", () => closeAppDialog(false));
+      document
+        .getElementById("appDialogModal")
+        ?.addEventListener("click", (event) => {
+          if (event.target === event.currentTarget) closeAppDialog(false);
+        });
+      document.addEventListener("keydown", (event) => {
+        const modal = document.getElementById("appDialogModal");
+        if (
+          event.key === "Escape" &&
+          modal?.classList.contains("open") &&
+          activeAppDialogResolver
+        ) {
+          event.preventDefault();
+          closeAppDialog(false);
+        }
+      });
 
       function forceLinksToNewTab(root) {
         if (!root) return;
@@ -5124,10 +5342,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           nextConfig,
         );
         if (indexChanges.length) {
-          const ok = window.confirm(
+          const ok = await appConfirm(
             `Database index setting changes:\n\n${indexChanges.join(
               "\n\n",
             )}\n\nContinue saving these settings?`,
+            "Database",
+            { confirmLabel: "Save" },
           );
           if (!ok) {
             renderDatabaseConfigForm();
@@ -5150,7 +5370,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           return true;
         } catch (error) {
           console.error("Could not save database settings", error);
-          alert(error.message || "Failed to save database settings.");
+          await appAlert(
+            error.message || "Failed to save database settings.",
+            "Database",
+          );
           return false;
         }
       }
@@ -5287,7 +5510,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             exportStatusEl.style.display = "";
             exportStatusEl.textContent = "Indexed file export failed.";
           }
-          alert(error.message || "Failed to export indexed files.");
+          await appAlert(
+            error.message || "Failed to export indexed files.",
+            "Database",
+          );
         } finally {
           if (button) button.disabled = false;
         }
@@ -5318,7 +5544,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           }
         } catch (error) {
           console.error("Could not copy indexed files export path", error);
-          alert("Could not copy export path.");
+          await appAlert("Could not copy export path.", "Database");
         }
       }
 
@@ -5378,7 +5604,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         } catch (error) {
           console.error("Could not estimate library index", error);
           if (statusEl) statusEl.textContent = "Index estimate unavailable.";
-          alert(error.message || "Failed to estimate index size.");
+          await appAlert(
+            error.message || "Failed to estimate index size.",
+            "Database",
+          );
         } finally {
           if (button) button.disabled = false;
         }
@@ -5697,7 +5926,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           libraryIndexPollTimer = window.setTimeout(pollLibraryIndexJob, 1000);
         } catch (error) {
           console.error("Could not start index job", error);
-          alert(error.message || "Failed to start index job.");
+          await appAlert(
+            error.message || "Failed to start index job.",
+            "Database",
+          );
         }
       }
 
@@ -5717,7 +5949,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           libraryIndexPollTimer = window.setTimeout(pollLibraryIndexJob, 1000);
         } catch (error) {
           console.error("Could not pause index job", error);
-          alert(error.message || "Failed to pause index job.");
+          await appAlert(
+            error.message || "Failed to pause index job.",
+            "Database",
+          );
         }
       }
 
@@ -6773,7 +7008,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       async function deleteAllHistory() {
         const modeLabel =
           mode === "pi" ? "Pi" : mode === "cloud" ? "Cloud" : "Ollama";
-        if (!confirm(`Delete all ${modeLabel} history?`)) return;
+        if (
+          !(await appConfirm(`Delete all ${modeLabel} history?`, "History", {
+            confirmLabel: "Delete",
+            danger: true,
+          }))
+        ) {
+          return;
+        }
         const res = await fetch(
           apiUrl("/api/conversations/mode/" + encodeURIComponent(mode)),
           {
@@ -7238,7 +7480,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderCloudSettingsForm();
         } catch (error) {
           console.error("Could not save Cloud settings", error);
-          alert(error.message || "Failed to save Cloud settings.");
+          await appAlert(
+            error.message || "Failed to save Cloud settings.",
+            "Cloud",
+          );
         }
       }
 
@@ -7407,9 +7652,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       async function resetPiSettingsToDefaults() {
         if (
-          !confirm(
+          !(await appConfirm(
             "Reset all Pi settings to defaults? This will remove custom overrides.",
-          )
+            "Pi Settings",
+            { confirmLabel: "Reset", danger: true },
+          ))
         ) {
           return;
         }
@@ -7423,7 +7670,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderPiSettingsForm();
         } catch (error) {
           console.error("Could not reset Pi settings", error);
-          alert(error.message || "Failed to reset Pi settings.");
+          await appAlert(
+            error.message || "Failed to reset Pi settings.",
+            "Pi Settings",
+          );
         }
       }
 
@@ -7507,7 +7757,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           renderPiSettingsForm();
         } catch (error) {
           console.error("Could not save Pi settings", error);
-          alert(error.message || "Failed to save Pi settings.");
+          await appAlert(
+            error.message || "Failed to save Pi settings.",
+            "Pi Settings",
+          );
         }
       }
 
@@ -7519,7 +7772,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           await readJsonResponse(res, "Open Ollama Pi Chat folder");
         } catch (error) {
           console.error("Could not open Ollama Pi Chat folder", error);
-          alert(error.message || "Failed to open folder.");
+          await appAlert(
+            error.message || "Failed to open folder.",
+            "Pi Settings",
+          );
         }
       }
 
@@ -7539,7 +7795,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           temp.remove();
         } catch (error) {
           console.error("Copy failed", error);
-          alert("Could not copy path to clipboard.");
+          await appAlert("Could not copy path to clipboard.", "Pi Settings");
         }
       }
 
@@ -7950,8 +8206,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const type = document.getElementById("skillType").value;
         const code = document.getElementById("skillCode").value.trim();
 
-        if (!name || !description || !code)
-          return alert("All fields are required.");
+        if (!name || !description || !code) {
+          await appAlert("All fields are required.", "Skills");
+          return;
+        }
 
         customSkills.push({ name, description, type, code });
         try {
@@ -7964,7 +8222,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             closeSkillEditor();
             await loadCustomSkills();
           } else {
-            alert("Failed to save custom skill.");
+            await appAlert("Failed to save custom skill.", "Skills");
           }
         } catch (e) {
           console.error(e);
@@ -7972,7 +8230,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       async function deleteCustomSkill(idx) {
-        if (!confirm("Delete this custom skill?")) return;
+        if (
+          !(await appConfirm("Delete this custom skill?", "Skills", {
+            confirmLabel: "Delete",
+            danger: true,
+          }))
+        ) {
+          return;
+        }
         customSkills.splice(idx, 1);
         try {
           const res = await fetch(apiUrl("/api/custom-skills"), {
@@ -8011,12 +8276,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           await loadPrompts();
         } catch (e) {
           console.error(e);
-          alert("Failed to save prompt");
+          await appAlert("Failed to save prompt.", "Prompts");
         }
       }
 
       async function deletePrompt(id) {
-        if (!confirm("Are you sure you want to delete this prompt?")) return;
+        if (
+          !(await appConfirm(
+            "Are you sure you want to delete this prompt?",
+            "Prompts",
+            { confirmLabel: "Delete", danger: true },
+          ))
+        ) {
+          return;
+        }
         promptsList = promptsList.filter((p) => p.id !== id);
         if (activePromptId === id) {
           activePromptId = "";
@@ -9489,8 +9762,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "clearCloudApiKeyBtn",
         );
         if (btn_clearCloudApiKeyBtn) {
-          btn_clearCloudApiKeyBtn.addEventListener("click", function () {
-            if (!confirm("Clear the saved API key for this Cloud provider?")) {
+          btn_clearCloudApiKeyBtn.addEventListener("click", async function () {
+            if (
+              !(await appConfirm(
+                "Clear the saved API key for this Cloud provider?",
+                "Cloud",
+                { confirmLabel: "Clear", danger: true },
+              ))
+            ) {
               return;
             }
             saveCloudSettingsUi(true);
@@ -9531,7 +9810,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           btn_openIndexedFilesExportBtn.addEventListener("click", function () {
             openIndexedFilesExport().catch((error) => {
               console.error("Could not open indexed file export", error);
-              alert(error.message || "Failed to open export.");
+              appAlert(error.message || "Failed to open export.", "Database");
             });
           });
         }
@@ -9587,8 +9866,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "forceLibraryReindexBtn",
         );
         if (btn_forceLibraryReindexBtn) {
-          btn_forceLibraryReindexBtn.addEventListener("click", function () {
-            if (!confirm("Reindex all configured source files?")) return;
+          btn_forceLibraryReindexBtn.addEventListener("click", async function () {
+            if (
+              !(await appConfirm(
+                "Reindex all configured source files?",
+                "Database",
+                { confirmLabel: "Reindex", danger: true },
+              ))
+            ) {
+              return;
+            }
             startLibraryIndex(true);
           });
         }
