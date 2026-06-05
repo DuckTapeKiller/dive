@@ -1,6 +1,6 @@
 {
   "name": "ollama-pi-chat-desktop",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -12,11 +12,14 @@
     "dev:web": "node server.js",
     "dev:app": "electron .",
     "build:app": "electron-builder --mac dir",
+    "build:mac": "electron-builder --mac dir",
     "build:dmg": "electron-builder --mac dmg",
     "build:arm64": "electron-builder --mac dir --arm64",
     "build:dmg:arm64": "electron-builder --mac dmg --arm64",
     "build:universal": "electron-builder --mac dir --universal",
     "build:dmg:universal": "electron-builder --mac dmg --universal",
+    "build:linux": "electron-builder --linux AppImage deb --x64",
+    "build:win": "electron-builder --win nsis portable --x64",
     "library:index": "node library/indexer.js",
     "library:search": "node library/search.js",
     "library:status": "node library/indexer.js --status",
@@ -78,6 +81,37 @@
     "dmg": {
       "title": "Ollama Pi Chat",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "assets/icons/icon-1024.png",
+      "maintainer": "El Peregrino <el-peregrino@local.invalid>"
+    },
+    "appImage": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   },
   "dependencies": {

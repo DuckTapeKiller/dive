@@ -2,11 +2,12 @@ const http = require("http");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const { app, BrowserWindow, dialog, shell } = require("electron");
 
 let mainWindow = null;
 let localPort = 8080;
+let localServerProcess = null;
 const SERVER_LABEL = "com.ollamapichat.server";
 const USER_ID = String(process.getuid ? process.getuid() : 501);
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
@@ -69,11 +70,14 @@ function resolveNodeBinary() {
   const explicitPath = process.env.PI_CHAT_NODE_PATH;
   if (explicitPath && fs.existsSync(explicitPath)) return explicitPath;
   try {
-    const lookup = spawnSync("/usr/bin/env", ["which", "node"], {
-      encoding: "utf8",
-    });
+    const lookup =
+      process.platform === "win32"
+        ? spawnSync("where", ["node"], { encoding: "utf8" })
+        : spawnSync("/usr/bin/env", ["which", "node"], {
+            encoding: "utf8",
+          });
     if (lookup.status === 0) {
-      const found = (lookup.stdout || "").trim();
+      const found = (lookup.stdout || "").split(/\r?\n/)[0].trim();
       if (found && fs.existsSync(found)) return found;
     }
   } catch (_error) {}
@@ -167,6 +171,13 @@ function syncRuntimeFiles(runtimeDir) {
     },
   );
   copyIfExists(
+    path.join(appRoot, "slash_commands.js"),
+    path.join(runtimeDir, "slash_commands.js"),
+    {
+      required: true,
+    },
+  );
+  copyIfExists(
     path.join(appRoot, "package.json"),
     path.join(runtimeDir, "package.json"),
     {
@@ -200,6 +211,10 @@ function syncRuntimeFiles(runtimeDir) {
       recursive: true,
     },
   );
+  copyIfExists(path.join(appRoot, "library"), path.join(runtimeDir, "library"), {
+    recursive: true,
+    required: true,
+  });
 }
 
 function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
@@ -271,16 +286,57 @@ function installOrRefreshLaunchAgent(serverPort) {
   runLaunchctl(["kickstart", "-k", `gui/${USER_ID}/${SERVER_LABEL}`], false);
 }
 
+function stopLocalServerProcess() {
+  if (!localServerProcess || localServerProcess.killed) return;
+  try {
+    localServerProcess.kill();
+  } catch (_error) {}
+  localServerProcess = null;
+}
+
+function startLocalServerProcess(serverPort) {
+  stopLocalServerProcess();
+
+  const dataDir = app.getPath("userData");
+  const runtimeDir = path.join(dataDir, "runtime");
+  fs.mkdirSync(dataDir, { recursive: true });
+  syncRuntimeFiles(runtimeDir);
+
+  const env = {
+    ...process.env,
+    PORT: String(serverPort),
+    ELECTRON_RUN_AS_NODE: "1",
+  };
+  const command = process.execPath;
+  const serverPath = path.join(runtimeDir, "server.js");
+
+  localServerProcess = spawn(command, [serverPath], {
+    cwd: runtimeDir,
+    env,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  localServerProcess.unref();
+}
+
 async function bootLocalServer() {
   const configuredPort = readConfiguredServerPort();
-  installOrRefreshLaunchAgent(configuredPort);
+  if (process.platform === "darwin") {
+    installOrRefreshLaunchAgent(configuredPort);
+  } else {
+    startLocalServerProcess(configuredPort);
+  }
 
   try {
-    await waitForServer(configuredPort, 6000);
+    await waitForServer(
+      configuredPort,
+      process.platform === "darwin" ? 6000 : 15000,
+    );
     localPort = configuredPort;
     return;
   } catch (_error) {}
 
+  stopLocalServerProcess();
   localPort = configuredPort;
   process.env.PORT = String(localPort);
   require(path.join(app.getAppPath(), "server.js"));
@@ -361,6 +417,11 @@ if (!singleLock) {
   });
 
   app.on("window-all-closed", () => {
+    stopLocalServerProcess();
     app.quit();
+  });
+
+  app.on("before-quit", () => {
+    stopLocalServerProcess();
   });
 }

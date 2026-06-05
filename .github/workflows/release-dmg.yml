@@ -1,4 +1,4 @@
-name: Build macOS DMG
+name: Build desktop releases
 
 on:
   push:
@@ -10,8 +10,33 @@ permissions:
   contents: write
 
 jobs:
-  build-dmg:
-    runs-on: macos-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            os: macos-latest
+            command: npx electron-builder --mac dmg --x64 --arm64 --publish never
+            files: |
+              release/*.dmg
+              release/*.dmg.blockmap
+          - platform: Windows
+            os: windows-latest
+            command: npx electron-builder --win nsis portable --x64 --publish never
+            files: |
+              release/*.exe
+              release/*.exe.blockmap
+              release/*.yml
+          - platform: Linux
+            os: ubuntu-latest
+            command: npx electron-builder --linux AppImage deb --x64 --publish never
+            files: |
+              release/*.AppImage
+              release/*.AppImage.blockmap
+              release/*.deb
 
     steps:
       - uses: actions/checkout@v4
@@ -21,12 +46,15 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+
       - run: npm ci
-      - run: npx electron-builder --mac dmg --x64 --arm64 --publish never
+      - run: ${{ matrix.command }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.2
         with:
-          files: |
-            release/*.dmg
-            release/*.dmg.blockmap
+          overwrite_files: true
+          files: ${{ matrix.files }}

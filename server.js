@@ -126,13 +126,14 @@ const PI_MAX_TRACE_BUFFER_CHARS = 50000;
 const PI_DEFAULT_SERVER_PORT = 8080;
 const PI_MIN_SERVER_PORT = 1024;
 const PI_MAX_SERVER_PORT = 65535;
-const COMMON_BINARY_DIRS = [
-  "/opt/homebrew/bin",
-  "/usr/local/bin",
-  "/usr/bin",
-  "/bin",
-];
-const PI_COMMAND_CANDIDATES = ["/opt/homebrew/bin/pi", "/usr/local/bin/pi"];
+const COMMON_BINARY_DIRS =
+  process.platform === "win32"
+    ? []
+    : ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+const PI_COMMAND_CANDIDATES =
+  process.platform === "win32"
+    ? ["pi.cmd", "pi.exe", "pi"]
+    : ["/opt/homebrew/bin/pi", "/usr/local/bin/pi", "pi"];
 const VALID_UI_PALETTES = new Set([
   "orange",
   "grey",
@@ -1888,11 +1889,11 @@ function resumePersistedLibraryIndexJob() {
 
 function buildExecutablePath(basePath = "") {
   const baseEntries = String(basePath)
-    .split(":")
+    .split(path.delimiter)
     .map((item) => item.trim())
     .filter(Boolean);
   const merged = [...baseEntries, ...COMMON_BINARY_DIRS];
-  return Array.from(new Set(merged)).join(":");
+  return Array.from(new Set(merged)).join(path.delimiter);
 }
 
 function isExecutableFile(filePath) {
@@ -1913,19 +1914,55 @@ function getPiCommand() {
   }
 
   try {
-    const lookup = spawnSync("/usr/bin/env", ["which", "pi"], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: buildExecutablePath(process.env.PATH || ""),
-      },
-    });
+    const lookup =
+      process.platform === "win32"
+        ? spawnSync("where", ["pi"], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: buildExecutablePath(process.env.PATH || ""),
+            },
+          })
+        : spawnSync("/usr/bin/env", ["which", "pi"], {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              PATH: buildExecutablePath(process.env.PATH || ""),
+            },
+          });
     if (lookup.status === 0) {
-      const found = (lookup.stdout || "").trim();
+      const found = (lookup.stdout || "").split(/\r?\n/)[0].trim();
       if (found) return found;
     }
   } catch (_error) {}
   return "pi"; // Fallback to PATH
+}
+
+function openPathInFileManager(targetPath, options = {}, callback = () => {}) {
+  const normalizedPath = path.resolve(targetPath);
+  const revealFile = options.revealFile === true;
+  const exists = fs.existsSync(normalizedPath);
+  const isFile = exists && fs.statSync(normalizedPath).isFile();
+
+  if (process.platform === "darwin") {
+    const args =
+      revealFile && isFile ? ["-R", normalizedPath] : [normalizedPath];
+    execFile("open", args, callback);
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const args =
+      revealFile && isFile
+        ? [`/select,${normalizedPath}`]
+        : [exists ? normalizedPath : path.dirname(normalizedPath)];
+    execFile("explorer.exe", args, callback);
+    return;
+  }
+
+  const directory =
+    revealFile && isFile ? path.dirname(normalizedPath) : normalizedPath;
+  execFile("xdg-open", [directory], callback);
 }
 
 const PI_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
@@ -2933,10 +2970,10 @@ const server = http.createServer(async (req, res) => {
     req.method === "POST" &&
     urlPath === "/api/library/export-indexed-files/open"
   ) {
-    const args = fs.existsSync(LIBRARY_INDEXED_FILES_EXPORT_FILE)
-      ? ["-R", LIBRARY_INDEXED_FILES_EXPORT_FILE]
-      : [DATA_DIR];
-    execFile("open", args, (error) => {
+    const targetPath = fs.existsSync(LIBRARY_INDEXED_FILES_EXPORT_FILE)
+      ? LIBRARY_INDEXED_FILES_EXPORT_FILE
+      : DATA_DIR;
+    openPathInFileManager(targetPath, { revealFile: true }, (error) => {
       if (error) {
         send(500, { error: `Failed to open export folder: ${error.message}` });
         return;
@@ -3051,7 +3088,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && urlPath === "/api/pi/open-project-folder") {
-    execFile("open", [__dirname], (error) => {
+    openPathInFileManager(__dirname, {}, (error) => {
       if (error) {
         send(500, {
           error: `Failed to open project folder: ${error.message}`,

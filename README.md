@@ -102,18 +102,18 @@ https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
 
 ## Requirements & Downloads
 
-To run this application locally, you will need a few simple components installed on your Mac:
+To run this application locally, you will need a few simple components installed on your computer:
 
 1. **Node.js (Version 20+)**: The engine that hosts the local server. Download the "LTS" version from the official [Node.js Website](https://nodejs.org).
 2. **Ollama**: The application that manages and runs AI models. Download it from the [Ollama Website](https://ollama.com).
-   - Once installed, open your Mac Terminal application and download a model by running:
+   - Once installed, open your terminal application and download a model by running:
      ```bash
      ollama run llama3
      ```
 3. **Pi CLI (Only required for Pi Mode)**: The agent execution engine. Make sure the `pi` command is installed and accessible in your environment PATH.
 4. **Cloud Provider API Key (Only required for Cloud Mode)**: Bring an API key from OpenAI, Anthropic, or Mistral if you want to use hosted models.
 5. **SQLite (Optional - for Local Library Research)**: Keyword database search works with normal SQLite. Semantic vector search requires a SQLite build that can load extensions, the sqlite-vec extension, and a local Ollama embedding model. Apple `/usr/bin/sqlite3` cannot load sqlite-vec because it is built with `OMIT_LOAD_EXTENSION`; install Homebrew SQLite for semantic search.
-6. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install it via Homebrew:
+6. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install `poppler`. On macOS with Homebrew:
    ```bash
    brew install poppler
    ```
@@ -128,7 +128,7 @@ Depending on your technical comfort level, select one of the following methods t
 
 ### Path A: The Simple Startup (Great for Regular Users)
 
-1. Open your Mac **Terminal** application (found in Applications > Utilities).
+1. Open your terminal application.
 2. Navigate to the folder where you unpacked this project:
    ```bash
    cd "/path/to/ollama-pi-chat"
@@ -146,23 +146,43 @@ Depending on your technical comfort level, select one of the following methods t
 
 ---
 
-### Path B: Install as a macOS Desktop App (`.app`)
+### Path B: Build a Desktop App
 
-If you want a native, clickable Mac app icon in your Dock that behaves like any other program:
+If you want a native desktop app or installer:
 
 1. Open terminal in the project directory and install the necessary helper modules:
    ```bash
    cd "/path/to/ollama-pi-chat"
    npm install
    ```
-2. Build the application wrapper:
+2. Build for your platform:
+
+   macOS app folder:
    ```bash
    npm run build:app
    ```
-3. Open the newly created `release` folder:
-   - You will find `Ollama Pi Chat.app` inside. You can drag this to your Mac's `Applications` folder!
-   - _Note: Since this build is local and unsigned by Apple Developer credentials, the first time you run it, macOS Gatekeeper may warn you. Right-click the app icon and select "Open" to bypass this validation._
-4. The Desktop app will automatically launch its server in the background and open the user interface.
+
+   macOS DMG:
+   ```bash
+   npm run build:dmg
+   ```
+
+   Windows installer and portable app:
+   ```bash
+   npm run build:win
+   ```
+
+   Linux AppImage and Debian package:
+   ```bash
+   npm run build:linux
+   ```
+
+3. Open the newly created `release` folder and use the package for your operating system.
+   - macOS builds produce `.app` or `.dmg` files.
+   - Windows builds produce setup and portable `.exe` files.
+   - Linux builds produce `.AppImage` and `.deb` files.
+   - These packages are unsigned. macOS Gatekeeper or Windows SmartScreen may warn the first time you open them.
+4. The desktop app automatically launches its local server and opens the user interface.
 
 ---
 

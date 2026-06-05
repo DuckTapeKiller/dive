@@ -466,16 +466,38 @@ function saveLibraryChatSettings(rawSettings) {
 }
 
 function sqliteCandidatePaths() {
-  const candidates = [
-    process.env.SQLITE3_PATH,
-    "/opt/homebrew/opt/sqlite/bin/sqlite3",
-    "/usr/local/opt/sqlite/bin/sqlite3",
-    "/opt/homebrew/bin/sqlite3",
-    "/usr/local/bin/sqlite3",
-    "/usr/bin/sqlite3",
-    "sqlite3",
-  ].filter(Boolean);
+  const platformCandidates =
+    process.platform === "darwin"
+      ? [
+          "/opt/homebrew/opt/sqlite/bin/sqlite3",
+          "/usr/local/opt/sqlite/bin/sqlite3",
+          "/opt/homebrew/bin/sqlite3",
+          "/usr/local/bin/sqlite3",
+          "/usr/bin/sqlite3",
+          "sqlite3",
+        ]
+      : process.platform === "win32"
+        ? ["sqlite3.exe", "sqlite3"]
+        : [
+            "/usr/local/bin/sqlite3",
+            "/usr/bin/sqlite3",
+            "/bin/sqlite3",
+            "sqlite3",
+          ];
+  const candidates = [process.env.SQLITE3_PATH, ...platformCandidates].filter(
+    Boolean,
+  );
   return Array.from(new Set(candidates));
+}
+
+function sqliteInstallHint() {
+  if (process.platform === "darwin") {
+    return "Install Homebrew SQLite or set SQLITE3_PATH to a sqlite3 binary that was not built with OMIT_LOAD_EXTENSION.";
+  }
+  if (process.platform === "win32") {
+    return "Install the SQLite command-line tools for Windows and set SQLITE3_PATH to sqlite3.exe.";
+  }
+  return "Install the sqlite3 package for your Linux distribution or set SQLITE3_PATH to a compatible sqlite3 binary.";
 }
 
 function inspectSqlitePath(candidate) {
@@ -534,12 +556,10 @@ function requireSqlitePath(options = {}) {
   if (!sqlitePath) {
     if (options.requireLoadExtension === true) {
       throw new Error(
-        "Semantic search requires a SQLite binary with loadable extension support. Install Homebrew SQLite or set SQLITE3_PATH to a sqlite3 binary that was not built with OMIT_LOAD_EXTENSION.",
+        `Semantic search requires a SQLite binary with loadable extension support. ${sqliteInstallHint()}`,
       );
     }
-    throw new Error(
-      "sqlite3 was not found. Install SQLite or set SQLITE3_PATH to the sqlite3 binary.",
-    );
+    throw new Error(`sqlite3 was not found. ${sqliteInstallHint()}`);
   }
   return sqlitePath;
 }
@@ -1890,8 +1910,7 @@ async function checkEmbeddingPreflight(config) {
   if (!extensionSqlitePath) {
     return {
       ready: false,
-      error:
-        "Semantic search requires SQLite with loadable extension support. Apple /usr/bin/sqlite3 cannot load sqlite-vec. Install Homebrew SQLite or set SQLITE3_PATH to a compatible sqlite3 binary.",
+      error: `Semantic search requires SQLite with loadable extension support. ${sqliteInstallHint()}`,
     };
   }
   try {
