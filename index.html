@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ollama Pi Chat</title>
+    <title>Dive</title>
     <!-- Markdown Parser and Sanitiser -->
     <script src="/vendor/marked.umd.js"></script>
     <script src="/vendor/purify.min.js"></script>
@@ -274,21 +274,6 @@
         transition:
           background 0.2s,
           border-color 0.2s;
-      }
-      #topbar-title {
-        color: var(--text-inverse);
-        font-weight: 700;
-        font-size: 13px;
-        letter-spacing: 2px;
-        margin-right: 4px;
-        transition: color 0.2s;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-      }
-      #topbar-title svg {
-        display: block;
       }
       .token-counter {
         display: inline-flex;
@@ -1788,25 +1773,6 @@
   <body>
     <div id="windowDragBar" aria-hidden="true"></div>
     <div id="topbar">
-      <span id="topbar-title" aria-label="Ollama Pi Chat">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="lucide lucide-pyramid-icon lucide-pyramid"
-        >
-          <path
-            d="M2.5 16.88a1 1 0 0 1-.32-1.43l9-13.02a1 1 0 0 1 1.64 0l9 13.01a1 1 0 0 1-.32 1.44l-8.51 4.86a2 2 0 0 1-1.98 0Z"
-          />
-          <path d="M12 2v20" />
-        </svg>
-      </span>
       <div class="toggle">
         <button
           id="btnOllama"
@@ -3319,7 +3285,7 @@
                 </div>
               </div>
               <div class="setting-help">
-                Localhost port used by Ollama Pi Chat server and LaunchAgent.
+                Localhost port used by Dive server and LaunchAgent.
               </div>
               <div class="setting-help">
                 Default: 8080. Changes apply after relaunching app/server.
@@ -3495,9 +3461,7 @@
               config from server.
             </div>
             <div id="piRuntimeSummary"></div>
-            <label style="font-size: 10px; margin-top: 2px"
-              >OLLAMA-PI-CHAT FOLDER</label
-            >
+            <label style="font-size: 10px; margin-top: 2px">DIVE DATA FOLDER</label>
             <div id="ollamaPiChatFolderPath"></div>
             <div class="setting-row-inline">
               <button id="refactored_btn_6" class="settings-action-btn">
@@ -3508,8 +3472,7 @@
               </button>
             </div>
             <div class="setting-help">
-              Quick access to the active Ollama Pi Chat project folder shown
-              above.
+              Quick access to the active Dive data folder shown above.
             </div>
           </div>
 
@@ -3529,6 +3492,7 @@
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic Claude</option>
                 <option value="mistral">Mistral</option>
+                <option value="google">Google Gemini</option>
               </select>
             </div>
             <div class="setting-row">
@@ -3772,10 +3736,10 @@
               <div class="about-label">Github</div>
               <div class="about-value">
                 <a
-                  href="https://github.com/DuckTapeKiller/ollama-pi-chat"
+                  href="https://github.com/DuckTapeKiller/dive"
                   target="_blank"
                   rel="noopener noreferrer"
-                  >DuckTapeKiller/ollama-pi-chat</a
+                  >DuckTapeKiller/dive</a
                 >
               </div>
 
@@ -3917,29 +3881,26 @@
     <script>
       let mode = "ollama";
       let history = [];
+      function createModeSession() {
+        return {
+          convId: null,
+          history: [],
+          lastUserMessage: null,
+          lastSentMessage: null,
+          lastExchangePersisted: true,
+          activeAbortController: null,
+          activeRunId: null,
+          draftAssistant: null,
+          streamingAssistantDiv: null,
+          thinkingController: null,
+        };
+      }
+
       // Stores the active session state per mode so switching modes preserves progress
       const modeSession = {
-        ollama: {
-          convId: null,
-          history: [],
-          lastUserMessage: null,
-          lastSentMessage: null,
-          lastExchangePersisted: true,
-        },
-        pi: {
-          convId: null,
-          history: [],
-          lastUserMessage: null,
-          lastSentMessage: null,
-          lastExchangePersisted: true,
-        },
-        cloud: {
-          convId: null,
-          history: [],
-          lastUserMessage: null,
-          lastSentMessage: null,
-          lastExchangePersisted: true,
-        },
+        ollama: createModeSession(),
+        pi: createModeSession(),
+        cloud: createModeSession(),
       };
       let pendingFile = null;
       let lastUserMessage = null;
@@ -3963,9 +3924,15 @@
       let ollamaTokenState = { used: null, total: null };
       let piTokenState = { used: null, total: null };
       let cloudTokenState = { used: null, total: null };
-      let ollamaFont = '"Space Mono", monospace';
-      let piFont = '"Space Mono", monospace';
-      let cloudFont = '"Space Mono", monospace';
+      const DEFAULT_UI_FONTS = Object.freeze({
+        ollama: '"iA Writer Quattro S", serif',
+        pi: "Montserrat, sans-serif",
+        cloud: "Sen, sans-serif",
+      });
+      const LEGACY_DEFAULT_UI_FONT = '"Space Mono", monospace';
+      let ollamaFont = DEFAULT_UI_FONTS.ollama;
+      let piFont = DEFAULT_UI_FONTS.pi;
+      let cloudFont = DEFAULT_UI_FONTS.cloud;
       let piStatusInfo = null;
       let cloudStreamState = "IDLE";
       const OLLAMA_DEFAULT_OPTIONS = Object.freeze({
@@ -3994,22 +3961,30 @@
         openai: "gpt-5",
         anthropic: "claude-sonnet-4-20250514",
         mistral: "mistral-large-latest",
+        google: "gemini-2.5-pro",
       };
       const CLOUD_DEFAULT_BASE_URLS = {
         openai: "https://api.openai.com/v1",
         anthropic: "https://api.anthropic.com/v1",
         mistral: "https://api.mistral.ai/v1",
+        google: "https://generativelanguage.googleapis.com/v1beta/openai",
       };
       let cloudSettings = {
         provider: "openai",
         models: { ...CLOUD_DEFAULT_MODELS },
         baseUrls: { ...CLOUD_DEFAULT_BASE_URLS },
         maxTokens: 2048,
-        hasApiKey: { openai: false, anthropic: false, mistral: false },
+        hasApiKey: {
+          openai: false,
+          anthropic: false,
+          mistral: false,
+          google: false,
+        },
         envKeyNames: {
           openai: "OPENAI_API_KEY",
           anthropic: "ANTHROPIC_API_KEY",
           mistral: "MISTRAL_API_KEY",
+          google: "GEMINI_API_KEY",
         },
       };
       let ollamaOptions = { ...OLLAMA_DEFAULT_OPTIONS };
@@ -4070,7 +4045,6 @@
       let promptsList = [];
       let activePromptId = "";
       let lastExchangePersisted = true;
-      let activeAbortController = null;
       let activePiPermissionRequest = null;
       let activePiPermissionResolver = null;
       let activePiPermissionTimer = null;
@@ -4569,19 +4543,34 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         cloudPalette = useServer
           ? palettes.cloud || "calmblue"
           : localStorage.getItem("ollama-pi-chat-cloud-palette") || "calmblue";
-        ollamaFont = normalizeFontStack(
-          useServer
-            ? fonts.ollama
-            : localStorage.getItem("ollama-pi-chat-ollama-font"),
-        );
-        piFont = normalizeFontStack(
-          useServer ? fonts.pi : localStorage.getItem("ollama-pi-chat-pi-font"),
-        );
-        cloudFont = normalizeFontStack(
-          useServer
-            ? fonts.cloud
-            : localStorage.getItem("ollama-pi-chat-cloud-font"),
-        );
+        const legacyFontsUntouched =
+          normalizeFontStack(fonts.ollama) === LEGACY_DEFAULT_UI_FONT &&
+          normalizeFontStack(fonts.pi) === LEGACY_DEFAULT_UI_FONT &&
+          normalizeFontStack(fonts.cloud) === LEGACY_DEFAULT_UI_FONT;
+        ollamaFont = useServer
+          ? legacyFontsUntouched
+            ? DEFAULT_UI_FONTS.ollama
+            : normalizeFontStack(fonts.ollama || DEFAULT_UI_FONTS.ollama)
+          : normalizeFontStack(
+              localStorage.getItem("ollama-pi-chat-ollama-font") ||
+                DEFAULT_UI_FONTS.ollama,
+            );
+        piFont = useServer
+          ? legacyFontsUntouched
+            ? DEFAULT_UI_FONTS.pi
+            : normalizeFontStack(fonts.pi || DEFAULT_UI_FONTS.pi)
+          : normalizeFontStack(
+              localStorage.getItem("ollama-pi-chat-pi-font") ||
+                DEFAULT_UI_FONTS.pi,
+            );
+        cloudFont = useServer
+          ? legacyFontsUntouched
+            ? DEFAULT_UI_FONTS.cloud
+            : normalizeFontStack(fonts.cloud || DEFAULT_UI_FONTS.cloud)
+          : normalizeFontStack(
+              localStorage.getItem("ollama-pi-chat-cloud-font") ||
+                DEFAULT_UI_FONTS.cloud,
+            );
 
         localStorage.setItem("ollama-pi-chat-ollama-palette", ollamaPalette);
         localStorage.setItem("ollama-pi-chat-pi-palette", piPalette);
@@ -4590,7 +4579,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         localStorage.setItem("ollama-pi-chat-pi-font", piFont);
         localStorage.setItem("ollama-pi-chat-cloud-font", cloudFont);
 
-        if (!useServer) saveUiSettingsSoon();
+        if (!useServer || legacyFontsUntouched) saveUiSettingsSoon();
       }
 
       // THEMES AND PALETTES
@@ -5979,7 +5968,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function normalizeFontStack(fontStack) {
         const trimmed = typeof fontStack === "string" ? fontStack.trim() : "";
-        return trimmed || '"Space Mono", monospace';
+        return trimmed || DEFAULT_UI_FONTS.ollama;
       }
 
       const FONT_PRESETS = [
@@ -6161,6 +6150,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function getCloudProviderLabel(provider) {
         if (provider === "anthropic") return "Claude";
         if (provider === "mistral") return "Mistral";
+        if (provider === "google") return "Google Gemini";
         return "OpenAI";
       }
 
@@ -6230,13 +6220,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function setMode(m) {
         if (!modeSession[m]) m = "ollama";
         // Save current mode session state before switching
-        if (mode && modeSession[mode]) {
-          modeSession[mode].convId = currentConvId;
-          modeSession[mode].history = [...history];
-          modeSession[mode].lastUserMessage = lastUserMessage;
-          modeSession[mode].lastSentMessage = lastSentMessage;
-          modeSession[mode].lastExchangePersisted = lastExchangePersisted;
-        }
+        syncCurrentSessionState();
 
         mode = m;
         const isOllamaMode = m === "ollama";
@@ -6258,16 +6242,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         lastExchangePersisted =
           saved.lastExchangePersisted !== false ? true : false;
 
-        chat.innerHTML = "";
-        // Rebuild chat DOM from saved history
-        if (saved.convId && saved.history.length) {
-          saved.history.forEach((msg) => {
-            if (msg.role === "user" || msg.role === "assistant")
-              addMessage(msg.content, msg.role, {
-                librarySources: getMessageLibrarySources(msg),
-              });
-          });
-        }
+        renderSessionTranscript(saved);
         document.getElementById("btnOllama").className =
           m === "ollama" ? "active" : "";
         document.getElementById("btnPi").className = m === "pi" ? "active" : "";
@@ -6322,6 +6297,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           updateModeStatus();
         }
         updateTokenCounter();
+        updateSendButtonState();
       }
 
       function clearChat() {
@@ -6342,13 +6318,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           cloudStreamState = "IDLE";
         }
         // Wipe the saved session for this mode so switching back doesn't restore it
-        modeSession[mode] = {
-          convId: null,
-          history: [],
-          lastUserMessage: null,
-          lastSentMessage: null,
-          lastExchangePersisted: true,
-        };
+        clearModeSession(mode);
         chat.innerHTML = "";
         history = [];
         currentConvId = null;
@@ -6966,15 +6936,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function loadConversation(conv) {
-        chat.innerHTML = "";
+        const targetMode = modeSession[conv.mode] ? conv.mode : mode;
+        if (targetMode !== mode) {
+          setMode(targetMode);
+        }
         history = conv.history || [];
         currentConvId = conv.id;
-        history.forEach((msg) => {
-          if (msg.role === "user" || msg.role === "assistant")
-            addMessage(msg.content, msg.role, {
-              librarySources: getMessageLibrarySources(msg),
-            });
-        });
+        const session = getActiveModeSession(targetMode);
+        session.convId = conv.id;
+        session.history = [...history];
+        session.lastUserMessage = null;
+        session.lastSentMessage = null;
+        session.lastExchangePersisted = true;
+        session.draftAssistant = null;
+        renderSessionTranscript(session);
         if (typeof updateTokenCounter === "function") updateTokenCounter();
         if (conv.mode === "pi" && conv.piSessionFile) {
           fetch(apiUrl("/api/pi/load-session"), {
@@ -7084,11 +7059,81 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
       }
 
-      function buildAssistantHistoryMessage(content, librarySources) {
+      function buildAssistantHistoryMessage(
+        content,
+        librarySources,
+        metadata = {},
+      ) {
         const message = { role: "assistant", content: content || "" };
         const normalized = normalizeLibrarySourceResults(librarySources);
         if (normalized.length) message.librarySources = normalized;
+        if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
+          message.thinking = metadata.thinking;
+        }
+        if (
+          Array.isArray(metadata.traceLines) &&
+          metadata.traceLines.length
+        ) {
+          message.traceLines = metadata.traceLines;
+        }
+        if (
+          Array.isArray(metadata.traceEvents) &&
+          metadata.traceEvents.length
+        ) {
+          message.traceEvents = metadata.traceEvents;
+        }
+        if (typeof metadata.status === "string" && metadata.status.trim()) {
+          message.status = metadata.status.trim();
+        }
         return message;
+      }
+
+      function cloneAssistantMetadata(metadata = {}) {
+        return {
+          thinking:
+            typeof metadata.thinking === "string" ? metadata.thinking : "",
+          traceLines: Array.isArray(metadata.traceLines)
+            ? [...metadata.traceLines]
+            : [],
+          traceEvents: Array.isArray(metadata.traceEvents)
+            ? metadata.traceEvents.map((evt) =>
+                evt && typeof evt === "object" ? { ...evt } : evt,
+              )
+            : [],
+          status:
+            typeof metadata.status === "string" ? metadata.status : "streaming",
+        };
+      }
+
+      function getAssistantMetadataFromMessage(message) {
+        if (!message || typeof message !== "object") {
+          return cloneAssistantMetadata();
+        }
+        const traceEvents = Array.isArray(message.traceEvents)
+          ? message.traceEvents
+          : [];
+        const derivedTraceLines =
+          Array.isArray(message.traceLines) && message.traceLines.length
+            ? message.traceLines
+            : traceEvents
+                .map((evt) => formatStreamEventTraceLine(evt))
+                .filter(Boolean);
+        return cloneAssistantMetadata({
+          thinking:
+            typeof message.thinking === "string" ? message.thinking : "",
+          traceLines: derivedTraceLines,
+          traceEvents,
+          status: typeof message.status === "string" ? message.status : "done",
+        });
+      }
+
+      function getActiveModeSession(modeName = mode) {
+        if (!modeSession[modeName]) modeSession[modeName] = createModeSession();
+        return modeSession[modeName];
+      }
+
+      function getActiveAbortController(modeName = mode) {
+        return getActiveModeSession(modeName).activeAbortController || null;
       }
 
       function renderLibrarySources(div, sources) {
@@ -7225,7 +7270,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         return div;
       }
 
-      function addThinking() {
+      function addThinking(initialSnapshot = {}) {
         const wrap = document.createElement("div");
         wrap.className = "thinking-wrap";
 
@@ -7266,10 +7311,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         chat.appendChild(wrap);
         chat.scrollTop = chat.scrollHeight;
 
-        let hasReasoning = false;
-        let traceCount = 0;
-        let hasFailure = false;
-        return {
+        let reasoningText =
+          typeof initialSnapshot.thinking === "string"
+            ? initialSnapshot.thinking
+            : "";
+        let traceLines = Array.isArray(initialSnapshot.traceLines)
+          ? [...initialSnapshot.traceLines]
+          : [];
+        let traceEvents = Array.isArray(initialSnapshot.traceEvents)
+          ? [...initialSnapshot.traceEvents]
+          : [];
+        let hasReasoning = Boolean(reasoningText);
+        let traceCount = traceLines.length;
+        let hasFailure =
+          initialSnapshot.status === "error" ||
+          traceLines.some((line) => /^Failure:/i.test(String(line || "")));
+
+        const controller = {
           addReasoningChunk(chunk) {
             if (!chunk) return;
             if (!hasReasoning) {
@@ -7278,13 +7336,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               details.style.display = "block";
               details.open = !!piSettings.streamThinkingExpanded;
             }
-            body.textContent += chunk;
+            reasoningText += chunk;
+            body.textContent = reasoningText;
             chat.scrollTop = chat.scrollHeight;
           },
           addTraceLine(line, opts = {}) {
             if (!line) return;
             traceCount += 1;
             if (opts.failure) hasFailure = true;
+            traceLines.push(String(line));
             debugDetails.style.display = "block";
             debugSummary.textContent = hasFailure
               ? `Execution Trace (${traceCount}, failed)`
@@ -7292,20 +7352,25 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (opts.failure) {
               debugSummary.style.color = "#ff6b6b";
             }
-            debugBody.textContent += `${line}\n`;
-            const traceLimit =
-              Number(piSettings.toolOutputMaxChars) > 0
-                ? Number(piSettings.toolOutputMaxChars)
-                : 12000;
-            if (debugBody.textContent.length > traceLimit) {
-              debugBody.textContent = debugBody.textContent.slice(-traceLimit);
-            }
+            debugBody.textContent = `${traceLines.join("\n")}\n`;
             debugBody.scrollTop = debugBody.scrollHeight;
             chat.scrollTop = chat.scrollHeight;
+          },
+          addEvent(evt) {
+            if (!evt || typeof evt !== "object") return;
+            traceEvents.push({ ...evt });
           },
           markFailure(reason) {
             if (!reason) return;
             this.addTraceLine(`Failure: ${reason}`, { failure: true });
+          },
+          getSnapshot() {
+            return cloneAssistantMetadata({
+              thinking: reasoningText,
+              traceLines,
+              traceEvents,
+              status: hasFailure ? "error" : "streaming",
+            });
           },
           remove() {
             if (wrap.parentElement) wrap.remove();
@@ -7316,7 +7381,154 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           get hadReasoning() {
             return hasReasoning;
           },
+          get hadTrace() {
+            return traceLines.length > 0;
+          },
         };
+        if (hasReasoning) {
+          plain.style.display = "none";
+          details.style.display = "block";
+          details.open = !!piSettings.streamThinkingExpanded;
+          body.textContent = reasoningText;
+        }
+        if (traceLines.length) {
+          debugDetails.style.display = "block";
+          debugSummary.textContent = hasFailure
+            ? `Execution Trace (${traceCount}, failed)`
+            : `Execution Trace (${traceCount})`;
+          if (hasFailure) debugSummary.style.color = "#ff6b6b";
+          debugBody.textContent = `${traceLines.join("\n")}\n`;
+        }
+        return controller;
+      }
+
+      function assistantMetadataHasContent(metadata = {}) {
+        return Boolean(
+          (typeof metadata.thinking === "string" &&
+            metadata.thinking.trim()) ||
+            (Array.isArray(metadata.traceLines) &&
+              metadata.traceLines.length) ||
+            (Array.isArray(metadata.traceEvents) &&
+              metadata.traceEvents.length),
+        );
+      }
+
+      function renderAssistantHistoryMessage(message, session = null) {
+        const metadata = getAssistantMetadataFromMessage(message);
+        if (assistantMetadataHasContent(metadata)) {
+          const thinking = addThinking(metadata);
+          if (session) session.thinkingController = thinking;
+        }
+        const div = addMessage(message.content || "", "assistant", {
+          librarySources: getMessageLibrarySources(message),
+        });
+        if (session) session.streamingAssistantDiv = div;
+        return div;
+      }
+
+      function renderSessionTranscript(session) {
+        chat.innerHTML = "";
+        const activeThinkingSnapshot =
+          session.thinkingController?.getSnapshot?.() || null;
+        session.streamingAssistantDiv = null;
+        session.thinkingController = null;
+        const sessionHistory = Array.isArray(session.history)
+          ? session.history
+          : [];
+        sessionHistory.forEach((msg) => {
+          if (msg.role === "user") {
+            addMessage(msg.content, "user");
+          } else if (msg.role === "assistant") {
+            renderAssistantHistoryMessage(msg);
+          }
+        });
+        if (session.draftAssistant) {
+          if (activeThinkingSnapshot) {
+            const metadata = getAssistantMetadataFromMessage(
+              session.draftAssistant,
+            );
+            session.draftAssistant = buildAssistantHistoryMessage(
+              session.draftAssistant.content || "",
+              getMessageLibrarySources(session.draftAssistant),
+              {
+                thinking:
+                  activeThinkingSnapshot.thinking || metadata.thinking || "",
+                traceLines: activeThinkingSnapshot.traceLines?.length
+                  ? activeThinkingSnapshot.traceLines
+                  : metadata.traceLines,
+                traceEvents: activeThinkingSnapshot.traceEvents?.length
+                  ? activeThinkingSnapshot.traceEvents
+                  : metadata.traceEvents,
+                status: activeThinkingSnapshot.status || metadata.status,
+              },
+            );
+          }
+          renderAssistantHistoryMessage(session.draftAssistant, session);
+        } else if (session.activeAbortController) {
+          session.thinkingController = addThinking(activeThinkingSnapshot || {});
+        }
+      }
+
+      function syncCurrentSessionState() {
+        if (!modeSession[mode]) return;
+        const session = getActiveModeSession(mode);
+        session.convId = currentConvId;
+        session.history = [...history];
+        session.lastUserMessage = lastUserMessage;
+        session.lastSentMessage = lastSentMessage;
+        session.lastExchangePersisted = lastExchangePersisted;
+      }
+
+      function setDraftAssistant(modeName, content, librarySources, metadata) {
+        const session = getActiveModeSession(modeName);
+        const nextMetadata =
+          metadata ||
+          session.thinkingController?.getSnapshot?.() ||
+          getAssistantMetadataFromMessage(session.draftAssistant);
+        session.draftAssistant = buildAssistantHistoryMessage(
+          content || "",
+          librarySources || [],
+          nextMetadata,
+        );
+
+        if (mode !== modeName || currentConvId !== session.convId) return;
+        if (
+          !session.streamingAssistantDiv ||
+          !session.streamingAssistantDiv.isConnected
+        ) {
+          if ((content || "").trim() || (librarySources || []).length) {
+            session.streamingAssistantDiv = addMessage("", "assistant");
+          }
+        }
+        if (session.streamingAssistantDiv) {
+          renderAssistantMessage(
+            session.streamingAssistantDiv,
+            content || "",
+            librarySources || [],
+          );
+          chat.scrollTop = chat.scrollHeight;
+        }
+      }
+
+      function finalizeDraftAssistant(modeName, content, librarySources) {
+        const session = getActiveModeSession(modeName);
+        const metadata =
+          session.thinkingController?.getSnapshot?.() ||
+          getAssistantMetadataFromMessage(session.draftAssistant);
+        metadata.status = "done";
+        const assistantMessage = buildAssistantHistoryMessage(
+          content || "",
+          librarySources || [],
+          metadata,
+        );
+        session.draftAssistant = null;
+        session.streamingAssistantDiv = null;
+        session.thinkingController = null;
+        return assistantMessage;
+      }
+
+      function clearModeSession(modeName) {
+        modeSession[modeName] = createModeSession();
       }
 
       chat.addEventListener("click", (e) => {
@@ -7356,7 +7568,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const source =
           raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
         const provider =
-          source.provider === "anthropic" || source.provider === "mistral"
+          source.provider === "anthropic" ||
+          source.provider === "mistral" ||
+          source.provider === "google"
             ? source.provider
             : "openai";
         return {
@@ -7378,11 +7592,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             openai: !!source.hasApiKey?.openai,
             anthropic: !!source.hasApiKey?.anthropic,
             mistral: !!source.hasApiKey?.mistral,
+            google: !!source.hasApiKey?.google,
           },
           envKeyNames: {
             openai: source.envKeyNames?.openai || "OPENAI_API_KEY",
             anthropic: source.envKeyNames?.anthropic || "ANTHROPIC_API_KEY",
             mistral: source.envKeyNames?.mistral || "MISTRAL_API_KEY",
+            google: source.envKeyNames?.google || "GEMINI_API_KEY",
           },
         };
       }
@@ -7769,9 +7985,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const res = await fetch(apiUrl("/api/pi/open-project-folder"), {
             method: "POST",
           });
-          await readJsonResponse(res, "Open Ollama Pi Chat folder");
+          await readJsonResponse(res, "Open Dive folder");
         } catch (error) {
-          console.error("Could not open Ollama Pi Chat folder", error);
+          console.error("Could not open Dive folder", error);
           await appAlert(
             error.message || "Failed to open folder.",
             "Pi Settings",
@@ -7972,8 +8188,110 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         });
       }
 
+      function formatStreamEventTraceLine(evt) {
+        if (!evt || typeof evt !== "object") return "";
+
+        if (evt.type === "library_results") {
+          const resultCount = Array.isArray(evt.results)
+            ? evt.results.length
+            : 0;
+          const meta = evt.meta && typeof evt.meta === "object" ? evt.meta : {};
+          const retrieved =
+            typeof meta.retrievedCount === "number"
+              ? meta.retrievedCount
+              : resultCount;
+          const injected =
+            typeof meta.injectedCount === "number"
+              ? meta.injectedCount
+              : resultCount;
+          const uniqueSources =
+            typeof meta.uniqueSourceCount === "number"
+              ? meta.uniqueSourceCount
+              : normalizeLibrarySourceResults(evt.results).length;
+          const contextCap =
+            typeof meta.maxContextChars === "number"
+              ? ` | cap: ${meta.maxContextChars.toLocaleString()} chars`
+              : "";
+          return `Library search: ${retrieved} retrieved | ${injected} injected | ${uniqueSources} unique source(s)${contextCap}`;
+        }
+
+        if (evt.type === "library_error") {
+          return `Library search error: ${evt.error || "unknown"}`;
+        }
+
+        if (evt.type === "slash_command") {
+          return `Command: ${evt.label || evt.command || "slash"}`;
+        }
+
+        if (evt.type === "tool_start") {
+          const tool = evt.toolName || "tool";
+          const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
+          return `Tool start: ${tool}${args}`;
+        }
+
+        if (evt.type === "tool_update") {
+          const tool = evt.toolName || "tool";
+          const output = evt.outputPreview
+            ? ` output=${evt.outputPreview}`
+            : "";
+          return `Tool update: ${tool}${output}`;
+        }
+
+        if (evt.type === "tool_end") {
+          const tool = evt.toolName || "tool";
+          const suffix = evt.isError ? " (error)" : " (ok)";
+          const output = evt.outputPreview
+            ? ` output=${evt.outputPreview}`
+            : "";
+          return `Tool end: ${tool}${suffix}${output}`;
+        }
+
+        if (evt.type === "stderr") return `stderr: ${evt.chunk || ""}`;
+
+        if (evt.type === "trace") {
+          const label = evt.label || "event";
+          const skipLabels = new Set([
+            "turn_start",
+            "turn_end",
+            "message_start",
+            "message_end",
+            "agent_start",
+            "queue_update",
+          ]);
+          if (skipLabels.has(label)) return "";
+          if (label === "agent_end") return "agent finished";
+          let detail = "";
+          if (evt.detail) {
+            try {
+              const parsed = JSON.parse(evt.detail);
+              if (parsed.toolName) {
+                detail = ` ${parsed.toolName}`;
+                if (parsed.args)
+                  detail += ` ${JSON.stringify(parsed.args).slice(0, 80)}`;
+              } else if (parsed.model) {
+                detail = ` model=${parsed.model}`;
+              } else {
+                detail = ` ${evt.detail.slice(0, 120)}`;
+              }
+            } catch (e) {
+              detail = ` ${evt.detail.slice(0, 120)}`;
+            }
+          }
+          return `${label}:${detail}`;
+        }
+
+        if (evt.type === "error") {
+          return `Failure: ${evt.error || "Unknown error"}`;
+        }
+
+        return "";
+      }
+
       function handleStreamEventTrace(evt, thinking) {
-        if (!evt || !thinking?.isConnected) return;
+        if (!evt || !thinking) return;
+        if (typeof thinking.addEvent === "function") {
+          thinking.addEvent(evt);
+        }
 
         if (evt.type === "compaction_start") {
           const reason = evt.reason || "context_limit";
@@ -8310,17 +8628,22 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       // CHAT SEND / LOGIC
       async function sendMessage() {
+        const runMode = mode;
+        const runSession = getActiveModeSession(runMode);
+        if (runSession.activeAbortController) return;
         let text = input.value.trim();
         if (!text) return;
         const messageSource = pendingFile ? "uploaded_file" : "manual";
         logSecurityEvent("user_message_submitted", {
-          mode,
+          mode: runMode,
           source: messageSource,
         });
         input.value = "";
         resetInputSize();
         lastUserMessage = text;
         if (!currentConvId) currentConvId = "conv_" + Date.now();
+        runSession.convId = currentConvId;
+        const runConvId = currentConvId;
 
         let displayText = text;
         if (pendingFile) {
@@ -8339,12 +8662,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         addMessage(displayText, "user");
         const thinking = addThinking();
+        runSession.thinkingController = thinking;
 
         // Prepare active system prompt context
         let requestHistory = [...history];
         let messageToSend = text;
         let persistToHistory = true;
-        if (mode === "ollama") {
+        if (runMode === "ollama") {
           const context = buildOllamaRequestContext(requestHistory, text);
           requestHistory = context.requestHistory;
           messageToSend = context.messageToSend;
@@ -8352,24 +8676,37 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
 
         lastSentMessage = messageToSend;
-        activeAbortController = new AbortController();
+        runSession.history = [...history];
+        runSession.history.push({ role: "user", content: messageToSend });
+        history = [...runSession.history];
+        runSession.lastUserMessage = lastUserMessage;
+        runSession.lastSentMessage = messageToSend;
+        runSession.lastExchangePersisted = persistToHistory;
+        const runAbortController = new AbortController();
+        runSession.activeAbortController = runAbortController;
+        runSession.activeRunId = `${runMode}_${Date.now()}_${Math.random()}`;
         updateSendButtonState();
-        let streamingAssistantDiv = null;
         const activeLibrarySources = { results: [] };
+        const recordRunTrace = (evt) => {
+          handleStreamEventTrace(evt, runSession.thinkingController || thinking);
+        };
 
         try {
           let response;
-          if (mode === "ollama") {
+          if (runMode === "ollama") {
             response = await runOllamaStreamConversation(
               messageToSend,
               modelSelect.value,
               requestHistory,
-              currentConvId,
+              runConvId,
               lastUserMessage.slice(0, 40),
-              activeAbortController.signal,
+              runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
                   thinking.remove();
+                  if (runSession.thinkingController === thinking) {
+                    runSession.thinkingController = null;
+                  }
                 }
                 let nextText = partialResponse || "";
                 let showDrumIcon = false;
@@ -8382,19 +8719,33 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
 
                 if (
-                  !streamingAssistantDiv &&
+                  !runSession.streamingAssistantDiv &&
                   (nextText.trim() || showDrumIcon)
                 ) {
-                  streamingAssistantDiv = addMessage("", "assistant");
+                  if (mode === runMode && currentConvId === runConvId) {
+                    runSession.streamingAssistantDiv = addMessage(
+                      "",
+                      "assistant",
+                    );
+                  }
                 }
-                if (streamingAssistantDiv) {
+                setDraftAssistant(
+                  runMode,
+                  nextText,
+                  activeLibrarySources.results,
+                );
+                if (
+                  runSession.streamingAssistantDiv &&
+                  mode === runMode &&
+                  currentConvId === runConvId
+                ) {
                   renderAssistantMessage(
-                    streamingAssistantDiv,
+                    runSession.streamingAssistantDiv,
                     nextText,
                     activeLibrarySources.results,
                   );
                   if (showDrumIcon) {
-                    streamingAssistantDiv.insertAdjacentHTML(
+                    runSession.streamingAssistantDiv.insertAdjacentHTML(
                       "beforeend",
                       `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`,
                     );
@@ -8406,26 +8757,36 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 captureLibrarySources(
                   evt,
                   activeLibrarySources,
-                  streamingAssistantDiv,
+                  runSession.streamingAssistantDiv,
                 );
                 if (evt.type === "skill_links") {
-                  if (!streamingAssistantDiv) {
-                    streamingAssistantDiv = addMessage("", "assistant");
-                  }
-                  const currentLinks = JSON.parse(
-                    streamingAssistantDiv.dataset.skillLinks || "[]",
-                  );
-                  const merged = Array.from(
-                    new Set([...currentLinks, ...evt.links]),
-                  );
-                  streamingAssistantDiv.dataset.skillLinks =
-                    JSON.stringify(merged);
-                  if (streamingAssistantDiv.dataset.rawText) {
-                    renderAssistantMessage(
-                      streamingAssistantDiv,
-                      streamingAssistantDiv.dataset.rawText,
-                      activeLibrarySources.results,
+                  if (
+                    !runSession.streamingAssistantDiv &&
+                    mode === runMode &&
+                    currentConvId === runConvId
+                  ) {
+                    runSession.streamingAssistantDiv = addMessage(
+                      "",
+                      "assistant",
                     );
+                  }
+                  if (runSession.streamingAssistantDiv) {
+                    const currentLinks = JSON.parse(
+                      runSession.streamingAssistantDiv.dataset.skillLinks ||
+                        "[]",
+                    );
+                    const merged = Array.from(
+                      new Set([...currentLinks, ...evt.links]),
+                    );
+                    runSession.streamingAssistantDiv.dataset.skillLinks =
+                      JSON.stringify(merged);
+                    if (runSession.streamingAssistantDiv.dataset.rawText) {
+                      renderAssistantMessage(
+                        runSession.streamingAssistantDiv,
+                        runSession.streamingAssistantDiv.dataset.rawText,
+                        activeLibrarySources.results,
+                      );
+                    }
                   }
                 }
                 if (
@@ -8438,195 +8799,203 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                   // context window for this session, not Ollama's architectural max.
                   updateTokenCounter("ollama", used, ollamaOptions.numCtx);
                 }
-                handleStreamEventTrace(evt, thinking);
+                recordRunTrace(evt);
               },
             );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
               thinking.remove();
             }
             if (persistToHistory) {
-              history.push({ role: "user", content: messageToSend });
-              history.push(
-                buildAssistantHistoryMessage(
-                  response,
-                  activeLibrarySources.results,
-                ),
+              const assistantMessage = finalizeDraftAssistant(
+                runMode,
+                response,
+                activeLibrarySources.results,
               );
+              runSession.history = [
+                ...requestHistory.filter((msg) => msg.role !== "system"),
+                { role: "user", content: messageToSend },
+                assistantMessage,
+              ];
+              if (mode === runMode && currentConvId === runConvId) {
+                history = [...runSession.history];
+              }
             }
-            lastExchangePersisted = persistToHistory;
-          } else if (mode === "pi") {
+            runSession.lastExchangePersisted = persistToHistory;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = persistToHistory;
+            }
+          } else if (runMode === "pi") {
             response = await runPiRpcConversation(
               messageToSend,
-              activeAbortController.signal,
+              runAbortController.signal,
               messageSource,
               requestHistory,
-              currentConvId,
+              runConvId,
               lastUserMessage.slice(0, 40),
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
                   thinking.remove();
+                  if (runSession.thinkingController === thinking) {
+                    runSession.thinkingController = null;
+                  }
                 }
                 const nextText = partialResponse || "";
-                if (!streamingAssistantDiv && nextText.trim()) {
-                  streamingAssistantDiv = addMessage("", "assistant");
-                }
-                if (streamingAssistantDiv) {
-                  renderAssistantMessage(
-                    streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  chat.scrollTop = chat.scrollHeight;
-                }
+                setDraftAssistant(
+                  runMode,
+                  nextText,
+                  activeLibrarySources.results,
+                );
               },
               (evt) => {
                 captureLibrarySources(
                   evt,
                   activeLibrarySources,
-                  streamingAssistantDiv,
+                  runSession.streamingAssistantDiv,
                 );
                 if (evt.type === "session_start") {
                   piStatusInfo = {
                     ...(piStatusInfo || {}),
                     state: "STREAMING",
                   };
-                  updateModeStatus();
+                  if (mode === runMode) updateModeStatus();
                 }
                 if (evt.type === "done") {
                   refreshPiStatus().catch(() => {});
                 }
-                handleStreamEventTrace(evt, thinking);
+                recordRunTrace(evt);
               },
             );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
               thinking.remove();
             }
-            history.push({ role: "user", content: messageToSend });
-            history.push(
-              buildAssistantHistoryMessage(
-                response,
-                activeLibrarySources.results,
-              ),
+            const assistantMessage = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
             );
-            lastExchangePersisted = true;
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessage,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           } else {
             cloudStreamState = "STREAMING";
-            updateModeStatus();
+            if (mode === runMode) updateModeStatus();
             response = await runCloudStreamConversation(
               messageToSend,
               requestHistory,
-              currentConvId,
+              runConvId,
               lastUserMessage.slice(0, 40),
-              activeAbortController.signal,
+              runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
                   thinking.remove();
+                  if (runSession.thinkingController === thinking) {
+                    runSession.thinkingController = null;
+                  }
                 }
                 const nextText = partialResponse || "";
-                if (!streamingAssistantDiv && nextText.trim()) {
-                  streamingAssistantDiv = addMessage("", "assistant");
-                }
-                if (streamingAssistantDiv) {
-                  renderAssistantMessage(
-                    streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  chat.scrollTop = chat.scrollHeight;
-                }
+                setDraftAssistant(
+                  runMode,
+                  nextText,
+                  activeLibrarySources.results,
+                );
               },
               (evt) => {
                 captureLibrarySources(
                   evt,
                   activeLibrarySources,
-                  streamingAssistantDiv,
+                  runSession.streamingAssistantDiv,
                 );
                 if (evt.type === "done") {
                   cloudStreamState = "IDLE";
-                  updateModeStatus();
+                  if (mode === runMode) updateModeStatus();
                 }
-                handleStreamEventTrace(evt, thinking);
+                recordRunTrace(evt);
               },
             );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
               thinking.remove();
             }
-            history.push({ role: "user", content: messageToSend });
-            history.push(
-              buildAssistantHistoryMessage(
-                response,
-                activeLibrarySources.results,
-              ),
+            const assistantMessage = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
             );
-            lastExchangePersisted = true;
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessage,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           }
         } catch (e) {
           clearPiPermissionState();
-          if (mode === "cloud") {
+          if (runMode === "cloud") {
             cloudStreamState = "IDLE";
-            updateModeStatus();
+            if (mode === runMode) updateModeStatus();
           }
           if (e.name === "AbortError") {
             if (thinking && thinking.isConnected) thinking.remove();
-            if (streamingAssistantDiv && streamingAssistantDiv.isConnected) {
-              const prior = streamingAssistantDiv.dataset.rawText || "";
-              const cancelled =
-                prior && prior.trim()
-                  ? `${prior}\n\n*Request cancelled by user.*`
-                  : "*Request cancelled by user.*";
-              renderAssistantMessage(streamingAssistantDiv, cancelled);
-            } else {
-              addMessage("*Request cancelled by user.*", "assistant");
-            }
+            const prior = runSession.draftAssistant?.content || "";
+            const cancelled =
+              prior && prior.trim()
+                ? `${prior}\n\n*Request cancelled by user.*`
+                : "*Request cancelled by user.*";
+            setDraftAssistant(
+              runMode,
+              cancelled,
+              activeLibrarySources.results,
+              {
+                ...(runSession.thinkingController?.getSnapshot?.() || {}),
+                status: "aborted",
+              },
+            );
           } else {
             if (thinking && thinking.isConnected) {
               thinking.markFailure(e.message || String(e));
             }
-            if (streamingAssistantDiv?.parentElement) {
-              streamingAssistantDiv.parentElement.remove();
-            }
-            const errWrap = document.createElement("div");
-            errWrap.className = "msg-wrap assistant";
-            const errDiv = document.createElement("div");
-            errDiv.className = "msg assistant";
-            errDiv.style.borderColor = "#ff4444";
-            errDiv.style.color = "#ff4444";
-            errDiv.textContent = "Error: " + e.message;
-            errWrap.appendChild(errDiv);
-            chat.appendChild(errWrap);
+            setDraftAssistant(
+              runMode,
+              "Error: " + e.message,
+              activeLibrarySources.results,
+              {
+                ...(runSession.thinkingController?.getSnapshot?.() || {}),
+                status: "error",
+              },
+            );
           }
         } finally {
-          activeAbortController = null;
+          runSession.activeAbortController = null;
+          runSession.activeRunId = null;
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
@@ -8635,6 +9004,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       async function regenerate(wrapEl) {
         if (!lastUserMessage || !lastSentMessage) return;
+        const runMode = mode;
+        const runSession = getActiveModeSession(runMode);
+        if (runSession.activeAbortController) return;
+        const runConvId = currentConvId || "conv_" + Date.now();
+        currentConvId = runConvId;
+        runSession.convId = runConvId;
         if (wrapEl) wrapEl.remove();
         // Only remove the last user+assistant pair if it was persisted to history
         // and there are enough entries to remove. When lastExchangePersisted is
@@ -8643,255 +9018,245 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (lastExchangePersisted && history.length >= 2) {
           history = history.slice(0, -2);
         }
+        runSession.history = [...history];
+        runSession.draftAssistant = null;
         const thinking = addThinking();
+        runSession.thinkingController = thinking;
 
         let requestHistory = [...history];
         let messageToSend = lastSentMessage;
         let persistToHistory = true;
-        if (mode === "ollama") {
+        if (runMode === "ollama") {
           const context = buildOllamaRequestContext(
             requestHistory,
             lastUserMessage,
           );
           requestHistory = context.requestHistory;
+          messageToSend = context.messageToSend || messageToSend;
           persistToHistory = context.persistToHistory !== false;
         }
 
-        activeAbortController = new AbortController();
+        const runAbortController = new AbortController();
+        runSession.activeAbortController = runAbortController;
+        runSession.activeRunId = `${runMode}_${Date.now()}_${Math.random()}`;
         updateSendButtonState();
-        let streamingAssistantDiv = null;
         const activeLibrarySources = { results: [] };
+        const recordRunTrace = (evt) => {
+          handleStreamEventTrace(evt, runSession.thinkingController || thinking);
+        };
+        const handlePartial = (partialResponse) => {
+          if (
+            thinking?.isConnected &&
+            !thinking.hadReasoning &&
+            !thinking.hadTrace
+          ) {
+            thinking.remove();
+            if (runSession.thinkingController === thinking) {
+              runSession.thinkingController = null;
+            }
+          }
+          setDraftAssistant(
+            runMode,
+            partialResponse || "",
+            activeLibrarySources.results,
+          );
+        };
+        const handleEvent = (evt) => {
+          captureLibrarySources(
+            evt,
+            activeLibrarySources,
+            runSession.streamingAssistantDiv,
+          );
+          if (
+            evt.type === "done" &&
+            evt.promptTokens !== undefined &&
+            evt.evalTokens !== undefined
+          ) {
+            const used = evt.promptTokens + evt.evalTokens;
+            updateTokenCounter("ollama", used, ollamaOptions.numCtx);
+          }
+          if (evt.type === "session_start") {
+            piStatusInfo = {
+              ...(piStatusInfo || {}),
+              state: "STREAMING",
+            };
+            if (mode === runMode) updateModeStatus();
+          }
+          if (evt.type === "done" && runMode === "pi") {
+            refreshPiStatus().catch(() => {});
+          }
+          if (evt.type === "done" && runMode === "cloud") {
+            cloudStreamState = "IDLE";
+            if (mode === runMode) updateModeStatus();
+          }
+          recordRunTrace(evt);
+        };
 
         try {
           let response;
-          if (mode === "ollama") {
+          if (runMode === "ollama") {
             response = await runOllamaStreamConversation(
               messageToSend,
               modelSelect.value,
               requestHistory,
-              currentConvId,
+              runConvId,
               lastUserMessage.slice(0, 40),
-              activeAbortController.signal,
-              (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
-                  thinking.remove();
-                }
-                const nextText = partialResponse || "";
-                if (!streamingAssistantDiv && nextText.trim()) {
-                  streamingAssistantDiv = addMessage("", "assistant");
-                }
-                if (streamingAssistantDiv) {
-                  renderAssistantMessage(
-                    streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  chat.scrollTop = chat.scrollHeight;
-                }
-              },
-              (evt) => {
-                captureLibrarySources(
-                  evt,
-                  activeLibrarySources,
-                  streamingAssistantDiv,
-                );
-                if (
-                  evt.type === "done" &&
-                  evt.promptTokens !== undefined &&
-                  evt.evalTokens !== undefined
-                ) {
-                  const used = evt.promptTokens + evt.evalTokens;
-                  updateTokenCounter("ollama", used, ollamaOptions.numCtx);
-                }
-                handleStreamEventTrace(evt, thinking);
-              },
+              runAbortController.signal,
+              handlePartial,
+              handleEvent,
             );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace
+            ) {
               thinking.remove();
             }
             if (persistToHistory) {
-              history.push({ role: "user", content: messageToSend });
-              history.push(
-                buildAssistantHistoryMessage(
-                  response,
-                  activeLibrarySources.results,
-                ),
-              );
-            }
-            lastExchangePersisted = persistToHistory;
-          } else if (mode === "pi") {
-            response = await runPiRpcConversation(
-              messageToSend,
-              activeAbortController.signal,
-              "manual",
-              requestHistory,
-              currentConvId,
-              lastUserMessage.slice(0, 40),
-              (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
-                  thinking.remove();
-                }
-                const nextText = partialResponse || "";
-                if (!streamingAssistantDiv && nextText.trim()) {
-                  streamingAssistantDiv = addMessage("", "assistant");
-                }
-                if (streamingAssistantDiv) {
-                  renderAssistantMessage(
-                    streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  chat.scrollTop = chat.scrollHeight;
-                }
-              },
-              (evt) => {
-                captureLibrarySources(
-                  evt,
-                  activeLibrarySources,
-                  streamingAssistantDiv,
-                );
-                if (evt.type === "session_start") {
-                  piStatusInfo = {
-                    ...(piStatusInfo || {}),
-                    state: "STREAMING",
-                  };
-                  updateModeStatus();
-                }
-                if (evt.type === "done") {
-                  refreshPiStatus().catch(() => {});
-                }
-                handleStreamEventTrace(evt, thinking);
-              },
-            );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
-              thinking.remove();
-            }
-            history.push({ role: "user", content: messageToSend });
-            history.push(
-              buildAssistantHistoryMessage(
+              const assistantMessage = finalizeDraftAssistant(
+                runMode,
                 response,
                 activeLibrarySources.results,
-              ),
+              );
+              runSession.history = [
+                ...requestHistory.filter((msg) => msg.role !== "system"),
+                { role: "user", content: messageToSend },
+                assistantMessage,
+              ];
+              if (mode === runMode && currentConvId === runConvId) {
+                history = [...runSession.history];
+              }
+            }
+            runSession.lastExchangePersisted = persistToHistory;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = persistToHistory;
+            }
+          } else if (runMode === "pi") {
+            response = await runPiRpcConversation(
+              messageToSend,
+              runAbortController.signal,
+              "manual",
+              requestHistory,
+              runConvId,
+              lastUserMessage.slice(0, 40),
+              handlePartial,
+              handleEvent,
             );
-            lastExchangePersisted = true;
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace
+            ) {
+              thinking.remove();
+            }
+            const assistantMessage = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
+            );
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessage,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           } else {
             cloudStreamState = "STREAMING";
-            updateModeStatus();
+            if (mode === runMode) updateModeStatus();
             response = await runCloudStreamConversation(
               messageToSend,
               requestHistory,
-              currentConvId,
+              runConvId,
               lastUserMessage.slice(0, 40),
-              activeAbortController.signal,
-              (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning) {
-                  thinking.remove();
-                }
-                const nextText = partialResponse || "";
-                if (!streamingAssistantDiv && nextText.trim()) {
-                  streamingAssistantDiv = addMessage("", "assistant");
-                }
-                if (streamingAssistantDiv) {
-                  renderAssistantMessage(
-                    streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  chat.scrollTop = chat.scrollHeight;
-                }
-              },
-              (evt) => {
-                captureLibrarySources(
-                  evt,
-                  activeLibrarySources,
-                  streamingAssistantDiv,
-                );
-                if (evt.type === "done") {
-                  cloudStreamState = "IDLE";
-                  updateModeStatus();
-                }
-                handleStreamEventTrace(evt, thinking);
-              },
+              runAbortController.signal,
+              handlePartial,
+              handleEvent,
             );
-            if (!streamingAssistantDiv && (response || "").trim()) {
-              streamingAssistantDiv = addMessage("", "assistant");
-            }
-            if (streamingAssistantDiv) {
-              renderAssistantMessage(
-                streamingAssistantDiv,
-                response || "",
-                activeLibrarySources.results,
-              );
-            }
-            if (thinking?.isConnected && !thinking.hadReasoning) {
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace
+            ) {
               thinking.remove();
             }
-            history.push({ role: "user", content: messageToSend });
-            history.push(
-              buildAssistantHistoryMessage(
-                response,
-                activeLibrarySources.results,
-              ),
+            const assistantMessage = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
             );
-            lastExchangePersisted = true;
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessage,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           }
         } catch (e) {
           clearPiPermissionState();
-          if (mode === "cloud") {
+          if (runMode === "cloud") {
             cloudStreamState = "IDLE";
-            updateModeStatus();
+            if (mode === runMode) updateModeStatus();
           }
           if (e.name === "AbortError") {
             if (thinking && thinking.isConnected) thinking.remove();
-            if (streamingAssistantDiv && streamingAssistantDiv.isConnected) {
-              const prior = streamingAssistantDiv.dataset.rawText || "";
-              const cancelled =
-                prior && prior.trim()
-                  ? `${prior}\n\n*Request cancelled by user.*`
-                  : "*Request cancelled by user.*";
-              renderAssistantMessage(streamingAssistantDiv, cancelled);
-            } else {
-              addMessage("*Request cancelled by user.*", "assistant");
-            }
+            const prior = runSession.draftAssistant?.content || "";
+            const cancelled =
+              prior && prior.trim()
+                ? `${prior}\n\n*Request cancelled by user.*`
+                : "*Request cancelled by user.*";
+            setDraftAssistant(
+              runMode,
+              cancelled,
+              activeLibrarySources.results,
+              {
+                ...(runSession.thinkingController?.getSnapshot?.() || {}),
+                status: "aborted",
+              },
+            );
           } else {
             if (thinking && thinking.isConnected) {
               thinking.markFailure(e.message || String(e));
             }
-            if (streamingAssistantDiv?.parentElement) {
-              streamingAssistantDiv.parentElement.remove();
-            }
-            const errWrap = document.createElement("div");
-            errWrap.className = "msg-wrap assistant";
-            const errDiv = document.createElement("div");
-            errDiv.className = "msg assistant";
-            errDiv.style.borderColor = "#ff4444";
-            errDiv.style.color = "#ff4444";
-            errDiv.textContent = "Error: " + e.message;
-            errWrap.appendChild(errDiv);
-            chat.appendChild(errWrap);
+            setDraftAssistant(
+              runMode,
+              "Error: " + e.message,
+              activeLibrarySources.results,
+              {
+                ...(runSession.thinkingController?.getSnapshot?.() || {}),
+                status: "error",
+              },
+            );
           }
         } finally {
-          activeAbortController = null;
+          runSession.activeAbortController = null;
+          runSession.activeRunId = null;
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
@@ -8970,7 +9335,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function updateSendButtonState() {
         const sendBtn = document.getElementById("send");
-        if (activeAbortController) {
+        if (getActiveAbortController()) {
           sendBtn.innerHTML = STOP_ICON;
           sendBtn.setAttribute("aria-label", "Stop response");
           sendBtn.setAttribute("title", "Stop response");
@@ -8984,11 +9349,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       document.getElementById("send").addEventListener("click", () => {
-        if (activeAbortController) {
+        const controller = getActiveAbortController();
+        if (controller) {
           if (activePiPermissionRequest) {
             resolvePiPermission({ cancelled: true });
           }
-          activeAbortController.abort();
+          controller.abort();
         } else {
           sendMessage();
         }
@@ -9009,11 +9375,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          if (activeAbortController) {
+          const controller = getActiveAbortController();
+          if (controller) {
             if (activePiPermissionRequest) {
               resolvePiPermission({ cancelled: true });
             }
-            activeAbortController.abort();
+            controller.abort();
           } else {
             sendMessage();
           }

@@ -1,10 +1,10 @@
-# Ollama Pi Chat
+# Dive
 
 ![Cover Image](promo/cover.png)
 
 ## A Beautiful, Secure, & Local-First Web Interface for Ollama, Pi, and Cloud Models
 
-Welcome to **Ollama Pi Chat**! This is a local-first desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models, agent systems, and optional cloud model providers.
+Welcome to **Dive**! This is a local-first desktop wrapper and web application that gives you a gorgeous, retro-brutalist chat interface to interact with local AI models, agent systems, and optional cloud model providers.
 
 The core chat server and desktop wrapper run directly on your macOS machine. **Offline Ollama chat does not require an internet connection.** Pi mode runs through your local Pi CLI. Cloud mode is optional and only contacts the provider you configure. Optional web/MCP/shell skills can contact external services or run local commands only when enabled and invoked, so review those settings before using them with sensitive prompts.
 
@@ -16,7 +16,7 @@ The core chat server and desktop wrapper run directly on your macOS machine. **O
 
 ## Table of Contents
 
-1. [What is Ollama Pi Chat?](#what-is-ollama-pi-chat)
+1. [What is Dive?](#what-is-dive)
 2. [The Three Chat Modes Explained](#the-three-chat-modes-explained)
 3. [Core Features Tour](#core-features-tour)
 4. [Requirements & Downloads](#requirements--downloads)
@@ -29,9 +29,9 @@ The core chat server and desktop wrapper run directly on your macOS machine. **O
 
 ---
 
-## What is Ollama Pi Chat?
+## What is Dive?
 
-For non-technical users, think of Ollama Pi Chat as a **private control deck for Artificial Intelligence**. You can keep work fully local with Ollama, use Pi for terminal-grade agent tasks, or intentionally switch to Cloud mode when you want to use your own provider API keys.
+For non-technical users, think of Dive as a **private control deck for Artificial Intelligence**. You can keep work fully local with Ollama, use Pi for terminal-grade agent tasks, or intentionally switch to Cloud mode when you want to use your own provider API keys.
 
 It combines **three powerful systems** under one beautiful user interface:
 
@@ -64,7 +64,7 @@ In Ollama Mode, the app speaks directly to your local Ollama installation.
 In Pi Mode, the app acts as a secure bridge to the **Pi agent command-line tool**.
 
 - **Best for**: Complex automation, programming tasks, searching local project folders, reviewing codebase directories, or performing system actions.
-- **Interactive Browser Permissions (The Security Guards)**: When Pi runs a tool to modify files, run command terminal lines, or query sensitive folders, it requests permission. Ollama Pi Chat captures this request and pops up a clear, non-technical interactive dialog in your browser. You can **Allow**, **Deny**, input custom variables, or edit the command before it runs. This prevents the command-line tool from silently hanging or executing unauthorized actions on your machine.
+- **Interactive Browser Permissions (The Security Guards)**: When Pi runs a tool to modify files, run command terminal lines, or query sensitive folders, it requests permission. Dive captures this request and pops up a clear, non-technical interactive dialog in your browser. You can **Allow**, **Deny**, input custom variables, or edit the command before it runs. This prevents the command-line tool from silently hanging or executing unauthorized actions on your machine.
 - **Live Status**: The title bar can show the active Pi model, state, cost label, and thinking level when your Pi CLI exposes those values through RPC.
 
 ### 3. Cloud Mode (Bring Your Own API Key)
@@ -80,7 +80,7 @@ In Cloud Mode, the app sends chat requests directly from the local server to the
 
 ## Core Features Tour
 
-Ollama Pi Chat is packed with premium, user-friendly utilities:
+Dive is packed with premium, user-friendly utilities:
 
 - **Unified Responsive Design**: Responsive brutalist grid layouts with smooth transitions, customized fonts, and visual hover effects.
 - **Native MCP Support**: Full Model Context Protocol (MCP) integration. Click the plug icon to instantly connect local MCP servers (like Memory, Filesystem, or SQLite) directly to your Ollama models.
@@ -131,7 +131,7 @@ Depending on your technical comfort level, select one of the following methods t
 1. Open your terminal application.
 2. Navigate to the folder where you unpacked this project:
    ```bash
-   cd "/path/to/ollama-pi-chat"
+   cd "/path/to/dive"
    ```
 3. Make the launcher script executable (only needed the first time):
    ```bash
@@ -152,7 +152,7 @@ If you want a native desktop app or installer:
 
 1. Open terminal in the project directory and install the necessary helper modules:
    ```bash
-   cd "/path/to/ollama-pi-chat"
+   cd "/path/to/dive"
    npm install
    ```
 2. Build for your platform:
@@ -188,23 +188,23 @@ If you want a native desktop app or installer:
 
 ### Path C: Register as an Always-On Background Service
 
-If you want the Ollama Pi Chat server to start automatically whenever you turn on your Mac (without needing to keep a terminal window open):
+If you want the Dive server to start automatically whenever you turn on your Mac (without needing to keep a terminal window open):
 
-1. Compile the standalone binary first (Path D) so it creates the binary at `dist/ollama-pi-chat`.
+1. Compile the standalone binary first (Path D) so it creates the binary at `dist/dive`.
 2. Run the registration script in terminal:
    ```bash
    chmod +x install-launchagent.sh
    ./install-launchagent.sh
    ```
 
-- **How it works**: This creates a macOS LaunchAgent plist at `~/Library/LaunchAgents/com.user.ollamapichat.plist`. The server now boots silently at login and listens securely at `http://127.0.0.1:8080`.
+- **How it works**: This creates a macOS LaunchAgent plist at `~/Library/LaunchAgents/com.user.dive.plist`. The server now boots silently at login and listens securely at `http://127.0.0.1:8080`.
 - **To stop the service later**, run:
   ```bash
-  launchctl bootout "gui/$UID/com.user.ollamapichat"
+  launchctl bootout "gui/$UID/com.user.dive"
   ```
 - **To restart the service later**, run:
   ```bash
-  launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/com.user.ollamapichat.plist"
+  launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/com.user.dive.plist"
   ```
 
 ---
@@ -218,10 +218,10 @@ You can package Node.js, the local server code, and the frontend web pages into 
    chmod +x build-sea.sh
    ./build-sea.sh
    ```
-2. **Output**: A single executable binary file at `dist/ollama-pi-chat`.
+2. **Output**: A single executable binary file at `dist/dive`.
 3. You can copy this executable file anywhere on your Mac and double-click or run it directly:
    ```bash
-   ./dist/ollama-pi-chat
+   ./dist/dive
    ```
 
 ---
@@ -277,7 +277,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 
 ### 5. Built-in Agent Skills (Ollama)
 
-Ollama Pi Chat comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
+Dive comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
 
 - **Wikipedia**: Searches Wikipedia for factual information and summaries. Requires internet access.
 - **Britannica**: Searches the Encyclopedia Britannica for curated facts. Requires internet access.
@@ -301,7 +301,7 @@ Ollama Pi Chat comes with a suite of native tools that you can toggle on or off 
 
 ### 7. MCP (Model Context Protocol) Integration
 
-Ollama Pi Chat fully supports connecting external **MCP Servers** to your local Ollama models.
+Dive fully supports connecting external **MCP Servers** to your local Ollama models.
 Click the **Plug Icon** in the top title bar to open the MCP Panel. You can paste standard `mcpServers` JSON configuration directly into the box. The app will automatically parse your config, spin up the external servers in the background, map their tools, and dynamically render sleek plain-English badges (like `MEMORY`, `FILESYSTEM`) below the editor so you always know what tools are locked and loaded.
 
 ---
@@ -581,7 +581,7 @@ Database retrieval is wired into Ollama, Pi, and Cloud modes. Ollama and Pi keep
 
 ## Privacy, Security, & Where Data is Stored
 
-Ollama Pi Chat is designed from the ground up to respect your digital sovereignty.
+Dive is designed from the ground up to respect your digital sovereignty.
 
 ### Data Storage Locations
 
@@ -605,7 +605,7 @@ Ollama Pi Chat is designed from the ground up to respect your digital sovereignt
 
 ### Cloud Mode Privacy
 
-Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/ollama-pi-chat/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY`).
+Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/ollama-pi-chat/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `GEMINI_API_KEY`).
 
 ### Network Safety Protections
 
@@ -622,7 +622,7 @@ The local Node.js server implements active security headers to protect your loca
 
 ### Error: `listen EADDRINUSE 127.0.0.1:8080`
 
-- **What it means**: The network port `8080` is already occupied. This usually happens if an old instance of the Ollama Pi Chat server is still running in the background, or another application (like a development project) is using that port.
+- **What it means**: The network port `8080` is already occupied. This usually happens if an old instance of the Dive server is still running in the background, or another application (like a development project) is using that port.
 - **How to fix it**:
   1. Open terminal and find the process ID (PID) occupying the port:
      ```bash
@@ -636,7 +636,7 @@ The local Node.js server implements active security headers to protect your loca
 
 ### Models are not showing up in the selector
 
-- **What it means**: Ollama Pi Chat cannot establish a connection with the local Ollama engine.
+- **What it means**: Dive cannot establish a connection with the local Ollama engine.
 - **How to fix it**:
   1. Make sure the Ollama application is launched and running on your Mac.
   2. Check if Ollama is accessible by opening this URL in your web browser: [http://localhost:11434/api/tags](http://localhost:11434/api/tags).
@@ -668,7 +668,7 @@ The local Node.js server implements active security headers to protect your loca
 - **How to fix it**:
   1. Open **Settings** and switch to the Cloud Mode section.
   2. Choose your provider, paste the API key, confirm the model id, and click **Save Cloud Settings**.
-  3. Alternatively, start the server with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `MISTRAL_API_KEY` set in the environment.
+  3. Alternatively, start the server with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `GEMINI_API_KEY` set in the environment.
 
 ### Local Library Research shows zero files
 
@@ -720,14 +720,14 @@ The local Node.js server implements active security headers to protect your loca
   xattr -d com.apple.quarantine "/path/to/vec0.dylib"
   ```
 
-### "Ollama Pi Chat is damaged and cannot be opened" / macOS Gatekeeper Blocks App
+### "Dive is damaged and cannot be opened" / macOS Gatekeeper Blocks App
 
 - **What it means**: The developer of this project does not have a paid Apple Developer Account, so the packaged applications and binaries are unsigned. On newer macOS versions, Gatekeeper will automatically flag and block unsigned apps downloaded from the internet.
 - **How to fix it**:
   1. Open your terminal application.
   2. Strip the quarantine attribute from the app (replace the path with where you moved the app, typically in Applications):
      ```bash
-     xattr -cr "/Applications/Ollama Pi Chat.app"
+     xattr -cr "/Applications/Dive.app"
      ```
   3. Alternatively, right-click (or Control-click) the application icon in Finder, select **Open**, and click **Open** on the dialog to confirm the exception.
 
@@ -741,7 +741,7 @@ Before committing modifications or publishing this folder to a shared repository
 2. **Remove Personal Paths**: Do not hardcode specific system paths (e.g., `/Users/your_name/`) or local developer API tokens.
 3. **Verify Signatures**: If code modifications are made, SEA injection blobs must be compiled using thin mach-O binaries so codesign validation checks match. Run the clean export rsync command:
    ```bash
-   mkdir -p "/path/to/ollama-pi-chat-github"
+   mkdir -p "/path/to/dive-github"
    rsync -a --delete \
      --exclude '.git' \
      --exclude 'node_modules' \
@@ -750,5 +750,5 @@ Before committing modifications or publishing this folder to a shared repository
      --exclude '.DS_Store' \
      --exclude '*.log' \
      --exclude '*.pid' \
-     "/path/to/ollama-pi-chat/" "/path/to/ollama-pi-chat-github/"
+     "/path/to/dive/" "/path/to/dive-github/"
    ```

@@ -143,26 +143,35 @@ const VALID_UI_PALETTES = new Set([
   "retro",
   "nordic",
 ]);
-const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral"];
+const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral", "google"];
 const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
 const CLOUD_DEFAULT_MODELS = {
   openai: "gpt-5",
   anthropic: "claude-sonnet-4-20250514",
   mistral: "mistral-large-latest",
+  google: "gemini-2.5-pro",
 };
 const CLOUD_DEFAULT_BASE_URLS = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   mistral: "https://api.mistral.ai/v1",
+  google: "https://generativelanguage.googleapis.com/v1beta/openai",
 };
 const CLOUD_ENV_KEY_NAMES = {
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   mistral: "MISTRAL_API_KEY",
+  google: "GEMINI_API_KEY",
 };
 const CLOUD_MIN_MAX_TOKENS = 1;
 const CLOUD_MAX_MAX_TOKENS = 128000;
 const CLOUD_DEFAULT_MAX_TOKENS = 2048;
+const DEFAULT_UI_FONTS = Object.freeze({
+  ollama: '"iA Writer Quattro S", serif',
+  pi: "Montserrat, sans-serif",
+  cloud: "Sen, sans-serif",
+});
+const LEGACY_DEFAULT_UI_FONT = '"Space Mono", monospace';
 
 function createHttpError(statusCode, message) {
   const error = new Error(message);
@@ -238,7 +247,7 @@ function getFileHealth(filePath) {
 
 if (typeof process.getuid === "function" && process.getuid() === 0) {
   console.error(
-    "Refusing to run ollama-pi-chat as root. Run as an unprivileged user.",
+    "Refusing to run Dive as root. Run as an unprivileged user.",
   );
   process.exit(1);
 }
@@ -316,6 +325,18 @@ function upsertConversation(
     metadata.librarySources.length
   ) {
     assistantMessage.librarySources = metadata.librarySources;
+  }
+  if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
+    assistantMessage.thinking = metadata.thinking;
+  }
+  if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
+    assistantMessage.traceEvents = metadata.traceEvents;
+  }
+  if (Array.isArray(metadata.traceLines) && metadata.traceLines.length) {
+    assistantMessage.traceLines = metadata.traceLines;
+  }
+  if (typeof metadata.status === "string" && metadata.status.trim()) {
+    assistantMessage.status = metadata.status.trim().slice(0, 80);
   }
   const newHistory = [
     ...messages.filter((item) => !isTransientLibraryContextMessage(item)),
@@ -589,7 +610,9 @@ function sanitizePiSettings(rawInput) {
   return next;
 }
 
-function loadPiSettings() {
+let cachedPiSettings = null;
+
+function loadPiSettingsFromDisk() {
   try {
     if (fs.existsSync(PI_SETTINGS_FILE)) {
       const raw = JSON.parse(fs.readFileSync(PI_SETTINGS_FILE, "utf8"));
@@ -608,10 +631,18 @@ function loadPiSettings() {
   return defaults;
 }
 
+function loadPiSettings() {
+  if (!cachedPiSettings) {
+    cachedPiSettings = loadPiSettingsFromDisk();
+  }
+  return cachedPiSettings;
+}
+
 function savePiSettings(settings) {
   try {
     const sanitized = sanitizePiSettings(settings);
     fs.writeFileSync(PI_SETTINGS_FILE, JSON.stringify(sanitized, null, 2));
+    cachedPiSettings = sanitized;
   } catch (e) {
     console.error("Failed to save Pi settings:", e);
   }
@@ -619,7 +650,7 @@ function savePiSettings(settings) {
 
 function normalizeFontStackValue(fontStack) {
   const trimmed = typeof fontStack === "string" ? fontStack.trim() : "";
-  return trimmed.slice(0, 300) || '"Space Mono", monospace';
+  return trimmed.slice(0, 300) || DEFAULT_UI_FONTS.ollama;
 }
 
 function defaultUiSettings() {
@@ -630,9 +661,7 @@ function defaultUiSettings() {
       cloud: "calmblue",
     },
     fonts: {
-      ollama: '"Space Mono", monospace',
-      pi: '"Space Mono", monospace',
-      cloud: '"Space Mono", monospace',
+      ...DEFAULT_UI_FONTS,
     },
   };
 }
@@ -677,6 +706,19 @@ function loadUiSettingsWithMeta() {
     try {
       const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, "utf8"));
       const sanitized = sanitizeUiSettings(raw);
+      const rawFonts =
+        raw?.fonts && typeof raw.fonts === "object" && !Array.isArray(raw.fonts)
+          ? raw.fonts
+          : {};
+      const isLegacyUntouchedFontSet = ["ollama", "pi", "cloud"].every(
+        (modeName) =>
+          !rawFonts[modeName] ||
+          normalizeFontStackValue(rawFonts[modeName]) ===
+            LEGACY_DEFAULT_UI_FONT,
+      );
+      if (isLegacyUntouchedFontSet) {
+        sanitized.fonts = { ...DEFAULT_UI_FONTS };
+      }
       if (JSON.stringify(raw) !== JSON.stringify(sanitized)) {
         saveUiSettings(sanitized);
       }
@@ -1042,6 +1084,27 @@ function normalizeCloudHistoryMessages(history, message) {
   return messages;
 }
 
+function getSharedAssistantPolicyPrompt() {
+  return [
+    "You are a concise, helpful, academically serious AI assistant. You get straight to the point, but you provide enough context, distinctions, and evidence to be useful to researchers, professors, and advanced students. Never use emojis.",
+    "Always respond in the language the user speaks to you in.",
+    "If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not use outside knowledge unless the passages are insufficient, and clearly say when the local library does not provide enough evidence.",
+    "When the passages contain multiple accounts, causes, origins, definitions, or scholarly distinctions, explain the relevant variants instead of reducing the answer to a thin single sentence.",
+    "Use citations or source references when retrieved passages are available.",
+  ].join("\n\n");
+}
+
+function withSharedSystemPrompt(messages) {
+  const sourceMessages = Array.isArray(messages) ? messages : [];
+  return [
+    {
+      role: "system",
+      content: getSharedAssistantPolicyPrompt(),
+    },
+    ...sourceMessages,
+  ];
+}
+
 function isTransientLibraryContextMessage(item) {
   return (
     item?.role === "system" &&
@@ -1096,8 +1159,22 @@ function normalizeStoredConversationMessages(history, message) {
       role: item.role,
       content: item.content,
     };
-    if (item.role === "assistant" && Array.isArray(item.librarySources)) {
-      clean.librarySources = item.librarySources;
+    if (item.role === "assistant") {
+      if (Array.isArray(item.librarySources)) {
+        clean.librarySources = item.librarySources;
+      }
+      if (typeof item.thinking === "string") {
+        clean.thinking = item.thinking;
+      }
+      if (Array.isArray(item.traceEvents)) {
+        clean.traceEvents = item.traceEvents;
+      }
+      if (Array.isArray(item.traceLines)) {
+        clean.traceLines = item.traceLines;
+      }
+      if (typeof item.status === "string") {
+        clean.status = item.status;
+      }
     }
     stored.push(clean);
   }
@@ -1120,6 +1197,56 @@ function serializeLibraryResults(results, options = {}) {
     score: result.score,
     snippet: result.snippet,
   }));
+}
+
+function sanitizeTraceEventForStorage(event) {
+  if (!event || typeof event !== "object") return null;
+  const type = typeof event.type === "string" ? event.type : "";
+  if (!type || type === "delta" || type === "done") return null;
+  const clean = { type };
+  for (const key of [
+    "label",
+    "detail",
+    "error",
+    "command",
+    "name",
+    "skillName",
+    "toolName",
+    "argsPreview",
+    "outputPreview",
+    "chunk",
+    "delta",
+  ]) {
+    if (typeof event[key] === "string") clean[key] = event[key].slice(0, 4000);
+  }
+  for (const key of [
+    "isError",
+    "failure",
+    "retrievedCount",
+    "injectedCount",
+    "uniqueSourceCount",
+    "maxContextChars",
+  ]) {
+    if (typeof event[key] === "boolean" || typeof event[key] === "number") {
+      clean[key] = event[key];
+    }
+  }
+  if (Array.isArray(event.results)) {
+    clean.results = serializeLibraryResults(event.results).slice(0, 50);
+  }
+  if (event.meta && typeof event.meta === "object" && !Array.isArray(event.meta)) {
+    clean.meta = {};
+    for (const [key, value] of Object.entries(event.meta)) {
+      if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+      ) {
+        clean.meta[key] = typeof value === "string" ? value.slice(0, 1000) : value;
+      }
+    }
+  }
+  return clean;
 }
 
 function getLibraryContextSourceResults(libraryContext) {
@@ -1290,7 +1417,7 @@ async function executeToolCallWithConfirmation(toolCall, emit) {
 
 function formatIndexedLibraryFilesExport(files, config) {
   const lines = [
-    "Ollama Pi Chat Indexed EPUB Files",
+    "Dive Indexed EPUB Files",
     `Generated: ${new Date().toISOString()}`,
     `Database: ${config.databasePath}`,
     `Total indexed EPUB files: ${files.length}`,
@@ -1333,6 +1460,18 @@ function buildCloudRequest(provider, settings, messages) {
   }
 
   if (provider === "anthropic") {
+    const systemParts = [];
+    const anthropicMessages = [];
+    for (const item of Array.isArray(messages) ? messages : []) {
+      if (!item || typeof item !== "object") continue;
+      if (item.role === "system") {
+        if (typeof item.content === "string" && item.content.trim()) {
+          systemParts.push(item.content.trim());
+        }
+        continue;
+      }
+      anthropicMessages.push(item);
+    }
     return {
       url: buildCloudEndpoint(baseUrl, "/messages"),
       headers: {
@@ -1343,7 +1482,8 @@ function buildCloudRequest(provider, settings, messages) {
       body: {
         model,
         max_tokens: maxTokens,
-        messages,
+        system: systemParts.join("\n\n"),
+        messages: anthropicMessages,
         stream: true,
       },
     };
@@ -1352,6 +1492,7 @@ function buildCloudRequest(provider, settings, messages) {
   const body = {
     model,
     messages,
+    max_tokens: maxTokens,
     stream: true,
   };
   if (provider === "openai") {
@@ -3500,7 +3641,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && urlPath === "/api/cloud/chat/stream") {
     let finished = false;
     const abortController = new AbortController();
+    const traceEvents = [];
     const emit = (event) => {
+      const storedEvent = sanitizeTraceEventForStorage(event);
+      if (storedEvent) traceEvents.push(storedEvent);
       if (!res.writableEnded) {
         res.write(JSON.stringify(event) + "\n");
       }
@@ -3532,7 +3676,7 @@ const server = http.createServer(async (req, res) => {
         history,
         originalMessage,
       );
-      let requestMessages = messages;
+      let requestMessages = withSharedSystemPrompt(messages);
       let librarySourceResults = [];
       let output = "";
       let usage = null;
@@ -3608,6 +3752,7 @@ const server = http.createServer(async (req, res) => {
         mode,
         {
           librarySources: librarySourceResults,
+          traceEvents,
         },
       );
       emit({
@@ -3685,10 +3830,13 @@ const server = http.createServer(async (req, res) => {
       let thinking = "";
       let emittedThinkingStart = false;
       let librarySourceResults = [];
+      const traceEvents = [];
       let transientLibraryContextMessage = null;
       let databasePriorityForLibraryTurn = false;
 
       const emit = (event) => {
+        const storedEvent = sanitizeTraceEventForStorage(event);
+        if (storedEvent) traceEvents.push(storedEvent);
         if (!res.writableEnded) {
           res.write(JSON.stringify(event) + "\n");
         }
@@ -3916,7 +4064,11 @@ const server = http.createServer(async (req, res) => {
                   storedMessages,
                   output,
                   mode,
-                  { librarySources: librarySourceResults },
+                  {
+                    librarySources: librarySourceResults,
+                    thinking,
+                    traceEvents,
+                  },
                 );
                 emit({
                   type: "done",
@@ -3940,7 +4092,11 @@ const server = http.createServer(async (req, res) => {
                 storedMessages,
                 output,
                 mode,
-                { librarySources: librarySourceResults },
+                {
+                  librarySources: librarySourceResults,
+                  thinking,
+                  traceEvents,
+                },
               );
               emit({ type: "done", response: output, thinking });
               if (!res.writableEnded) res.end();
@@ -4131,7 +4287,18 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && urlPath === "/api/pi/stream") {
     let session = null;
     let unsubscribe = null;
+    const traceEvents = [];
+    let thinking = "";
     const writeStreamEvent = (evt) => {
+      const storedEvent = sanitizeTraceEventForStorage(evt);
+      if (storedEvent) traceEvents.push(storedEvent);
+      if (evt?.type === "thinking_delta") {
+        if (typeof evt.thinking === "string") {
+          thinking = evt.thinking;
+        } else if (typeof evt.delta === "string") {
+          thinking += evt.delta;
+        }
+      }
       if (res.writableEnded) return;
       res.write(JSON.stringify(evt) + "\n");
     };
@@ -4212,7 +4379,11 @@ const server = http.createServer(async (req, res) => {
               messages,
               session.response || "",
               mode,
-              { librarySources: librarySourceResults },
+              {
+                librarySources: librarySourceResults,
+                thinking,
+                traceEvents,
+              },
             );
           }
           if (typeof unsubscribe === "function") unsubscribe();

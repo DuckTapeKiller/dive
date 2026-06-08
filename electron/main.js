@@ -8,7 +8,11 @@ const { app, BrowserWindow, dialog, shell } = require("electron");
 let mainWindow = null;
 let localPort = 8080;
 let localServerProcess = null;
-const SERVER_LABEL = "com.ollamapichat.server";
+const SERVER_LABEL = "com.dive.server";
+const LEGACY_SERVER_LABELS = [
+  "com.antifaz.server",
+  "com.ollamapichat.server",
+];
 const USER_ID = String(process.getuid ? process.getuid() : 501);
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
 const LAUNCH_PLIST_PATH = path.join(LAUNCH_AGENTS_DIR, `${SERVER_LABEL}.plist`);
@@ -31,7 +35,7 @@ function installBrokenPipeGuards() {
   process.on("uncaughtException", (error) => {
     if (isBrokenPipeError(error)) return;
     dialog.showErrorBox(
-      "Ollama Pi Chat Error",
+      "Dive Error",
       String(error?.stack || error?.message || error),
     );
     app.quit();
@@ -121,7 +125,7 @@ function copyIfExists(srcPath, dstPath, options = {}) {
   } catch (error) {
     if (required) throw error;
     console.warn(
-      `Ollama Pi Chat runtime sync skipped for ${srcPath}: ${error.message}`,
+      `Dive runtime sync skipped for ${srcPath}: ${error.message}`,
     );
   }
 }
@@ -193,6 +197,10 @@ function syncRuntimeFiles(runtimeDir) {
     path.join(runtimeDir, "font_faces.css"),
     { required: true },
   );
+  copyIfExists(path.join(appRoot, "assets"), path.join(runtimeDir, "assets"), {
+    recursive: true,
+    required: true,
+  });
   copyIfExists(path.join(appRoot, "fonts"), path.join(runtimeDir, "fonts"), {
     recursive: true,
   });
@@ -280,6 +288,18 @@ function installOrRefreshLaunchAgent(serverPort) {
   });
   fs.writeFileSync(LAUNCH_PLIST_PATH, plist, "utf8");
 
+  for (const legacyLabel of LEGACY_SERVER_LABELS) {
+    if (legacyLabel === SERVER_LABEL) continue;
+    const legacyPlistPath = path.join(
+      LAUNCH_AGENTS_DIR,
+      `${legacyLabel}.plist`,
+    );
+    runLaunchctl(["bootout", `gui/${USER_ID}`, legacyPlistPath], false);
+    runLaunchctl(["bootout", `gui/${USER_ID}/${legacyLabel}`], false);
+    try {
+      fs.rmSync(legacyPlistPath, { force: true });
+    } catch (_error) {}
+  }
   runLaunchctl(["bootout", `gui/${USER_ID}`, LAUNCH_PLIST_PATH], false);
   runLaunchctl(["bootstrap", `gui/${USER_ID}`, LAUNCH_PLIST_PATH], false);
   runLaunchctl(["enable", `gui/${USER_ID}/${SERVER_LABEL}`], false);
@@ -357,7 +377,7 @@ function createMainWindow() {
     height: 860,
     minWidth: 720,
     minHeight: 480,
-    backgroundColor: "#000000",
+    backgroundColor: "#1f1f1f",
     show: false,
     icon: windowIcon,
     titleBarStyle: process.platform === "darwin" ? "hidden" : "default",
@@ -409,7 +429,7 @@ if (!singleLock) {
       createMainWindow();
     } catch (error) {
       dialog.showErrorBox(
-        "Ollama Pi Chat Startup Error",
+        "Dive Startup Error",
         String(error?.message || error),
       );
       app.quit();

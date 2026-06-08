@@ -1,11 +1,11 @@
 {
-  "name": "ollama-pi-chat-desktop",
-  "version": "1.0.8",
+  "name": "dive-desktop",
+  "version": "1.0.9",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
   },
-  "description": "Ollama Pi Chat desktop wrapper (local-only)",
+  "description": "Dive desktop wrapper (local-first AI chat)",
   "author": "DuckTapeKiller",
   "main": "electron/main.js",
   "scripts": {
@@ -37,8 +37,8 @@
   },
   "build": {
     "publish": null,
-    "appId": "local.ollamapichat.app",
-    "productName": "Ollama Pi Chat",
+    "appId": "local.dive.app",
+    "productName": "Dive",
     "asarUnpack": [
       "server.js",
       "skills.js",
@@ -48,6 +48,7 @@
       "font_faces.css",
       "prompts.json",
       "package.json",
+      "assets/**/*",
       "node_modules/**/*",
       "security/**/*",
       "library/**/*"
@@ -79,7 +80,7 @@
       "identity": null
     },
     "dmg": {
-      "title": "Ollama Pi Chat",
+      "title": "Dive",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "linux": {
@@ -89,7 +90,7 @@
       ],
       "category": "Utility",
       "icon": "assets/icons/icon-1024.png",
-      "maintainer": "El Peregrino <el-peregrino@local.invalid>"
+      "maintainer": "DuckTapeKiller <DuckTapeKiller@users.noreply.github.com>"
     },
     "appImage": {
       "artifactName": "${productName}-${version}-${arch}.${ext}"

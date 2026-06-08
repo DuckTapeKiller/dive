@@ -1,6 +1,6 @@
 # Local Library Research
 
-This folder contains the offline indexing and search layer for Ollama Pi Chat.
+This folder contains the offline indexing and search layer for Dive.
 It reads configured EPUB, TXT, and Markdown sources, builds a SQLite database
 in `~/ollama-pi-chat/library.sqlite`, and can inject the most relevant passages
 into Ollama chats when Local Library Research is enabled in settings. The

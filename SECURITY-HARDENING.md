@@ -1,8 +1,8 @@
-# Ollama Pi Chat Security Hardening
+# Dive Security Hardening
 
 This checklist maps to the top 10 hardening goals and tells you what is implemented in this repo versus what must be applied in your real Pi runtime.
 
-## Implemented In Ollama Pi Chat Code
+## Implemented In Dive Code
 
 1. Shared-page traffic defaults to Ollama safety flow and requires explicit override before Pi mode execution.
 2. Pi RPC permission dialogs are handled interactively (`extension_ui_request`/`extension_ui_response`) to prevent silent hangs.

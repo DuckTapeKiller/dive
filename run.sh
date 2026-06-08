@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Ollama Pi Chat Launcher for macOS
+# Dive Launcher for macOS
 
 echo "============================================="
-echo "     OLLAMA PI CHAT LOCAL LAUNCHER"
+echo "     DIVE LOCAL LAUNCHER"
 echo "============================================="
 
 # Get current script folder directory

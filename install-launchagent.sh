@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Ollama Pi Chat launchd Service Installer for macOS
+# Dive launchd Service Installer for macOS
 # Registers and starts the compiled standalone binary as an always-on background service.
 
 echo "============================================="
-echo "   INSTALLING OLLAMA PI CHAT BACKGROUND SERVICE"
+echo "   INSTALLING DIVE BACKGROUND SERVICE"
 echo "============================================="
 
 # 1. Verify that the binary has been compiled
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BINARY="$DIR/dist/ollama-pi-chat"
+BINARY="$DIR/dist/dive"
 
 if [ ! -f "$BINARY" ]; then
     echo "ERROR: Standalone binary not found at $BINARY"
@@ -18,7 +18,8 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 # 2. Define service variables
-PLIST_LABEL="com.user.ollamapichat"
+PLIST_LABEL="com.user.dive"
+LEGACY_PLIST_LABELS=("com.user.antifaz" "com.user.ollamapichat")
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 LOG_DIR="$HOME/ollama-pi-chat"
 KEEP_DAEMON_LOGS="${OLLAMA_PI_CHAT_KEEP_DAEMON_LOGS:-0}"
@@ -87,6 +88,10 @@ EOF
 # (launchctl load/unload were deprecated in macOS 10.10)
 echo "Unregistering any existing service..."
 launchctl bootout "gui/$UID/$PLIST_LABEL" 2>/dev/null || true
+for LEGACY_PLIST_LABEL in "${LEGACY_PLIST_LABELS[@]}"; do
+    launchctl bootout "gui/$UID/$LEGACY_PLIST_LABEL" 2>/dev/null || true
+    rm -f "$HOME/Library/LaunchAgents/$LEGACY_PLIST_LABEL.plist"
+done
 
 echo "Registering and starting the service..."
 launchctl bootstrap "gui/$UID" "$PLIST_PATH"
