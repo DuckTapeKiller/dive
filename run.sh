@@ -8,7 +8,7 @@ echo "============================================="
 
 # Get current script folder directory
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-SETTINGS_FILE="$HOME/ollama-pi-chat/pi-settings.json"
+SETTINGS_FILE="$HOME/dive/pi-settings.json"
 SERVER_PORT=8080
 if [ -f "$SETTINGS_FILE" ]; then
     EXTRACTED_PORT=$(node -e "

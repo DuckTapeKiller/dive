@@ -8,7 +8,7 @@ This checklist maps to the top 10 hardening goals and tells you what is implemen
 2. Pi RPC permission dialogs are handled interactively (`extension_ui_request`/`extension_ui_response`) to prevent silent hangs.
 3. Pi RPC sessions auto-timeout and stale sessions are cleaned up.
 4. Frontend JSON parsing is hardened with HTTP status checks and empty-body handling.
-5. Security event logging is added at `~/ollama-pi-chat/security-events.jsonl`:
+5. Security event logging is added at `~/dive/security-events.jsonl`:
    - prompt source
    - permission prompt shown
    - permission approval/denial responses

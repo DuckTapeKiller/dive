@@ -3996,7 +3996,7 @@
       };
       let databaseConfig = {
         version: 1,
-        databasePath: "~/ollama-pi-chat/library.sqlite",
+        databasePath: "~/dive/library.sqlite",
         sources: [
           {
             name: "Books",
@@ -4886,7 +4886,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           version: 1,
           databasePath:
             String(source.databasePath || defaults.databasePath || "").trim() ||
-            "~/ollama-pi-chat/library.sqlite",
+            "~/dive/library.sqlite",
           sources,
           chunking: {
             targetChars: clampInteger(

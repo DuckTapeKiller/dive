@@ -249,7 +249,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 
 ### 3. Database
 
-- **Database File**: Chooses where the generated SQLite index is stored. The default is `~/ollama-pi-chat/library.sqlite`.
+- **Database File**: Chooses where the generated SQLite index is stored. The default is `~/dive/library.sqlite`.
 - **Enable Database Context**: Searches your private SQLite library before sending the prompt to the active chat mode. When this is disabled, Ollama, Pi, and Cloud answer normally without database context. In Cloud mode, retrieved passages are sent to the selected provider.
 - **Passages**: Controls how many retrieved chunks are inserted into the model context.
 - **Context Chars**: Caps how much retrieved library text is sent to the model.
@@ -263,7 +263,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 - **Build / Update Index**: Scans changed source files and updates `library.sqlite`. It also repairs missing embeddings for unchanged files, so a temporary embedding failure can be retried without re-reading every EPUB.
 - **Retry Embeddings**: Scans the existing index for passages missing embedding/vector rows and retries them. This is useful after Ollama, sqlite-vec, or the embedding model temporarily failed.
 - **Reindex All**: Rebuilds every configured source even if the file did not change.
-- **Export Indexed Files**: Writes a plain text list of indexed EPUB files to `~/ollama-pi-chat/indexed-epub-files.txt` and reveals the file in Finder.
+- **Export Indexed Files**: Writes a plain text list of indexed EPUB files to `~/dive/indexed-epub-files.txt` and reveals the file in Finder.
 - **Pause Index**: Pauses the running index job between files or embedding batches. A paused job will not auto-resume until you start indexing again.
 
 ### 4. Pi Configuration Settings
@@ -308,7 +308,7 @@ Click the **Plug Icon** in the top title bar to open the MCP Panel. You can past
 
 ## Database Research From Scratch
 
-The Database feature lets Ollama, Pi, and Cloud modes answer with passages retrieved from your own local files. It is not automatic until you configure sources, build the index, and turn on Database Context. The generated index lives in SQLite, usually at `~/ollama-pi-chat/library.sqlite`. In Cloud mode, retrieved passages are sent to the selected provider with your prompt.
+The Database feature lets Ollama, Pi, and Cloud modes answer with passages retrieved from your own local files. It is not automatic until you configure sources, build the index, and turn on Database Context. The generated index lives in SQLite, usually at `~/dive/library.sqlite`. In Cloud mode, retrieved passages are sent to the selected provider with your prompt.
 
 ### What the Database Does
 
@@ -330,7 +330,7 @@ When **Enable Database Context** is off, none of this retrieval context is added
 3. Find the **Database** section with the database icon.
 4. Confirm **Database File**. The default is:
    ```text
-   ~/ollama-pi-chat/library.sqlite
+   ~/dive/library.sqlite
    ```
 5. Under **Source Folders**, add one row per folder you want indexed.
 6. For a Calibre EPUB library, use:
@@ -509,7 +509,7 @@ If semantic search is enabled but sqlite-vec or Ollama embeddings are not availa
 
 The indexer stores compressed passage text. If keyword FTS is enabled, it creates a separate lightweight FTS5 keyword index. The app also compacts the SQLite file after an index run so old deleted pages are returned to disk.
 
-If you previously built an older plain-text/FTS-heavy database, create a fresh compact index. Pause any active index job, quit the app, delete the old `~/ollama-pi-chat/library.sqlite` file, reopen the app, run **Estimate Index Size**, then run **Build / Update Index**. The old database format will still be readable, but it will not become compact until files are reindexed.
+If you previously built an older plain-text/FTS-heavy database, create a fresh compact index. Pause any active index job, quit the app, delete the old `~/dive/library.sqlite` file, reopen the app, run **Estimate Index Size**, then run **Build / Update Index**. The old database format will still be readable, but it will not become compact until files are reindexed.
 
 ### Embedding Model Dropdown
 
@@ -530,12 +530,12 @@ Changing the embedding model requires **Reindex All**. Old embeddings were creat
 - **Retry Embeddings**: Retries missing embedding/vector rows without forcing every EPUB to be re-extracted.
 - **Reindex All**: Processes every configured file again. Use this after changing the embedding model, enabling semantic search, changing sqlite-vec, enabling/disabling keyword FTS, or changing chunking/search assumptions.
 - **Refresh Status**: Reloads the database status, including file count, passage count, embedding count, source count, and whether sqlite-vec is active.
-- **Export Indexed Files**: Writes `~/ollama-pi-chat/indexed-epub-files.txt`, a plain text report of every indexed EPUB path, title, author, passage count, and index date, then reveals the file in Finder.
+- **Export Indexed Files**: Writes `~/dive/indexed-epub-files.txt`, a plain text report of every indexed EPUB path, title, author, passage count, and index date, then reveals the file in Finder.
 - **Pause Index**: Requests a pause. If the job is compacting SQLite, the pause waits until the current database operation finishes.
 
-Large libraries can take a long time on the first run. A library with thousands of EPUBs may take hours depending on EPUB quality, disk speed, and whether embeddings are enabled. If you close the app while indexing, the local server process stops and the active batch is interrupted. The app writes the job state to `~/ollama-pi-chat/library-index-job.json`, and on the next launch it automatically resumes a job that was still marked as running. If you press **Pause Index**, the job is marked as paused and will not auto-resume until you start indexing again.
+Large libraries can take a long time on the first run. A library with thousands of EPUBs may take hours depending on EPUB quality, disk speed, and whether embeddings are enabled. If you close the app while indexing, the local server process stops and the active batch is interrupted. The app writes the job state to `~/dive/library-index-job.json`, and on the next launch it automatically resumes a job that was still marked as running. If you press **Pause Index**, the job is marked as paused and will not auto-resume until you start indexing again.
 
-**Embed Errors** are final embedding failures after automatic retries. They are separate from **Skipped docs**. Skipped docs are usually files that could not produce enough readable text, such as image-only comics or malformed EPUBs. Embedding errors are written to `~/ollama-pi-chat/library-index-errors.jsonl` with the file path, chunk ids, and error message. The Settings database panel also shows recent issues while the job is running.
+**Embed Errors** are final embedding failures after automatic retries. They are separate from **Skipped docs**. Skipped docs are usually files that could not produce enough readable text, such as image-only comics or malformed EPUBs. Embedding errors are written to `~/dive/library-index-errors.jsonl` with the file path, chunk ids, and error message. The Settings database panel also shows recent issues while the job is running.
 
 For compactness, the database stores full retrieved passages, but semantic embeddings are generated from a shorter head/tail excerpt of long passages. This avoids Ollama embedding-model context-length failures without increasing the number of stored passages.
 
@@ -587,7 +587,7 @@ Dive is designed from the ground up to respect your digital sovereignty.
 
 - **Local Storage Directory**: By default, all backend configuration and logs are kept in:
   ```
-  /Users/your_username/ollama-pi-chat/
+  /Users/your_username/dive/
   ```
   Inside this folder, you will find:
   - `conversations.json`: Your entire chat history, locally cached.
@@ -603,9 +603,19 @@ Dive is designed from the ground up to respect your digital sovereignty.
   - `daemon.log` / `daemon.error.log`: Output logs when running the LaunchAgent background daemon.
 - **Browser localStorage**: Browser-side fallbacks, active prompt selection, and some UI state are saved in the browser's sandbox storage (`localStorage`). Clearing your browser cache or storage may reset browser-only UI state.
 
+### Migrating From the Old Data Folder
+
+Older builds stored local app data in `~/ollama-pi-chat`. Dive now uses `~/dive` by default. To keep an existing database index, quit the app, stop any old background server, then rename the folder before opening the new app:
+
+```bash
+mv ~/ollama-pi-chat ~/dive
+```
+
+Do not delete `library.sqlite`, `library.sqlite-wal`, `library.sqlite-shm`, or `library-config.json` unless you intentionally want to rebuild the database from scratch. After migration, confirm **Settings > Database > Database File** points to `~/dive/library.sqlite`.
+
 ### Cloud Mode Privacy
 
-Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/ollama-pi-chat/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `GEMINI_API_KEY`).
+Cloud mode is intentionally not local-only. When you use Cloud mode, prompts, uploaded file text, and conversation context for that request are sent to the selected provider API. API keys are stored locally in `~/dive/cloud-settings.json` or can be supplied through environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, or `GEMINI_API_KEY`).
 
 ### Network Safety Protections
 
@@ -674,7 +684,7 @@ The local Node.js server implements active security headers to protect your loca
 
 - **What it means**: The indexer has not found readable EPUB, TXT, or Markdown files in the configured source folders.
 - **How to fix it**:
-  1. Open `~/ollama-pi-chat/library-config.json` and confirm your source paths exist.
+  1. Open `~/dive/library-config.json` and confirm your source paths exist.
   2. Confirm your DRM-free EPUB books are in the configured books folder, for example `~/Libros`. Calibre `metadata.opf`, cover images, PDFs, and image-only comics are not indexed as content.
   3. Run:
      ```bash
@@ -737,7 +747,7 @@ The local Node.js server implements active security headers to protect your loca
 
 Before committing modifications or publishing this folder to a shared repository:
 
-1. **Clean Local Logs**: Ensure generated conversation lists or security events in `~/ollama-pi-chat` are not added to git history. The standard `.gitignore` file already excludes build folders and local storage.
+1. **Clean Local Logs**: Ensure generated conversation lists or security events in `~/dive` are not added to git history. The standard `.gitignore` file already excludes build folders and local storage.
 2. **Remove Personal Paths**: Do not hardcode specific system paths (e.g., `/Users/your_name/`) or local developer API tokens.
 3. **Verify Signatures**: If code modifications are made, SEA injection blobs must be compiled using thin mach-O binaries so codesign validation checks match. Run the clean export rsync command:
    ```bash

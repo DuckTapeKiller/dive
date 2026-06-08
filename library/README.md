@@ -2,7 +2,7 @@
 
 This folder contains the offline indexing and search layer for Dive.
 It reads configured EPUB, TXT, and Markdown sources, builds a SQLite database
-in `~/ollama-pi-chat/library.sqlite`, and can inject the most relevant passages
+in `~/dive/library.sqlite`, and can inject the most relevant passages
 into Ollama chats when Local Library Research is enabled in settings. The
 default Books source indexes Calibre EPUB files only; note folders can still
 index `.md` and `.txt` files.
@@ -15,17 +15,17 @@ keyword index and increases database size.
 
 The indexer only reads source files. It does not edit, convert, rename, or
 delete files in your books or notes folders. EPUBs are opened read-only and
-parsed in memory. All generated data is written under `~/ollama-pi-chat/`.
-Interrupted index jobs are recorded in `~/ollama-pi-chat/library-index-job.json`
+parsed in memory. All generated data is written under `~/dive/`.
+Interrupted index jobs are recorded in `~/dive/library-index-job.json`
 so the desktop app can resume a running job after reopening. Pressing Pause in
 the app marks the job as paused and prevents automatic resume.
 Embedding failures, skipped documents, and file-level index errors are written
-to `~/ollama-pi-chat/library-index-errors.jsonl` for later inspection.
+to `~/dive/library-index-errors.jsonl` for later inspection.
 
 ## Setup
 
 1. Keep DRM-free EPUB books in your normal books folder, for example `~/Libros`.
-2. Open `~/ollama-pi-chat/library-config.json` after the first run and set your
+2. Open `~/dive/library-config.json` after the first run and set your
    source paths. Leave any unused source path empty.
 3. Run:
 
@@ -58,7 +58,7 @@ text are reported under `skippedDocuments`.
 
 Semantic vector search is optional but recommended for large personal libraries.
 To enable it, install sqlite-vec, set `embedding.enabled` to `true`, and set
-`embedding.sqliteVecExtensionPath` in `~/ollama-pi-chat/library-config.json`.
+`embedding.sqliteVecExtensionPath` in `~/dive/library-config.json`.
 The indexer stores embeddings with your configured Ollama embedding model and
 uses sqlite-vec when the extension is available.
 

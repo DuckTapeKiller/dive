@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "databasePath": "~/ollama-pi-chat/library.sqlite",
+  "databasePath": "~/dive/library.sqlite",
   "sources": [
     {
       "name": "Books",

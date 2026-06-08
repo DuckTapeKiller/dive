@@ -21,7 +21,7 @@ fi
 PLIST_LABEL="com.user.dive"
 LEGACY_PLIST_LABELS=("com.user.antifaz" "com.user.ollamapichat")
 PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
-LOG_DIR="$HOME/ollama-pi-chat"
+LOG_DIR="$HOME/dive"
 KEEP_DAEMON_LOGS="${OLLAMA_PI_CHAT_KEEP_DAEMON_LOGS:-0}"
 
 if [ "$KEEP_DAEMON_LOGS" = "1" ]; then

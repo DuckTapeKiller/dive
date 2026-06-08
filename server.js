@@ -40,7 +40,7 @@ const PDFTOTEXT_MAX_BUFFER = 10 * 1024 * 1024;
 let activeLibraryIndexJob = null;
 let lastLibraryIndexJob = null;
 
-const DATA_DIR = path.join(os.homedir(), "ollama-pi-chat");
+const DATA_DIR = path.join(os.homedir(), "dive");
 try {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });

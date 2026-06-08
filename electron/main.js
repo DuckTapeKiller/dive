@@ -16,7 +16,7 @@ const LEGACY_SERVER_LABELS = [
 const USER_ID = String(process.getuid ? process.getuid() : 501);
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
 const LAUNCH_PLIST_PATH = path.join(LAUNCH_AGENTS_DIR, `${SERVER_LABEL}.plist`);
-const SETTINGS_DATA_DIR = path.join(os.homedir(), "ollama-pi-chat");
+const SETTINGS_DATA_DIR = path.join(os.homedir(), "dive");
 const PI_SETTINGS_FILE = path.join(SETTINGS_DATA_DIR, "pi-settings.json");
 
 function isBrokenPipeError(error) {
