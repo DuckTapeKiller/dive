@@ -2853,6 +2853,86 @@
                 keyword search only.
               </div>
             </div>
+            </div>
+            <div class="setting-row">
+              <label style="font-size: 10px">SEARCH ALGORITHM SETTINGS</label>
+              <div class="setting-row-inline" style="gap: 12px">
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">RRF k (1-100)</label>
+                  <div class="setting-number">
+                    <input id="databaseRrfKInput" type="number" min="1" max="100" step="1" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseRrfKInput" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseRrfKInput" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">CONTENT KEYWORD WEIGHT (0-1)</label>
+                  <div class="setting-number">
+                    <input id="databaseContentKeywordBonusInput" type="number" min="0" max="1" step="0.01" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseContentKeywordBonusInput" data-step="0.05" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseContentKeywordBonusInput" data-step="0.05" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row-inline" style="gap: 12px; margin-top: 8px;">
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">METADATA KEYWORD WEIGHT (0-1)</label>
+                  <div class="setting-number">
+                    <input id="databaseMetadataKeywordBonusInput" type="number" min="0" max="1" step="0.01" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseMetadataKeywordBonusInput" data-step="0.05" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseMetadataKeywordBonusInput" data-step="0.05" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">SEMANTIC WEIGHT (0-3)</label>
+                  <div class="setting-number">
+                    <input id="databaseSemanticWeightInput" type="number" min="0" max="3" step="0.1" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseSemanticWeightInput" data-step="0.1" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseSemanticWeightInput" data-step="0.1" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row-inline" style="gap: 12px; margin-top: 8px;">
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">KEYWORD (FTS) WEIGHT (0-3)</label>
+                  <div class="setting-number">
+                    <input id="databaseKeywordWeightInput" type="number" min="0" max="3" step="0.1" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseKeywordWeightInput" data-step="0.1" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseKeywordWeightInput" data-step="0.1" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">METADATA SEARCH WEIGHT (0-3)</label>
+                  <div class="setting-number">
+                    <input id="databaseMetadataWeightInput" type="number" min="0" max="3" step="0.1" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseMetadataWeightInput" data-step="0.1" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseMetadataWeightInput" data-step="0.1" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row" style="flex: 1">
+                  <label style="font-size: 10px">SOURCE PATH WEIGHT (0-3)</label>
+                  <div class="setting-number">
+                    <input id="databaseSourceWeightInput" type="number" min="0" max="3" step="0.1" />
+                    <div class="setting-number-controls">
+                      <button type="button" class="setting-number-btn" data-target="databaseSourceWeightInput" data-step="0.1" data-dir="up">+</button>
+                      <button type="button" class="setting-number-btn" data-target="databaseSourceWeightInput" data-step="0.1" data-dir="down">-</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="setting-row">
               <label style="font-size: 10px">SOURCE FOLDERS</label>
               <div id="databaseSourcesList"></div>
@@ -5124,6 +5204,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const sqliteVecInput = document.getElementById(
           "databaseSqliteVecPathInput",
         );
+        const rrfKInput = document.getElementById("databaseRrfKInput");
+        const contentBonusInput = document.getElementById("databaseContentKeywordBonusInput");
+        const metadataBonusInput = document.getElementById("databaseMetadataKeywordBonusInput");
+        const semanticWeightInput = document.getElementById("databaseSemanticWeightInput");
+        const keywordWeightInput = document.getElementById("databaseKeywordWeightInput");
+        const metadataWeightInput = document.getElementById("databaseMetadataWeightInput");
+        const sourceWeightInput = document.getElementById("databaseSourceWeightInput");
         if (dbPathInput) dbPathInput.value = databaseConfig.databasePath;
         if (enabledInput) enabledInput.checked = settings.enabled;
         if (limitInput) limitInput.value = String(settings.limit);
@@ -5161,6 +5248,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           sqliteVecInput.value =
             databaseConfig.embedding.sqliteVecExtensionPath;
         }
+        if (rrfKInput) rrfKInput.value = String(databaseConfig.search.rrfK);
+        if (contentBonusInput) contentBonusInput.value = String(databaseConfig.search.contentKeywordBonus);
+        if (metadataBonusInput) metadataBonusInput.value = String(databaseConfig.search.metadataKeywordBonus);
+        if (semanticWeightInput) semanticWeightInput.value = String(databaseConfig.search.semanticWeight);
+        if (keywordWeightInput) keywordWeightInput.value = String(databaseConfig.search.keywordWeight);
+        if (metadataWeightInput) metadataWeightInput.value = String(databaseConfig.search.metadataWeight);
+        if (sourceWeightInput) sourceWeightInput.value = String(databaseConfig.search.sourceWeight);
         renderDatabaseSources(databaseConfig.sources);
       }
 
@@ -5245,6 +5339,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             maxLimit: requestedMaxLimit,
             maxContextChars: document.getElementById("libraryMaxContextInput")
               ?.value,
+            rrfK: document.getElementById("databaseRrfKInput")?.value,
+            contentKeywordBonus: document.getElementById("databaseContentKeywordBonusInput")?.value,
+            metadataKeywordBonus: document.getElementById("databaseMetadataKeywordBonusInput")?.value,
+            semanticWeight: document.getElementById("databaseSemanticWeightInput")?.value,
+            keywordWeight: document.getElementById("databaseKeywordWeightInput")?.value,
+            metadataWeight: document.getElementById("databaseMetadataWeightInput")?.value,
+            sourceWeight: document.getElementById("databaseSourceWeightInput")?.value,
           },
           embedding: {
             ...current.embedding,
