@@ -355,6 +355,13 @@ function normalizeConfig(rawConfig) {
       50000,
       12000,
     ),
+    rrfK: clampNumber(merged.search?.rrfK, 1, 100, 60),
+    semanticWeight: clampNumber(merged.search?.semanticWeight, 0, 3, 1.0),
+    keywordWeight: clampNumber(merged.search?.keywordWeight, 0, 3, 1.1),
+    metadataWeight: clampNumber(merged.search?.metadataWeight, 0, 3, 0.8),
+    sourceWeight: clampNumber(merged.search?.sourceWeight, 0, 3, 1.2),
+    contentKeywordBonus: clampNumber(merged.search?.contentKeywordBonus, 0, 1, 0.16),
+    metadataKeywordBonus: clampNumber(merged.search?.metadataKeywordBonus, 0, 1, 0.06),
   };
   const rawChunking = merged.chunking || {};
   const usesLegacyChunkDefaults =
@@ -375,7 +382,9 @@ function normalizeConfig(rawConfig) {
   };
   const sources = (Array.isArray(merged.sources) ? merged.sources : [])
     .map((source, index) => {
-      const sourcePath = expandHome(String(source?.path || "").trim());
+      const rawSourcePath = String(source?.path || "").trim();
+      const unescapedPath = rawSourcePath.replace(/\\([\s~()\[\]{}*?])/g, "$1");
+      const sourcePath = expandHome(unescapedPath);
       const sourceName = String(source?.name || `Source ${index + 1}`).trim();
       const sourceType =
         String(source?.type || "document").trim() || "document";
@@ -1162,7 +1171,10 @@ function buildChunks(text, chunking) {
 function collectSourceFiles(config) {
   const files = [];
   for (const source of config.sources) {
-    if (!fs.existsSync(source.path)) continue;
+    if (!fs.existsSync(source.path)) {
+      console.warn(`[Library] Source path not found: ${source.path}`);
+      continue;
+    }
     const root = fs.realpathSync(source.path);
     const stack = [root];
     const extensionSet = new Set(source.extensions);
@@ -1171,7 +1183,8 @@ function collectSourceFiles(config) {
       let entries = [];
       try {
         entries = fs.readdirSync(current, { withFileTypes: true });
-      } catch (_error) {
+      } catch (error) {
+        console.warn(`[Library] Could not read directory ${current}: ${error.message}`);
         continue;
       }
       for (const entry of entries) {
@@ -2718,10 +2731,11 @@ LIMIT 5000;`,
   return rows
     .map((row) => normalizeResult(row, "source"))
     .map((result) => {
-      const contentScore = computePlannedContentBonus(result.text, queryPlan);
+      const contentScore = computePlannedContentBonus(result.text, queryPlan, config);
       const headingScore = computePlannedContentBonus(
         result.heading,
         queryPlan,
+        config
       );
       const sourceScore = computeSourceHintBoost(result, sourceHints, true);
       const penalty = computePassagePenalty(result, query);
@@ -2811,6 +2825,7 @@ function computeMetadataBonus(
   quotedTerms,
   sourceHints,
   strongSourceHints,
+  config = {}
 ) {
   const haystack = normalizeSearchText(
     [result.title, result.author, result.path, result.heading]
@@ -2818,31 +2833,37 @@ function computeMetadataBonus(
       .join(" "),
   );
   let bonus = computeSourceHintBoost(result, sourceHints, strongSourceHints);
+  const metadataKeywordBonus = config.search?.metadataKeywordBonus ?? 0.06;
+  const exactPhraseBonus = metadataKeywordBonus * 3;
   for (const term of quotedTerms) {
-    if (term && haystack.includes(term)) bonus += 0.18;
+    if (term && haystack.includes(term)) bonus += exactPhraseBonus;
   }
   for (const term of searchTerms) {
     if (SEARCH_STOP_WORDS.has(term)) continue;
-    if (haystack.includes(term)) bonus += 0.06;
+    if (haystack.includes(term)) bonus += metadataKeywordBonus;
   }
   return Math.min(bonus, DEFAULT_METADATA_CAP + DEFAULT_SOURCE_HINT_CAP);
 }
 
-function computePlannedContentBonus(text, plan = {}) {
+function computePlannedContentBonus(text, plan = {}, config = {}) {
   const haystack = normalizeSearchText(text);
   if (!haystack) return 0;
   let bonus = 0;
+  const contentKeywordBonus = config.search?.contentKeywordBonus ?? 0.16;
+  const exactPhraseBonus = contentKeywordBonus * 1.75;
+  const quotedTermBonus = contentKeywordBonus * 0.75;
+  const expansionTermBonus = contentKeywordBonus * 0.25;
   for (const phrase of plan.quotedPhrases || []) {
-    if (phrase && haystack.includes(phrase)) bonus += 0.28;
+    if (phrase && haystack.includes(phrase)) bonus += exactPhraseBonus;
   }
   for (const term of plan.quotedTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += 0.12;
+    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += quotedTermBonus;
   }
   for (const term of plan.primaryTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += 0.16;
+    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += contentKeywordBonus;
   }
   for (const term of plan.expansionTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += 0.04;
+    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += expansionTermBonus;
   }
   return Math.min(bonus, 0.85);
 }
@@ -2929,7 +2950,7 @@ function fuseRankedResults(groups, options = {}) {
   return Array.from(candidates.values());
 }
 
-function applyHybridBonuses(candidates, query, sourceHints, plan = null) {
+function applyHybridBonuses(candidates, query, sourceHints, plan = null, config = {}) {
   const queryPlan = plan || buildSearchPlan(query, sourceHints);
   const searchTerms = queryPlan.metadataTerms.length
     ? queryPlan.metadataTerms
@@ -2943,20 +2964,23 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null) {
       queryPlan.quotedPhrases,
       sourceHints,
       strongSourceHints,
+      config
     );
     const contentBonus = computePlannedContentBonus(
       candidate.result.text,
       queryPlan,
+      config
     );
     const headingBonus = computePlannedContentBonus(
       candidate.result.heading,
       queryPlan,
+      config
     );
     const primaryContentBonus = resultHasStrongPrimaryContent(
       candidate.result,
       queryPlan,
     )
-      ? 0.12
+      ? config.search?.contentKeywordBonus ?? 0.12
       : 0;
     const conceptPenalty =
       queryPlan.concepts.length > 0 &&
@@ -3072,7 +3096,7 @@ async function searchLibrary(query, options = {}) {
   if (isVectorSearchConfigured(config)) {
     try {
       const vectorResults = await searchVector(config, query, candidateLimit);
-      groups.push({ name: "semantic", weight: 1, results: vectorResults });
+      groups.push({ name: "semantic", weight: config.search?.semanticWeight ?? 1.0, results: vectorResults });
     } catch (error) {
       console.warn(
         `Vector search failed; falling back to FTS5: ${error.message}`,
@@ -3087,7 +3111,7 @@ async function searchLibrary(query, options = {}) {
     sourceHints,
     plan,
   );
-  groups.push({ name: "keyword", weight: 1.1, results: ftsResults });
+  groups.push({ name: "keyword", weight: config.search?.keywordWeight ?? 1.1, results: ftsResults });
 
   const metadataResults = await searchMetadata(
     config,
@@ -3096,7 +3120,7 @@ async function searchLibrary(query, options = {}) {
     sourceHints,
     plan,
   );
-  groups.push({ name: "metadata", weight: 0.8, results: metadataResults });
+  groups.push({ name: "metadata", weight: config.search?.metadataWeight ?? 0.8, results: metadataResults });
 
   const sourceResults = await searchSourceDeepScan(
     config,
@@ -3105,16 +3129,17 @@ async function searchLibrary(query, options = {}) {
     sourceHints,
     plan,
   );
-  groups.push({ name: "source", weight: 1.2, results: sourceResults });
+  groups.push({ name: "source", weight: config.search?.sourceWeight ?? 1.2, results: sourceResults });
 
+  options.rrfK = config.search?.rrfK ?? 60;
   let candidates = fuseRankedResults(groups, options);
   if (!candidates.length && sourceHints.length) {
     candidates = fuseRankedResults([
-      { name: "source", weight: 1, results: sourceResults },
+      { name: "source", weight: config.search?.sourceWeight ?? 1.2, results: sourceResults },
     ]);
   }
 
-  const scored = applyHybridBonuses(candidates, query, sourceHints, plan).sort(
+  const scored = applyHybridBonuses(candidates, query, sourceHints, plan, config).sort(
     (a, b) => {
       if (a.score !== b.score) return b.score - a.score;
       return String(a.result.path || "").localeCompare(
