@@ -2853,7 +2853,6 @@
                 keyword search only.
               </div>
             </div>
-            </div>
             <div class="setting-row">
               <label style="font-size: 10px">SEARCH ALGORITHM SETTINGS</label>
               <div class="setting-row-inline" style="gap: 12px">
@@ -7183,6 +7182,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ) {
           message.traceEvents = metadata.traceEvents;
         }
+        if (
+          Array.isArray(metadata.passages) &&
+          metadata.passages.length
+        ) {
+          message.passages = metadata.passages;
+        }
         if (typeof metadata.status === "string" && metadata.status.trim()) {
           message.status = metadata.status.trim();
         }
@@ -7199,6 +7204,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           traceEvents: Array.isArray(metadata.traceEvents)
             ? metadata.traceEvents.map((evt) =>
                 evt && typeof evt === "object" ? { ...evt } : evt,
+              )
+            : [],
+          passages: Array.isArray(metadata.passages)
+            ? metadata.passages.map((p) =>
+                p && typeof p === "object" ? { ...p } : p,
               )
             : [],
           status:
@@ -7224,6 +7234,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             typeof message.thinking === "string" ? message.thinking : "",
           traceLines: derivedTraceLines,
           traceEvents,
+          passages: Array.isArray(message.passages) ? message.passages : [],
           status: typeof message.status === "string" ? message.status : "done",
         });
       }
@@ -7440,6 +7451,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         let traceEvents = Array.isArray(initialSnapshot.traceEvents)
           ? [...initialSnapshot.traceEvents]
           : [];
+        let currentPassages = Array.isArray(initialSnapshot.passages)
+          ? [...initialSnapshot.passages]
+          : [];
         let hasReasoning = Boolean(reasoningText);
         let traceCount = traceLines.length;
         let hasFailure =
@@ -7461,6 +7475,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           },
           setPassages(passagesArray) {
             if (!Array.isArray(passagesArray) || passagesArray.length === 0) return;
+            currentPassages = [...passagesArray];
             passagesDetails.style.display = "block";
             passagesBody.innerHTML = "";
             passagesArray.forEach((passage, idx) => {
@@ -7522,6 +7537,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               thinking: reasoningText,
               traceLines,
               traceEvents,
+              passages: currentPassages,
               status: hasFailure ? "error" : "streaming",
             });
           },
@@ -7542,15 +7558,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           plain.style.display = "none";
           details.style.display = "block";
           details.open = !!piSettings.streamThinkingExpanded;
-          body.textContent = reasoningText;
+          body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
         }
-        if (traceLines.length) {
+        if (traceLines.length > 0) {
           debugDetails.style.display = "block";
           debugSummary.textContent = hasFailure
-            ? `Execution Trace (${traceCount}, failed)`
-            : `Execution Trace (${traceCount})`;
-          if (hasFailure) debugSummary.style.color = "#ff6b6b";
+            ? `Execution Trace (${traceLines.length}, failed)`
+            : `Execution Trace (${traceLines.length})`;
+          if (hasFailure) {
+            debugSummary.style.color = "#ff6b6b";
+          }
           debugBody.textContent = `${traceLines.join("\n")}\n`;
+          debugBody.scrollTop = debugBody.scrollHeight;
+        }
+        if (currentPassages.length > 0) {
+          controller.setPassages(currentPassages);
         }
         return controller;
       }
@@ -7562,7 +7584,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             (Array.isArray(metadata.traceLines) &&
               metadata.traceLines.length) ||
             (Array.isArray(metadata.traceEvents) &&
-              metadata.traceEvents.length),
+              metadata.traceEvents.length) ||
+            (Array.isArray(metadata.passages) &&
+              metadata.passages.length),
         );
       }
 

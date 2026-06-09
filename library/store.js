@@ -1724,6 +1724,15 @@ ORDER BY c.chunk_index;`,
   );
   let embedded = 0;
   let errors = 0;
+  
+  const skippedCount = Math.max(0, (options.totalChunks || 0) - rows.length);
+  if (skippedCount > 0 && typeof options.onBatch === "function") {
+    options.onBatch({
+      embeddedDelta: 0,
+      errorsDelta: 0,
+      skippedDelta: skippedCount
+    });
+  }
   for (
     let index = 0;
     index < rows.length;
@@ -2186,12 +2195,6 @@ async function indexLibrary(options = {}) {
             await embedFileChunks(config, file.path, {
               embeddingReady,
               onlyMissing: true,
-              dimensions: stats.embeddingDimensions,
-              shouldCancel: options.shouldCancel,
-              onError: (entry) => {
-                const issue = recordIndexIssue(stats, options, entry);
-                emitIndexProgress(options, stats, {
-                  phase: "embedding",
                   currentFile: file.path,
                   currentFileIndex: fileIndex + 1,
                   lastEmbeddingError: issue.error || issue.reason || "",
@@ -2252,6 +2255,7 @@ async function indexLibrary(options = {}) {
             await embedFileChunks(config, file.path, {
               embeddingReady,
               onlyMissing: true,
+              totalChunks: document.chunks || document.text ? buildChunks(document.text, config.chunking).length : 0,
               dimensions: stats.embeddingDimensions,
               shouldCancel: options.shouldCancel,
               onError: (entry) => {
@@ -2266,6 +2270,7 @@ async function indexLibrary(options = {}) {
               onBatch: (batchStats) => {
                 stats.embedded += batchStats.embeddedDelta || 0;
                 stats.embeddingErrors += batchStats.errorsDelta || 0;
+                stats.embeddingsSkipped += batchStats.skippedDelta || 0;
                 emitIndexProgress(options, stats, {
                   phase: "embedding",
                   currentFile: file.path,
@@ -2299,6 +2304,8 @@ async function indexLibrary(options = {}) {
       }
       await embedFileChunks(config, file.path, {
         embeddingReady,
+        onlyMissing: true,
+        totalChunks: chunks.length,
         dimensions: stats.embeddingDimensions,
         shouldCancel: options.shouldCancel,
         onError: (entry) => {
@@ -2313,6 +2320,7 @@ async function indexLibrary(options = {}) {
         onBatch: (batchStats) => {
           stats.embedded += batchStats.embeddedDelta || 0;
           stats.embeddingErrors += batchStats.errorsDelta || 0;
+          stats.embeddingsSkipped += batchStats.skippedDelta || 0;
           emitIndexProgress(options, stats, {
             phase: "embedding",
             currentFile: file.path,
