@@ -252,6 +252,7 @@ function expandHome(value) {
 }
 
 function clampNumber(value, min, max, fallback) {
+  if (value === "" || value === null || value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
@@ -2255,7 +2256,7 @@ async function indexLibrary(options = {}) {
             await embedFileChunks(config, file.path, {
               embeddingReady,
               onlyMissing: true,
-              totalChunks: document.chunks || document.text ? buildChunks(document.text, config.chunking).length : 0,
+              totalChunks: gaps.chunks,
               dimensions: stats.embeddingDimensions,
               shouldCancel: options.shouldCancel,
               onError: (entry) => {
