@@ -3721,6 +3721,7 @@ const server = http.createServer(async (req, res) => {
           emit({
             type: "library_results",
             results: librarySourceResults,
+            passages: libraryContext.contextResults,
             meta: libraryContext.contextMeta,
           });
         }
@@ -4356,6 +4357,7 @@ const server = http.createServer(async (req, res) => {
           writeStreamEvent({
             type: "library_results",
             results: librarySourceResults,
+            passages: libraryContext.contextResults,
             meta: libraryContext.contextMeta,
           });
         }
