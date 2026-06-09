@@ -7408,7 +7408,25 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         debugBody.style.fontSize = "11px";
         debugDetails.appendChild(debugSummary);
         debugDetails.appendChild(debugBody);
+        
+        const passagesDetails = document.createElement("details");
+        passagesDetails.className = "thinking-details";
+        passagesDetails.style.display = "none";
+        passagesDetails.open = false;
+        const passagesSummary = document.createElement("summary");
+        passagesSummary.textContent = "Passages";
+        const passagesBody = document.createElement("div");
+        passagesBody.className = "thinking-details-body";
+        passagesBody.style.maxHeight = "300px";
+        passagesBody.style.overflow = "auto";
+        passagesBody.style.fontSize = "12px";
+        passagesDetails.appendChild(passagesSummary);
+        passagesDetails.appendChild(passagesBody);
+        
+        wrap.appendChild(plain);
+        wrap.appendChild(details);
         wrap.appendChild(debugDetails);
+        wrap.appendChild(passagesDetails);
         chat.appendChild(wrap);
         chat.scrollTop = chat.scrollHeight;
 
@@ -7438,7 +7456,41 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               details.open = !!piSettings.streamThinkingExpanded;
             }
             reasoningText += chunk;
-            body.textContent = reasoningText;
+            body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
+            chat.scrollTop = chat.scrollHeight;
+          },
+          setPassages(passagesArray) {
+            if (!Array.isArray(passagesArray) || passagesArray.length === 0) return;
+            passagesDetails.style.display = "block";
+            passagesBody.innerHTML = "";
+            passagesArray.forEach((passage, idx) => {
+              const entry = document.createElement("div");
+              entry.style.marginBottom = "12px";
+              entry.style.paddingBottom = "12px";
+              entry.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
+              
+              const titleEl = document.createElement("div");
+              titleEl.style.fontWeight = "bold";
+              titleEl.style.marginBottom = "4px";
+              titleEl.textContent = passage.title + (passage.author ? ` by ${passage.author}` : "");
+              entry.appendChild(titleEl);
+              
+              if (passage.heading) {
+                const headingEl = document.createElement("div");
+                headingEl.style.fontStyle = "italic";
+                headingEl.style.marginBottom = "4px";
+                headingEl.textContent = passage.heading;
+                entry.appendChild(headingEl);
+              }
+              
+              const textEl = document.createElement("div");
+              textEl.style.whiteSpace = "pre-wrap";
+              textEl.style.marginTop = "4px";
+              textEl.textContent = passage.text || "";
+              entry.appendChild(textEl);
+              
+              passagesBody.appendChild(entry);
+            });
             chat.scrollTop = chat.scrollHeight;
           },
           addTraceLine(line, opts = {}) {
@@ -8437,6 +8489,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           thinking.addTraceLine(
             `Library search: ${retrieved} retrieved | ${injected} injected | ${uniqueSources} unique source(s)${contextCap}`,
           );
+          if (Array.isArray(evt.passages) && evt.passages.length > 0) {
+            if (typeof thinking.setPassages === "function") {
+              thinking.setPassages(evt.passages);
+            }
+          }
           return;
         }
 

@@ -3875,6 +3875,7 @@ const server = http.createServer(async (req, res) => {
             type: "library_results",
             results: librarySourceResults,
             meta: libraryContext.contextMeta,
+            passages: libraryContext.contextResults,
           });
         }
       } catch (e) {
