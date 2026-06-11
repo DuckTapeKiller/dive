@@ -51,6 +51,11 @@
     "maxContextChars": 30000,
     "includeSourcePaths": true
   },
+  "chatModes": {
+    "ollama": { "enabled": false },
+    "pi": { "enabled": false },
+    "cloud": { "enabled": false }
+  },
   "watch": {
     "enabled": false,
     "debounceMs": 2000,

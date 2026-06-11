@@ -4581,6 +4581,11 @@
         maxContextChars: 30000,
         includeSourcePaths: true,
       };
+      let databaseChatModes = {
+        ollama: { enabled: false },
+        pi: { enabled: false },
+        cloud: { enabled: false },
+      };
       let databaseConfig = {
         version: 1,
         databasePath: "~/dive/library.sqlite",
@@ -4612,6 +4617,7 @@
           ...SEARCH_ALGORITHM_DEFAULTS,
         },
         searchModes: {},
+        chatModes: { ...databaseChatModes },
         embedding: {
           enabled: false,
           model: "nomic-embed-text-v2-moe:latest",
@@ -5440,6 +5446,35 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         };
       }
 
+      function normalizeDatabaseChatModes(raw, fallbackEnabled = false) {
+        return Object.fromEntries(
+          SEARCH_ALGO_MODE_KEYS.map((modeKey) => [
+            modeKey,
+            {
+              enabled:
+                raw?.[modeKey] && typeof raw[modeKey] === "object"
+                  ? raw[modeKey].enabled === true
+                  : fallbackEnabled === true,
+            },
+          ]),
+        );
+      }
+
+      function getDatabaseModeSettings(modeKey = mode) {
+        const normalized = normalizeDatabaseConfig(databaseConfig);
+        const chatModes = normalizeDatabaseChatModes(
+          normalized.chatModes,
+          normalized.chatIntegration.enabled,
+        );
+        const activeMode = SEARCH_ALGO_MODE_KEYS.includes(modeKey)
+          ? modeKey
+          : "ollama";
+        return {
+          ...normalized.chatIntegration,
+          enabled: chatModes[activeMode]?.enabled === true,
+        };
+      }
+
       function normalizeSourceExtensionsInput(value) {
         const raw = Array.isArray(value)
           ? value
@@ -5492,6 +5527,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           : [];
         const chatIntegration = normalizeLibrarySettings(
           source.chatIntegration || source.library || librarySettings,
+        );
+        const chatModes = normalizeDatabaseChatModes(
+          source.chatModes,
+          chatIntegration.enabled,
         );
         const normalizedSearch = {
           keywordEnabled: search.keywordEnabled === true,
@@ -5547,6 +5586,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               ),
             ]),
           ),
+          chatModes,
           embedding: {
             enabled: embedding.enabled === true,
             model:
@@ -5709,7 +5749,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function renderDatabaseConfigForm() {
         databaseConfig = normalizeDatabaseConfig(databaseConfig);
-        librarySettings = databaseConfig.chatIntegration;
+        databaseChatModes = databaseConfig.chatModes;
+        librarySettings = getDatabaseModeSettings(mode);
         const settings = librarySettings;
         const dbPathInput = document.getElementById("databasePathInput");
         const enabledInput = document.getElementById(
@@ -5944,8 +5985,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function collectLibrarySettingsFromForm() {
         return normalizeLibrarySettings({
-          enabled: document.getElementById("librarySearchEnabledInput")
-            ?.checked,
+          enabled:
+            document.getElementById("librarySearchEnabledInput")?.checked ===
+            true,
           limit: document.getElementById("libraryLimitInput")?.value,
           maxContextChars: document.getElementById("libraryMaxContextInput")
             ?.value,
@@ -5953,6 +5995,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             "libraryIncludePathsInput",
           )?.checked,
         });
+      }
+
+      function collectDatabaseChatModesFromForm(currentModes) {
+        const nextModes = normalizeDatabaseChatModes(currentModes, false);
+        const activeMode = SEARCH_ALGO_MODE_KEYS.includes(mode)
+          ? mode
+          : "ollama";
+        nextModes[activeMode] = {
+          enabled:
+            document.getElementById("librarySearchEnabledInput")?.checked ===
+            true,
+        };
+        return nextModes;
       }
 
       function collectDatabaseSourcesFromForm() {
@@ -5992,6 +6047,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function collectDatabaseConfigFromForm() {
         commitActiveSearchAlgorithmSliders();
         const current = normalizeDatabaseConfig(databaseConfig);
+        const nextChatModes = collectDatabaseChatModesFromForm(
+          current.chatModes,
+        );
         const requestedDefaultLimit = clampInteger(
           document.getElementById("databaseDefaultLimitInput")?.value,
           current.search.defaultLimit,
@@ -6026,6 +6084,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               ?.value,
           },
           searchModes: current.searchModes,
+          chatModes: nextChatModes,
           embedding: {
             ...current.embedding,
             enabled: document.getElementById("databaseSemanticEnabledInput")
@@ -6048,7 +6107,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               document.getElementById("databaseSqliteVecPathInput")?.value ||
               "",
           },
-          chatIntegration: collectLibrarySettingsFromForm(),
+          chatIntegration: normalizeLibrarySettings({
+            ...collectLibrarySettingsFromForm(),
+            enabled: Object.values(nextChatModes).some(
+              (settings) => settings?.enabled === true,
+            ),
+          }),
         });
       }
 
@@ -6057,11 +6121,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const res = await fetch(apiUrl("/api/library/config"));
           const payload = await readJsonResponse(res, "Load database config");
           databaseConfig = normalizeDatabaseConfig(payload?.config);
-          librarySettings = databaseConfig.chatIntegration;
+          databaseChatModes = databaseConfig.chatModes;
+          librarySettings = getDatabaseModeSettings(mode);
         } catch (error) {
           console.error("Could not load database config", error);
           databaseConfig = normalizeDatabaseConfig(databaseConfig);
-          librarySettings = databaseConfig.chatIntegration;
+          databaseChatModes = databaseConfig.chatModes;
+          librarySettings = getDatabaseModeSettings(mode);
         }
         renderDatabaseConfigForm();
       }
@@ -6124,7 +6190,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           }
         }
         databaseConfig = nextConfig;
-        librarySettings = databaseConfig.chatIntegration;
+        databaseChatModes = databaseConfig.chatModes;
+        librarySettings = getDatabaseModeSettings(mode);
         renderDatabaseConfigForm();
         try {
           const payload = await postJson(
@@ -6133,7 +6200,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             "Save database settings",
           );
           databaseConfig = normalizeDatabaseConfig(payload?.config);
-          librarySettings = databaseConfig.chatIntegration;
+          databaseChatModes = databaseConfig.chatModes;
+          librarySettings = getDatabaseModeSettings(mode);
           renderDatabaseConfigForm();
           await loadLibraryStatus();
           return true;
@@ -7324,6 +7392,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           updateModeStatus();
         }
         syncSearchAlgorithmModeToChatMode();
+        renderDatabaseConfigForm();
         updateBookFilterUi();
         updateTokenCounter();
         updateSendButtonState();
