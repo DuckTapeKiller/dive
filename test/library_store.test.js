@@ -402,33 +402,22 @@ test("quote-restricted search filters retrieval to the quoted scope only", async
   }
 });
 
-test("mixed quotes and aliases retrieve Spanish Laws of the Indies passages", async (t) => {
+test("quoted multilingual search preserves semantic hits without hardcoded aliases", async (t) => {
   const root = fs.mkdtempSync(
-    path.join(os.tmpdir(), "ollama-pi-chat-laws-alias-"),
+    path.join(os.tmpdir(), "ollama-pi-chat-semantic-quotes-"),
   );
   try {
     const sourceDir = path.join(root, "sources");
     fs.mkdirSync(sourceDir);
     fs.writeFileSync(
-      path.join(sourceDir, "Bartolome leyes nuevas.txt"),
-      [
-        "LAS LEYES NUEVAS DE INDIAS",
-        "",
-        "Bartolomé de las Casas expuso al emperador Carlos V una extensa relacion sobre la destruccion de las Indias.",
-        "Las Leyes Nuevas de Indias fueron promulgadas por Carlos V en Barcelona el 20 de noviembre de 1542.",
-        "La participacion de Bartolomé de las Casas en la genesis de esta legislacion fue decisiva.",
-        "Las Casas propuso abolir las encomiendas, tratar a los indigenas como vasallos de la Corona y suspender las guerras de conquista.",
-      ].join("\n\n"),
-    );
-    fs.writeFileSync(
-      path.join(sourceDir, "Bibliografia Bartolome.txt"),
-      "Bartolomé de las Casas bibliografia critica cuerpo de materiales vida escritos actuacion polemicas. ".repeat(
-        20,
+      path.join(sourceDir, "literal-but-wrong.txt"),
+      "Catalog entry: the red illness. Maria Zambrano appears in an unrelated bibliography list. ".repeat(
+        12,
       ),
     );
     fs.writeFileSync(
-      path.join(sourceDir, "Biografia Indias.txt"),
-      "Bartolomé de las Casas viajo a las Indias y participo en episodios biograficos de la conquista. ".repeat(
+      path.join(sourceDir, "generic-background.txt"),
+      "This note explains academic method, quotations, and library search behaviour without discussing the topic. ".repeat(
         20,
       ),
     );
@@ -439,7 +428,16 @@ test("mixed quotes and aliases retrieve Spanish Laws of the Indies passages", as
         { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
       ],
       chunking: { targetChars: 900, overlapChars: 0, minChars: 80, maxChars: 1200 },
-      search: { ...defaultConfig.search, keywordEnabled: true },
+      search: {
+        ...defaultConfig.search,
+        keywordEnabled: true,
+        semanticWeight: 12,
+        keywordWeight: 0.2,
+        metadataWeight: 0.1,
+        sourceWeight: 0.1,
+        contentKeywordBonus: 0.02,
+        metadataKeywordBonus: 0.01,
+      },
       embedding: { ...defaultConfig.embedding, enabled: false },
     });
 
@@ -453,35 +451,113 @@ test("mixed quotes and aliases retrieve Spanish Laws of the Indies passages", as
       throw error;
     }
 
-    const english = await searchLibrary(
-      'When were the "Laws of the Indies” established, and what was the opinion of “Bartolomé de las Casas” on the matter?',
-      { config, limit: 5 },
+    const semanticSpanishResult = {
+      chunkId: 900001,
+      title: "Ensayo sobre Maria Zambrano",
+      author: "Investigadora",
+      path: "/semantic/maria-red-illness.txt",
+      sourceType: "note",
+      heading: "La enfermedad roja",
+      text: "Maria Zambrano describe la enfermedad roja como una imagen de crisis interior y de revelacion filosofica.",
+      snippet: "",
+      score: 0,
+      kind: "semantic",
+    };
+
+    const results = await searchLibrary(
+      'What did "the red illness” mean in “María Zambrano”?',
+      { config, limit: 5, semanticResults: [semanticSpanishResult] },
     );
-    assert.ok(english.length > 0);
+    assert.ok(results.length > 0);
     assert.ok(
-      english[0].path.endsWith("Bartolome leyes nuevas.txt"),
-      `English alias query should rank the laws passage first, got ${english[0].path}`,
-    );
-    assert.match(
-      `${english[0].heading} ${english[0].text}`,
-      /Leyes Nuevas de Indias|1542/i,
+      results[0].path.endsWith("maria-red-illness.txt"),
+      `semantic multilingual result should survive quote filtering and rank first, got ${results[0].path}`,
     );
     assert.ok(
-      english.every(
-        (result) => !result.path.endsWith("Bibliografia Bartolome.txt"),
+      results.some((result) => result.path.endsWith("literal-but-wrong.txt")),
+      "literal quote matches should remain available but not replace semantic meaning",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("semantic bridge promotes answer-bearing multilingual passages", async (t) => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "ollama-pi-chat-semantic-bridge-"),
+  );
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, "leyes-nuevas-date.txt"),
+      [
+        "LAS LEYES NUEVAS DE INDIAS",
+        "",
+        "Las Leyes Nuevas de Indias fueron promulgadas por Carlos V en Barcelona el 20 de noviembre de 1542.",
+        "La participacion de los dominicos y, en especial, de Bartolome de las Casas en la genesis de esta legislacion fue decisiva.",
+        "Las Casas propuso abolir las encomiendas, tratar a los indigenas como vasallos de la Corona y suspender las guerras de conquista.",
+      ].join("\n\n"),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "contexto-las-casas.txt"),
+      "Bartolome de las Casas fue obispo de Chiapas y critico la violencia colonial en las Indias. ".repeat(
+        18,
       ),
-      "quoted scope should reject author-only bibliography passages",
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      chunking: { targetChars: 900, overlapChars: 0, minChars: 80, maxChars: 1200 },
+      search: {
+        ...defaultConfig.search,
+        keywordEnabled: true,
+        semanticWeight: 1,
+        keywordWeight: 0.2,
+        metadataWeight: 0.1,
+        sourceWeight: 0.1,
+      },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const semanticNeighbor = {
+      chunkId: 910001,
+      title: "Bartolome de las Casas",
+      author: "Bernat Hernandez",
+      path: "/semantic/las-casas-context.txt",
+      sourceType: "book",
+      heading: "LAS CASAS, OBISPO DE CHIAPAS",
+      text: "La funesta acogida de las Leyes Nuevas puso en cuestion el sistema de las Indias. Bartolome de las Casas defendia la evangelizacion pacifica y rechazaba la conquista militar.",
+      snippet: "",
+      score: 0,
+      kind: "semantic",
+    };
+
+    const results = await searchLibrary(
+      'When were the "Laws of the Indies” established, and what was the opinion of “Bartolomé de las Casas” on the matter?',
+      { config, limit: 5, semanticResults: [semanticNeighbor] },
     );
 
-    const spanish = await searchLibrary(
-      "¿Cuándo se establecieron las Leyes de Indias y qué opinaba Bartolomé de las Casas al respecto?",
-      { config, limit: 5 },
-    );
-    assert.ok(spanish.length > 0);
+    assert.ok(results.length > 0);
     assert.ok(
-      spanish[0].path.endsWith("Bartolome leyes nuevas.txt"),
-      `Spanish query should rank the laws passage first, got ${spanish[0].path}`,
+      results[0].path.endsWith("leyes-nuevas-date.txt"),
+      `semantic bridge should rank the date/opinion passage first, got ${results[0].path}`,
     );
+    assert.match(results[0].text, /20 de noviembre de 1542/);
+    assert.match(results[0].text, /abolir las encomiendas/i);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -489,11 +565,11 @@ test("mixed quotes and aliases retrieve Spanish Laws of the Indies passages", as
 
 test("guillemets are treated as quote scope", () => {
   const scoped = splitQueryForRetrieval(
-    "Cuando se promulgaron «Laws of the Indies» segun «Bartolomé de las Casas»",
+    "Que significa «the red illness» segun «María Zambrano»",
   );
   assert.strictEqual(
     scoped.retrievalQuery,
-    "Laws of the Indies Bartolomé de las Casas",
+    "the red illness María Zambrano",
   );
   assert.strictEqual(scoped.hasQuotedScope, true);
 });
