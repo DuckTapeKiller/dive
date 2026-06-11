@@ -110,6 +110,49 @@ test("legacy chat integration defaults are upgraded to new defaults", () => {
   assert.strictEqual(customConfig.chatIntegration.maxContextChars, 12000);
 });
 
+test("database chat enable setting is independent per mode", () => {
+  const explicitConfig = normalizeConfig({
+    ...defaultConfig,
+    chatIntegration: {
+      enabled: true,
+      limit: 8,
+      maxContextChars: 16000,
+      includeSourcePaths: true,
+    },
+    chatModes: {
+      ollama: { enabled: true },
+      pi: { enabled: false },
+      cloud: { enabled: true },
+    },
+  });
+
+  assert.strictEqual(explicitConfig.chatModes.ollama.enabled, true);
+  assert.strictEqual(explicitConfig.chatModes.pi.enabled, false);
+  assert.strictEqual(explicitConfig.chatModes.cloud.enabled, true);
+  assert.strictEqual(explicitConfig.chatIntegration.limit, 8);
+
+  const legacyBaseConfig = { ...defaultConfig };
+  delete legacyBaseConfig.chatModes;
+  const legacyConfig = normalizeConfig({
+    ...legacyBaseConfig,
+    chatIntegration: {
+      enabled: true,
+      limit: 8,
+      maxContextChars: 16000,
+      includeSourcePaths: true,
+    },
+  });
+  assert.deepStrictEqual(
+    Object.fromEntries(
+      Object.entries(legacyConfig.chatModes).map(([key, value]) => [
+        key,
+        value.enabled,
+      ]),
+    ),
+    { ollama: true, pi: true, cloud: true },
+  );
+});
+
 test("per-mode search algorithm overrides are materialized and clamped", () => {
   const config = normalizeConfig({
     ...defaultConfig,

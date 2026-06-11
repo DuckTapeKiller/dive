@@ -128,6 +128,11 @@ function createFetchStub() {
             maxContextChars: 12000,
             includeSourcePaths: true,
           },
+          chatModes: {
+            ollama: { enabled: true },
+            pi: { enabled: false },
+            cloud: { enabled: true },
+          },
           watch: {
             enabled: false,
             debounceMs: 2000,
@@ -446,6 +451,28 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
     dom.window.document.getElementById("piSettingsGroup").style.display,
     "none",
   );
+
+  assert.deepStrictEqual(errors, []);
+});
+
+test("database enable checkbox is independent per mode", async () => {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  const enabledInput = dom.window.document.getElementById(
+    "librarySearchEnabledInput",
+  );
+  assert.strictEqual(enabledInput.checked, true);
+
+  dom.window.document.getElementById("btnPi").click();
+  assert.strictEqual(enabledInput.checked, false);
+
+  dom.window.document.getElementById("btnCloud").click();
+  assert.strictEqual(enabledInput.checked, true);
 
   assert.deepStrictEqual(errors, []);
 });

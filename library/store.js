@@ -318,6 +318,15 @@ function mergeConfig(base, override) {
       ...base.chatIntegration,
       ...(override?.chatIntegration || {}),
     },
+    chatModes: Object.fromEntries(
+      SEARCH_MODE_KEYS.map((modeKey) => [
+        modeKey,
+        {
+          ...(base.chatModes?.[modeKey] || {}),
+          ...(override?.chatModes?.[modeKey] || {}),
+        },
+      ]),
+    ),
     watch: { ...base.watch, ...(override?.watch || {}) },
   };
   next.sources = Array.isArray(override?.sources)
@@ -374,6 +383,24 @@ function normalizeChatIntegration(raw, searchConfig = {}) {
       : clampNumber(raw?.maxContextChars, 1000, 50000, 30000),
     includeSourcePaths: raw?.includeSourcePaths !== false,
   };
+}
+
+function normalizeChatModeSettings(raw, fallback = {}) {
+  return {
+    enabled:
+      raw && typeof raw === "object" && "enabled" in raw
+        ? raw.enabled === true
+        : fallback.enabled === true,
+  };
+}
+
+function normalizeChatModes(raw, fallback = {}) {
+  return Object.fromEntries(
+    SEARCH_MODE_KEYS.map((modeKey) => [
+      modeKey,
+      normalizeChatModeSettings(raw?.[modeKey], fallback),
+    ]),
+  );
 }
 
 function normalizeSearchAlgorithmOverride(raw, fallback) {
@@ -442,6 +469,10 @@ function normalizeVectorQuantization(value) {
 
 function normalizeConfig(rawConfig) {
   const defaults = loadDefaultConfig();
+  const hasExplicitChatModes =
+    rawConfig &&
+    typeof rawConfig === "object" &&
+    Object.prototype.hasOwnProperty.call(rawConfig, "chatModes");
   const merged = mergeConfig(defaults, rawConfig || {});
   const databasePath = expandHome(
     typeof merged.databasePath === "string"
@@ -558,6 +589,7 @@ function normalizeConfig(rawConfig) {
       60000,
     ),
   };
+  const chatIntegration = normalizeChatIntegration(merged.chatIntegration, search);
 
   return {
     version: 1,
@@ -567,7 +599,10 @@ function normalizeConfig(rawConfig) {
     search,
     searchModes,
     embedding,
-    chatIntegration: normalizeChatIntegration(merged.chatIntegration, search),
+    chatIntegration,
+    chatModes: normalizeChatModes(hasExplicitChatModes ? merged.chatModes : null, {
+      enabled: chatIntegration.enabled,
+    }),
     watch,
   };
 }
