@@ -4,7 +4,11 @@ const path = require("path");
 const { execFile, spawn, spawnSync } = require("child_process");
 const os = require("os");
 const { randomUUID, randomBytes } = require("crypto");
-const { executeSkill, skillRequiresShellConfirmation } = require("./skills");
+const {
+  ALL_SKILLS,
+  executeSkill,
+  skillRequiresShellConfirmation,
+} = require("./skills");
 const { initMcpServers, getMcpOllamaTools, executeMcpTool } = require("./mcp");
 const {
   buildForcedSkillToolCall,
@@ -22,6 +26,7 @@ const {
   saveLibraryConfig,
   saveLibraryChatSettings,
   searchLibrary,
+  searchLibraryFiles,
 } = require("./library/store");
 
 const DEFAULT_PORT = 8080;
@@ -30,7 +35,7 @@ const MAX_CONVERSATIONS = 10;
 const MAX_HISTORY_MESSAGES = 200; // max messages stored per conversation
 const PI_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const PI_SESSION_SWEEP_INTERVAL_MS = 15 * 1000;
-const MAX_JSON_PAYLOAD_SIZE = 2 * 1024 * 1024; // 2MB for JSON API requests
+const MAX_JSON_PAYLOAD_SIZE = 50 * 1024 * 1024; // 50MB for JSON API requests
 const MAX_UPLOAD_PAYLOAD_SIZE = 50 * 1024 * 1024; // 50MB for file uploads
 const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB per log file
 const MAX_ROTATED_LOG_FILES = 3;
@@ -147,7 +152,7 @@ const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral", "google"];
 const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
 const CLOUD_DEFAULT_MODELS = {
   openai: "gpt-5",
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-opus-4-8",
   mistral: "mistral-large-latest",
   google: "gemini-2.5-pro",
 };
@@ -326,6 +331,9 @@ function upsertConversation(
   ) {
     assistantMessage.librarySources = metadata.librarySources;
   }
+  if (Array.isArray(metadata.passages) && metadata.passages.length) {
+    assistantMessage.passages = metadata.passages;
+  }
   if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
     assistantMessage.thinking = metadata.thinking;
   }
@@ -451,6 +459,16 @@ function loadSkillsConfig() {
     console.warn("Failed to load skills config:", e.message || e);
   }
   return defaultSkillsConfig();
+}
+
+function assertBuiltinSkillEnabled(skillName) {
+  if (!Object.prototype.hasOwnProperty.call(defaultSkillsConfig(), skillName)) {
+    return;
+  }
+  const config = loadSkillsConfig();
+  if (config[skillName] === false) {
+    throw new Error(`Skill "${skillName}" is disabled in Skills settings.`);
+  }
 }
 
 function saveSkillsConfig(cfg) {
@@ -1090,7 +1108,7 @@ function getSharedAssistantPolicyPrompt() {
     "Always respond in the language the user speaks to you in.",
     "If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not use outside knowledge unless the passages are insufficient, and clearly say when the local library does not provide enough evidence.",
     "When the passages contain multiple accounts, causes, origins, definitions, or scholarly distinctions, explain the relevant variants instead of reducing the answer to a thin single sentence.",
-    "Use citations or source references when retrieved passages are available.",
+    "When retrieved passages are available, name the source inside the body of the answer for every factual claim. Prefer prose attribution such as \"According to Apolodoro's Biblioteca...\" or \"In Colin Wilson's The Outsider...\". Do not rely only on hyperlinks, source boxes, bracket numbers, or vague phrases such as \"some accounts say\".",
   ].join("\n\n");
 }
 
@@ -1103,6 +1121,80 @@ function withSharedSystemPrompt(messages) {
     },
     ...sourceMessages,
   ];
+}
+
+const CLOUD_SKILL_EXAMPLES = {
+  wikipedia: '{"query": "Bob Dylan", "language": "en"}',
+  britannica: '{"query": "Bob Dylan"}',
+  wiktionary: '{"word": "algorithm", "language": "en"}',
+  deep_etymology: '{"word": "eventualmente", "language": "es"}',
+  duckduckgo: '{"query": "latest AI news"}',
+  fact_check: '{"claim": "The moon is made of cheese"}',
+  web_scraper: '{"url": "https://example.com"}',
+  calculator: '{"expression": "2 + 2 * 4"}',
+  local_notes: '{"action": "read"}',
+  time_and_date: '{"timezone": "Australia/Sydney"}',
+  shell_command: '{"command": "ls"}',
+};
+
+function getCloudSkillsPolicyPrompt() {
+  const skillsConfig = loadSkillsConfig();
+  const enabledSkills = ALL_SKILLS.filter(
+    (skill) => skillsConfig[skill.function.name] !== false,
+  );
+  const customSkills = loadCustomSkills().filter(
+    (skill) =>
+      skill && typeof skill.name === "string" && skill.name.trim().length > 0,
+  );
+  if (!enabledSkills.length && !customSkills.length) return "";
+
+  const lines = [
+    "### SKILLS & TOOL USAGE (MANDATORY)",
+    "You have access to external tools (skills) that fetch live, verifiable information or perform local actions. Skill results are your primary source of truth.",
+    "",
+    "RULES:",
+    "1. If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first and call skills only if they are insufficient or the user explicitly requested a specific tool.",
+    "2. Otherwise, for ANY question involving facts, people, places, events, news, dates, definitions, word origins, calculations, unit conversions, the current time or date, or the content of a URL, you MUST call the relevant skill BEFORE answering, even if you believe you already know the answer.",
+    "3. Base your answer on the skill results. Use your own training knowledge only when the skills return no useful result or an error, and in that case explicitly tell the user that the lookup failed or returned nothing.",
+    "4. Purely creative, conversational, or text-transformation requests (rewriting, translating, proofreading, or summarizing text the user provided) do not require skills.",
+    "",
+    "Available skills:",
+  ];
+  let index = 1;
+  for (const skill of enabledSkills) {
+    const name = skill.function.name;
+    const example = CLOUD_SKILL_EXAMPLES[name] || "{}";
+    lines.push(
+      `${index}. **${name}:** ${skill.function.description}\n   - Example: <call:${name}>${example}</call>`,
+    );
+    index += 1;
+  }
+  for (const custom of customSkills) {
+    lines.push(
+      `${index}. **${custom.name}:** ${custom.description || "User-defined custom skill."}\n   - Example: <call:${custom.name}>{}</call>`,
+    );
+    index += 1;
+  }
+  lines.push(
+    "",
+    "HOW TO CALL A SKILL:",
+    "Output exactly one XML block in this exact format and then stop writing:",
+    '<call:skill_name>{"arg": "value"}</call>',
+    "The system intercepts the block, executes the skill, and sends you the result so you can continue your answer.",
+    "Call one skill at a time. After receiving a result you may call another skill if needed.",
+    "",
+    "SOURCES:",
+    "Skill results often contain the exact source URL inside an HTML comment at the end (e.g. <!-- https://... -->). If you used the information from a skill, append a Markdown source link at the absolute end of your final response in this exact format:",
+    "Source: [Title of Page](URL)",
+    "If the skill result was irrelevant and you did not use it, do not cite it.",
+  );
+  return lines.join("\n");
+}
+
+function stripTrailingPartialSkillCall(text) {
+  const value = String(text || "");
+  const match = value.match(/<c(?:a(?:l(?:l(?:[^>]*)?)?)?)?$/i);
+  return match ? value.slice(0, match.index) : value;
 }
 
 function isTransientLibraryContextMessage(item) {
@@ -1162,6 +1254,9 @@ function normalizeStoredConversationMessages(history, message) {
     if (item.role === "assistant") {
       if (Array.isArray(item.librarySources)) {
         clean.librarySources = item.librarySources;
+      }
+      if (Array.isArray(item.passages)) {
+        clean.passages = item.passages;
       }
       if (typeof item.thinking === "string") {
         clean.thinking = item.thinking;
@@ -1309,17 +1404,23 @@ function getCommandMessage(command, fallbackMessage) {
   return command.input || fallbackMessage;
 }
 
-function getLibraryRequestForCommand(library, command, history = []) {
+function getLibraryRequestForCommand(library, command, history = [], mode = "") {
   const base = library && typeof library === "object" ? library : {};
   const sourceHints = extractRecentLibrarySourceHints(history);
   if (!isDatabaseSlashCommand(command)) {
-    return sourceHints.length ? { ...base, sourceHints } : library;
+    const request = { ...base };
+    // Server-resolved chat mode wins over anything in the client payload so
+    // per-mode search algorithm settings cannot be spoofed cross-mode.
+    if (mode) request.mode = mode;
+    if (sourceHints.length) request.sourceHints = sourceHints;
+    return mode || sourceHints.length ? request : library;
   }
   return {
     ...base,
     enabled: true,
     strict: true,
     sourceHints,
+    ...(mode ? { mode } : {}),
   };
 }
 
@@ -1377,6 +1478,7 @@ async function requestShellConfirmation({ emit, title, command, toolName }) {
 }
 
 async function executeToolCallWithConfirmation(toolCall, emit) {
+  assertBuiltinSkillEnabled(toolCall.function.name);
   const requiresShellConfirmation = skillRequiresShellConfirmation(
     toolCall.function.name,
     DATA_DIR,
@@ -1470,7 +1572,14 @@ function buildCloudRequest(provider, settings, messages) {
         }
         continue;
       }
-      anthropicMessages.push(item);
+      // The skill-call loop can produce consecutive same-role messages;
+      // merge them so the request stays valid for strict role alternation.
+      const previous = anthropicMessages[anthropicMessages.length - 1];
+      if (previous && previous.role === item.role) {
+        previous.content = `${previous.content}\n\n${item.content}`;
+        continue;
+      }
+      anthropicMessages.push({ role: item.role, content: item.content });
     }
     return {
       url: buildCloudEndpoint(baseUrl, "/messages"),
@@ -3065,9 +3174,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && urlPath === "/api/library/index") {
+    let status = null;
+    try {
+      status = await getLibraryStatus();
+    } catch (error) {
+      status = { error: error.message };
+    }
     send(200, {
       running: !!activeLibraryIndexJob,
       job: publicLibraryIndexJob(activeLibraryIndexJob || lastLibraryIndexJob),
+      status,
     });
     return;
   }
@@ -3137,7 +3253,14 @@ const server = http.createServer(async (req, res) => {
         compact: body?.compact !== false,
         retryEmbeddings: body?.retryEmbeddings === true,
       });
-      send(202, { ok: true, running: true, job: publicLibraryIndexJob(job) });
+      send(202, {
+        ok: true,
+        running: true,
+        job: publicLibraryIndexJob(job),
+        status: await getLibraryStatus().catch((error) => ({
+          error: error.message,
+        })),
+      });
     } catch (e) {
       send(e.statusCode || 500, {
         error: e.message,
@@ -3145,6 +3268,9 @@ const server = http.createServer(async (req, res) => {
         job: publicLibraryIndexJob(
           activeLibraryIndexJob || lastLibraryIndexJob,
         ),
+        status: await getLibraryStatus().catch((error) => ({
+          error: error.message,
+        })),
       });
     }
     return;
@@ -3156,6 +3282,9 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         running: false,
         job: publicLibraryIndexJob(lastLibraryIndexJob),
+        status: await getLibraryStatus().catch((error) => ({
+          error: error.message,
+        })),
       });
       return;
     }
@@ -3164,6 +3293,9 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       running: true,
       job: publicLibraryIndexJob(job),
+      status: await getLibraryStatus().catch((error) => ({
+        error: error.message,
+      })),
     });
     return;
   }
@@ -3176,8 +3308,27 @@ const server = http.createServer(async (req, res) => {
         send(400, { error: "Search query is required" });
         return;
       }
-      const results = await searchLibrary(query, { limit: body.limit });
+      const results = await searchLibrary(query, {
+        limit: body.limit,
+        mode: body.mode,
+      });
       send(200, { query, results });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/library/files/search") {
+    try {
+      const body = await parseJsonBody(req);
+      const query = typeof body?.query === "string" ? body.query.trim() : "";
+      if (!query) {
+        send(400, { error: "Search query is required" });
+        return;
+      }
+      const files = await searchLibraryFiles(query, { limit: 12 });
+      send(200, { query, files });
     } catch (e) {
       send(e.statusCode || 500, { error: e.message });
     }
@@ -3678,6 +3829,7 @@ const server = http.createServer(async (req, res) => {
       );
       let requestMessages = withSharedSystemPrompt(messages);
       let librarySourceResults = [];
+      let libraryPassages = [];
       let output = "";
       let usage = null;
 
@@ -3695,19 +3847,11 @@ const server = http.createServer(async (req, res) => {
       });
 
       emitSlashCommand(emit, slashCommand);
-      if (isSkillSlashCommand(slashCommand)) {
-        emit({
-          type: "error",
-          error: `/${slashCommand.name} is only supported in Ollama mode.`,
-        });
-        if (!res.writableEnded) res.end();
-        return;
-      }
 
       try {
         const libraryContext = await buildChatLibraryContext(
           message,
-          getLibraryRequestForCommand(library, slashCommand, history),
+          getLibraryRequestForCommand(library, slashCommand, history, "cloud"),
         );
         if (libraryContext.enabled) {
           requestMessages = insertLibraryContextMessage(
@@ -3718,10 +3862,13 @@ const server = http.createServer(async (req, res) => {
             getLibraryContextSourceResults(libraryContext),
             getLibraryRequestForCommand(library, slashCommand, history),
           );
+          libraryPassages = Array.isArray(libraryContext.contextResults)
+            ? libraryContext.contextResults
+            : [];
           emit({
             type: "library_results",
             results: librarySourceResults,
-            passages: libraryContext.contextResults,
+            passages: libraryPassages,
             meta: libraryContext.contextMeta,
           });
         }
@@ -3729,19 +3876,139 @@ const server = http.createServer(async (req, res) => {
         emit({ type: "library_error", error: e.message });
       }
 
-      usage = await streamCloudCompletion({
-        provider,
-        settings,
-        messages: requestMessages,
-        signal: abortController.signal,
-        onDelta: (delta) => {
-          output += delta;
-          emit({ type: "delta", delta, response: output });
-        },
-        onUsage: (nextUsage) => {
-          usage = nextUsage;
-        },
-      });
+      const databasePriorityForLibraryTurn =
+        !slashCommand && librarySourceResults.length > 0;
+      const cloudSkillsEnabled = !slashCommand && !databasePriorityForLibraryTurn;
+      if (cloudSkillsEnabled) {
+        const skillsPrompt = getCloudSkillsPolicyPrompt();
+        if (skillsPrompt) {
+          requestMessages = [
+            requestMessages[0],
+            { role: "system", content: skillsPrompt },
+            ...requestMessages.slice(1),
+          ];
+        }
+      }
+
+      let thinking = "";
+      let emittedThinkingStart = false;
+
+      if (isSkillSlashCommand(slashCommand)) {
+        try {
+          const toolCall = buildForcedSkillToolCall(slashCommand);
+          emit({
+            type: "tool_start",
+            toolName: slashCommand.skillName,
+            argsPreview: toolCall.function.arguments.slice(0, 300),
+          });
+          const result = await executeToolCallWithConfirmation(toolCall, emit);
+          appendForcedSkillResult(requestMessages, slashCommand, result);
+          emit({
+            type: "tool_end",
+            toolName: slashCommand.skillName,
+            outputPreview: String(result || "").slice(0, 300),
+            isError: /^Error:/i.test(String(result || "")),
+          });
+        } catch (e) {
+          emit({ type: "error", error: e.message });
+          if (!res.writableEnded) res.end();
+          return;
+        }
+      }
+
+      const MAX_CLOUD_SKILL_ROUNDS = 6;
+      for (let round = 0; ; round += 1) {
+        usage = await streamCloudCompletion({
+          provider,
+          settings,
+          messages: requestMessages,
+          signal: abortController.signal,
+          onDelta: (delta) => {
+            output += delta;
+            // Stop streaming visible text once a skill call starts; the
+            // call block is excised below and streaming resumes next round.
+            if (output.includes("<call:")) return;
+            emit({
+              type: "delta",
+              delta,
+              response: stripTrailingPartialSkillCall(output),
+            });
+          },
+          onUsage: (nextUsage) => {
+            usage = nextUsage;
+          },
+        });
+
+        const xmlMatch = cloudSkillsEnabled
+          ? output.match(/<call:([^>]+)>(.*?)<\/call>/is)
+          : null;
+        if (!xmlMatch) break;
+
+        output = output.replace(xmlMatch[0], "").trim();
+        if (round >= MAX_CLOUD_SKILL_ROUNDS) {
+          emit({
+            type: "error",
+            error: "Skill call limit exceeded for this cloud request.",
+          });
+          break;
+        }
+
+        const toolCall = {
+          function: {
+            name: xmlMatch[1].trim(),
+            arguments: xmlMatch[2].trim(),
+          },
+        };
+
+        if (!emittedThinkingStart) {
+          emittedThinkingStart = true;
+          emit({ type: "thinking_start" });
+        }
+        const startMsg = `\n\n[Running tool: ${toolCall.function.name}...]\n`;
+        thinking += startMsg;
+        emit({ type: "thinking_delta", delta: startMsg, thinking });
+        emit({
+          type: "tool_start",
+          toolName: toolCall.function.name,
+          argsPreview: toolCall.function.arguments.slice(0, 300),
+        });
+
+        let result;
+        try {
+          result = await executeToolCallWithConfirmation(toolCall, emit);
+        } catch (toolError) {
+          result = `Error: ${toolError.message}`;
+        }
+
+        emit({
+          type: "tool_end",
+          toolName: toolCall.function.name,
+          outputPreview: String(result || "").slice(0, 300),
+          isError: /^Error:/i.test(String(result || "")),
+        });
+        const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
+        thinking += endMsg;
+        emit({ type: "thinking_delta", delta: endMsg, thinking });
+
+        if (output) {
+          requestMessages = [
+            ...requestMessages,
+            { role: "assistant", content: output },
+          ];
+        }
+        requestMessages = [
+          ...requestMessages,
+          {
+            role: "user",
+            content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nContinue your answer using this skill result. Do not repeat the same skill call with the same arguments.`,
+          },
+        ];
+        emit({ type: "delta", delta: "", response: output });
+      }
+
+      if (emittedThinkingStart) {
+        emit({ type: "thinking_end", thinking });
+      }
 
       finished = true;
       upsertConversation(
@@ -3753,12 +4020,15 @@ const server = http.createServer(async (req, res) => {
         mode,
         {
           librarySources: librarySourceResults,
+          passages: libraryPassages,
+          thinking,
           traceEvents,
         },
       );
       emit({
         type: "done",
         response: output,
+        thinking,
         usage,
         provider,
         model: settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider],
@@ -3831,6 +4101,7 @@ const server = http.createServer(async (req, res) => {
       let thinking = "";
       let emittedThinkingStart = false;
       let librarySourceResults = [];
+      let libraryPassages = [];
       const traceEvents = [];
       let transientLibraryContextMessage = null;
       let databasePriorityForLibraryTurn = false;
@@ -3848,7 +4119,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           message,
-          getLibraryRequestForCommand(library, slashCommand, history),
+          getLibraryRequestForCommand(library, slashCommand, history, "ollama"),
         );
         if (libraryContext.enabled) {
           if (libraryContext.contextMessage) {
@@ -3870,13 +4141,16 @@ const server = http.createServer(async (req, res) => {
             getLibraryContextSourceResults(libraryContext),
             getLibraryRequestForCommand(library, slashCommand, history),
           );
+          libraryPassages = Array.isArray(libraryContext.contextResults)
+            ? libraryContext.contextResults
+            : [];
           databasePriorityForLibraryTurn =
             !slashCommand && librarySourceResults.length > 0;
           emit({
             type: "library_results",
             results: librarySourceResults,
             meta: libraryContext.contextMeta,
-            passages: libraryContext.contextResults,
+            passages: libraryPassages,
           });
         }
       } catch (e) {
@@ -4068,6 +4342,7 @@ const server = http.createServer(async (req, res) => {
                   mode,
                   {
                     librarySources: librarySourceResults,
+                    passages: libraryPassages,
                     thinking,
                     traceEvents,
                   },
@@ -4096,6 +4371,7 @@ const server = http.createServer(async (req, res) => {
                 mode,
                 {
                   librarySources: librarySourceResults,
+                  passages: libraryPassages,
                   thinking,
                   traceEvents,
                 },
@@ -4202,7 +4478,15 @@ const server = http.createServer(async (req, res) => {
         messages.push(messageObj);
         for (const toolCall of messageObj.tool_calls) {
           let result;
-          if (
+          let disabledSkillError = "";
+          try {
+            assertBuiltinSkillEnabled(toolCall.function.name);
+          } catch (error) {
+            disabledSkillError = error.message;
+          }
+          if (disabledSkillError) {
+            result = `Error: ${disabledSkillError}`;
+          } else if (
             skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR)
           ) {
             appendSecurityEvent("shell_command_denied_non_stream", {
@@ -4322,6 +4606,7 @@ const server = http.createServer(async (req, res) => {
       const messages = [...history, { role: "user", content: originalMessage }];
       let promptMessage = promptQuestion;
       let librarySourceResults = [];
+      let libraryPassages = [];
 
       res.writeHead(200, {
         "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -4343,7 +4628,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           promptQuestion,
-          getLibraryRequestForCommand(body.library, slashCommand, history),
+          getLibraryRequestForCommand(body.library, slashCommand, history, "pi"),
         );
         if (libraryContext.enabled) {
           promptMessage = buildPiPromptWithLibraryContext(
@@ -4354,10 +4639,13 @@ const server = http.createServer(async (req, res) => {
             getLibraryContextSourceResults(libraryContext),
             getLibraryRequestForCommand(body.library, slashCommand, history),
           );
+          libraryPassages = Array.isArray(libraryContext.contextResults)
+            ? libraryContext.contextResults
+            : [];
           writeStreamEvent({
             type: "library_results",
             results: librarySourceResults,
-            passages: libraryContext.contextResults,
+            passages: libraryPassages,
             meta: libraryContext.contextMeta,
           });
         }
@@ -4384,6 +4672,7 @@ const server = http.createServer(async (req, res) => {
               mode,
               {
                 librarySources: librarySourceResults,
+                passages: libraryPassages,
                 thinking,
                 traceEvents,
               },
@@ -4457,7 +4746,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           promptQuestion,
-          getLibraryRequestForCommand(body.library, slashCommand, body.history),
+          getLibraryRequestForCommand(
+            body.library,
+            slashCommand,
+            body.history,
+            "pi",
+          ),
         );
         if (libraryContext.enabled) {
           promptMessage = buildPiPromptWithLibraryContext(

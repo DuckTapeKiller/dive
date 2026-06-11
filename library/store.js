@@ -19,6 +19,7 @@ const DEFAULT_HYBRID_CANDIDATE_LIMIT = 80;
 const DEFAULT_RRF_K = 60;
 const DEFAULT_METADATA_CAP = 0.45;
 const DEFAULT_SOURCE_HINT_CAP = 0.75;
+const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud"];
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
   ".obsidian",
@@ -228,6 +229,39 @@ const QUERY_CONCEPTS = [
   },
 ];
 
+const QUERY_ALIAS_SETS = [
+  {
+    triggers: [
+      "laws of the indies",
+      "new laws",
+      "new laws of the indies",
+    ],
+    aliases: [
+      "leyes de indias",
+      "leyes nuevas",
+      "leyes nuevas de indias",
+      "leyes nuevas de las indias",
+      "carlos v",
+      "1542",
+    ],
+  },
+  {
+    triggers: [
+      "leyes de indias",
+      "leyes nuevas",
+      "leyes nuevas de indias",
+      "leyes nuevas de las indias",
+    ],
+    aliases: [
+      "laws of the indies",
+      "new laws",
+      "new laws of the indies",
+      "charles v",
+      "1542",
+    ],
+  },
+];
+
 let cachedSqlitePath = null;
 let cachedSqliteExtensionPath = null;
 const sqliteInfoCache = new Map();
@@ -270,6 +304,15 @@ function mergeConfig(base, override) {
     ...(override || {}),
     chunking: { ...base.chunking, ...(override?.chunking || {}) },
     search: { ...base.search, ...(override?.search || {}) },
+    searchModes: Object.fromEntries(
+      SEARCH_MODE_KEYS.map((modeKey) => [
+        modeKey,
+        {
+          ...(base.searchModes?.[modeKey] || {}),
+          ...(override?.searchModes?.[modeKey] || {}),
+        },
+      ]),
+    ),
     embedding: { ...base.embedding, ...(override?.embedding || {}) },
     chatIntegration: {
       ...base.chatIntegration,
@@ -316,12 +359,76 @@ function normalizeSourceExtensions(source, sourcePath, extensions) {
 
 function normalizeChatIntegration(raw, searchConfig = {}) {
   const maxLimit = clampNumber(searchConfig.maxLimit, 1, 50, 50);
+  // Saved configs that still carry the old defaults (5 passages / 12000
+  // chars) are migrated to the new defaults, mirroring the legacy
+  // search.maxLimit migration in normalizeConfig.
+  const usesLegacyChatDefaults =
+    Number(raw?.limit) === 5 && Number(raw?.maxContextChars) === 12000;
   return {
     enabled: raw?.enabled === true,
-    limit: clampNumber(raw?.limit, 1, maxLimit, 5),
-    maxContextChars: clampNumber(raw?.maxContextChars, 1000, 50000, 12000),
+    limit: usesLegacyChatDefaults
+      ? 20
+      : clampNumber(raw?.limit, 1, maxLimit, 20),
+    maxContextChars: usesLegacyChatDefaults
+      ? 30000
+      : clampNumber(raw?.maxContextChars, 1000, 50000, 30000),
     includeSourcePaths: raw?.includeSourcePaths !== false,
   };
+}
+
+function normalizeSearchAlgorithmOverride(raw, fallback) {
+  return {
+    rrfK: clampNumber(raw?.rrfK, 1, 100, fallback.rrfK),
+    semanticWeight: clampNumber(
+      raw?.semanticWeight,
+      0,
+      3,
+      fallback.semanticWeight,
+    ),
+    keywordWeight: clampNumber(
+      raw?.keywordWeight,
+      0,
+      3,
+      fallback.keywordWeight,
+    ),
+    metadataWeight: clampNumber(
+      raw?.metadataWeight,
+      0,
+      3,
+      fallback.metadataWeight,
+    ),
+    sourceWeight: clampNumber(raw?.sourceWeight, 0, 3, fallback.sourceWeight),
+    contentKeywordBonus: clampNumber(
+      raw?.contentKeywordBonus,
+      0,
+      1,
+      fallback.contentKeywordBonus,
+    ),
+    metadataKeywordBonus: clampNumber(
+      raw?.metadataKeywordBonus,
+      0,
+      1,
+      fallback.metadataKeywordBonus,
+    ),
+    maxPassagesPerSource: clampNumber(
+      raw?.maxPassagesPerSource,
+      1,
+      50,
+      fallback.maxPassagesPerSource,
+    ),
+  };
+}
+
+// Returns a config whose `search` block carries the per-mode algorithm
+// overrides for the given chat mode (ollama | pi | cloud). Unknown or
+// missing modes fall back to the shared search settings unchanged.
+function resolveSearchConfigForMode(config, mode) {
+  const modeKey = String(mode || "")
+    .trim()
+    .toLowerCase();
+  const override = config?.searchModes?.[modeKey];
+  if (!override || !SEARCH_MODE_KEYS.includes(modeKey)) return config;
+  return { ...config, search: { ...config.search, ...override } };
 }
 
 function normalizeVectorQuantization(value) {
@@ -361,9 +468,34 @@ function normalizeConfig(rawConfig) {
     keywordWeight: clampNumber(merged.search?.keywordWeight, 0, 3, 1.1),
     metadataWeight: clampNumber(merged.search?.metadataWeight, 0, 3, 0.8),
     sourceWeight: clampNumber(merged.search?.sourceWeight, 0, 3, 1.2),
-    contentKeywordBonus: clampNumber(merged.search?.contentKeywordBonus, 0, 1, 0.16),
-    metadataKeywordBonus: clampNumber(merged.search?.metadataKeywordBonus, 0, 1, 0.06),
+    contentKeywordBonus: clampNumber(
+      merged.search?.contentKeywordBonus,
+      0,
+      1,
+      0.16,
+    ),
+    metadataKeywordBonus: clampNumber(
+      merged.search?.metadataKeywordBonus,
+      0,
+      1,
+      0.06,
+    ),
+    maxPassagesPerSource: clampNumber(
+      merged.search?.maxPassagesPerSource,
+      1,
+      50,
+      5,
+    ),
   };
+  // Per-mode search algorithm overrides. Each mode is materialized with the
+  // full field set, seeded from the shared search settings so existing
+  // single-config tuning carries into all three modes.
+  const searchModes = Object.fromEntries(
+    SEARCH_MODE_KEYS.map((modeKey) => [
+      modeKey,
+      normalizeSearchAlgorithmOverride(merged.searchModes?.[modeKey], search),
+    ]),
+  );
   const rawChunking = merged.chunking || {};
   const usesLegacyChunkDefaults =
     (Number(rawChunking.targetChars) === 1800 &&
@@ -433,6 +565,7 @@ function normalizeConfig(rawConfig) {
     sources,
     chunking,
     search,
+    searchModes,
     embedding,
     chatIntegration: normalizeChatIntegration(merged.chatIntegration, search),
     watch,
@@ -2196,6 +2329,13 @@ async function indexLibrary(options = {}) {
             await embedFileChunks(config, file.path, {
               embeddingReady,
               onlyMissing: true,
+              totalChunks: gaps.chunks,
+              dimensions: stats.embeddingDimensions,
+              shouldCancel: options.shouldCancel,
+              onError: (entry) => {
+                const issue = recordIndexIssue(stats, options, entry);
+                emitIndexProgress(options, stats, {
+                  phase: "embedding",
                   currentFile: file.path,
                   currentFileIndex: fileIndex + 1,
                   lastEmbeddingError: issue.error || issue.reason || "",
@@ -2204,6 +2344,7 @@ async function indexLibrary(options = {}) {
               onBatch: (batchStats) => {
                 stats.embedded += batchStats.embeddedDelta || 0;
                 stats.embeddingErrors += batchStats.errorsDelta || 0;
+                stats.embeddingsSkipped += batchStats.skippedDelta || 0;
                 emitIndexProgress(options, stats, {
                   phase: "embedding",
                   currentFile: file.path,
@@ -2392,6 +2533,78 @@ function hasNormalizedSearchTerm(haystack, term) {
   return ` ${haystack} `.includes(` ${normalizedTerm} `);
 }
 
+function normalizeRetrievalQuoteMarks(text) {
+  return String(text || "")
+    .replace(/[\u00ab\u00bb\u201c\u201d\u201e\u201f]/g, '"')
+    .replace(/[\u2018\u2019\u201a\u201b]/g, "'");
+}
+
+function getAliasPhrasesForText(text) {
+  const normalized = normalizeSearchText(text);
+  if (!normalized) return [];
+  const aliases = [];
+  for (const aliasSet of QUERY_ALIAS_SETS) {
+    if (
+      aliasSet.triggers.some((trigger) =>
+        hasNormalizedSearchTerm(normalized, trigger),
+      )
+    ) {
+      aliases.push(...aliasSet.aliases);
+    }
+  }
+  return uniqueTerms(aliases, 32);
+}
+
+// Lightweight language detector. Returns "es", "en", or "" (unknown).
+// Two cheap, fast signals:
+//   1. Spanish-only diacritics / punctuation → "es"
+//   2. Common stop-word counts ("el la los las de y que" vs "the and of to a")
+// The goal is "is the chunk language probably the same as the query?",
+// not perfect language ID. Unknown is treated as a match.
+const SPANISH_STOPWORDS = new Set([
+  "el","la","los","las","un","una","unos","unas","de","del","y","o","u","que",
+  "porque","como","pero","si","no","es","son","fue","fueron","ser","estar",
+  "se","su","sus","lo","les","me","te","nos","con","sin","por","para","entre",
+  "más","muy","ya","sobre","cuando","donde","quien","quién","cuál","cómo",
+]);
+const ENGLISH_STOPWORDS = new Set([
+  "the","a","an","and","or","but","if","of","to","in","on","at","by","for",
+  "from","as","is","are","was","were","be","been","being","that","this",
+  "these","those","with","without","into","about","over","under","than",
+  "then","there","here","what","when","where","why","how","who","whose",
+  "which","not","no","yes","do","does","did","have","has","had",
+]);
+const SPANISH_DIACRITICS = /[áéíóúüñ¿¡]/i;
+function detectLanguageHint(text) {
+  const raw = String(text || "");
+  if (!raw) return "";
+  if (SPANISH_DIACRITICS.test(raw)) return "es";
+  const tokens = raw
+    .toLowerCase()
+    .match(/[\p{L}]{2,}/gu);
+  if (!tokens || tokens.length < 3) return "";
+  let es = 0;
+  let en = 0;
+  for (const token of tokens) {
+    if (SPANISH_STOPWORDS.has(token)) es += 1;
+    else if (ENGLISH_STOPWORDS.has(token)) en += 1;
+  }
+  if (es === 0 && en === 0) return "";
+  if (es >= en * 2 && es >= 2) return "es";
+  if (en >= es * 2 && en >= 2) return "en";
+  return "";
+}
+
+// Cap on how much same-language bias the bonus stage is allowed to apply.
+// 1.0 means full bonus (legacy behaviour); 0.25 means a 75% reduction when
+// the chunk language clearly differs from the query language.
+const CROSS_LINGUAL_BONUS_FACTOR = 0.25;
+function crossLingualMultiplier(queryLang, chunkLang) {
+  if (!queryLang || !chunkLang) return 1;
+  if (queryLang === chunkLang) return 1;
+  return CROSS_LINGUAL_BONUS_FACTOR;
+}
+
 function extractSearchTerms(query) {
   const terms = normalizeSearchText(query).match(/[\p{L}\p{N}]{2,}/gu) || [];
   const filtered = terms.filter((term) => !SEARCH_STOP_WORDS.has(term));
@@ -2401,8 +2614,8 @@ function extractSearchTerms(query) {
 
 function extractQuotedTerms(query) {
   const matches = [];
-  const raw = String(query || "");
-  const patterns = [/"([^"]+)"/gu, /“([^”]+)”/gu, /'([^']+)'/gu];
+  const raw = normalizeRetrievalQuoteMarks(query);
+  const patterns = [/"([^"]+)"/gu, /'([^']+)'/gu];
   for (const pattern of patterns) {
     let match = null;
     while ((match = pattern.exec(raw)) !== null) {
@@ -2412,6 +2625,62 @@ function extractQuotedTerms(query) {
   return matches
     .map((match) => normalizeSearchText(match).trim())
     .filter((term) => term.length >= 2);
+}
+
+// Extract the raw (non-normalized) spans inside any quote style. Used to
+// build the user-instruction half of a quote-restricted query — preserving
+// original case/punctuation for the LLM prompt.
+function extractQuotedSpansRaw(query) {
+  const raw = normalizeRetrievalQuoteMarks(query);
+  const spans = [];
+  const patterns = [/"([^"]+)"/gu, /'([^']+)'/gu];
+  for (const pattern of patterns) {
+    let match = null;
+    while ((match = pattern.exec(raw)) !== null) {
+      spans.push({ start: match.index, end: match.index + match[0].length, text: match[1] });
+    }
+  }
+  return spans.sort((a, b) => a.start - b.start);
+}
+
+// Splits a raw chat query into the part used for retrieval (vector + FTS +
+// metadata) and the part passed to the LLM as instruction. When quotes are
+// present, only quoted spans are embedded; everything outside the quotes is
+// treated as user instruction. When no quotes are present, behavior is
+// unchanged: the whole query is the retrieval query and there is no extra
+// instruction. Empty / whitespace-only quotes degrade to the default.
+function splitQueryForRetrieval(query) {
+  const raw = normalizeRetrievalQuoteMarks(query);
+  if (!raw.trim()) {
+    return { retrievalQuery: raw, userInstruction: "", hasQuotedScope: false };
+  }
+  const spans = extractQuotedSpansRaw(raw);
+  if (!spans.length) {
+    return { retrievalQuery: raw, userInstruction: "", hasQuotedScope: false };
+  }
+  const quotedJoined = spans
+    .map((span) => span.text.trim())
+    .filter(Boolean)
+    .join(" ");
+  if (!quotedJoined) {
+    return { retrievalQuery: raw, userInstruction: "", hasQuotedScope: false };
+  }
+  let outsideText = "";
+  let cursor = 0;
+  for (const span of spans) {
+    outsideText += raw.slice(cursor, span.start);
+    cursor = span.end;
+  }
+  outsideText += raw.slice(cursor);
+  const userInstruction = outsideText.replace(/\s+/g, " ").trim();
+  return {
+    retrievalQuery: quotedJoined,
+    userInstruction,
+    hasQuotedScope: true,
+    quotedPhrases: spans
+      .map((span) => normalizeSearchText(span.text).trim())
+      .filter((term) => term.length >= 2),
+  };
 }
 
 function uniqueTerms(terms, limit = 32) {
@@ -2447,6 +2716,125 @@ function getConceptExpansions(terms) {
   return {
     concepts: uniqueTerms(concepts, 12),
     expansions: uniqueTerms(expansions, 48),
+  };
+}
+
+function buildQuoteScopeGroups(quotedPhrases) {
+  return (Array.isArray(quotedPhrases) ? quotedPhrases : [])
+    .map((phrase) => {
+      const aliases = getAliasPhrasesForText(phrase);
+      const phrases = uniqueTerms([phrase, ...aliases], 24);
+      const terms = uniqueTerms(
+        phrases
+          .flatMap(splitSearchTerms)
+          .filter((term) => !SEARCH_STOP_WORDS.has(term)),
+        48,
+      );
+      return { phrases, terms };
+    })
+    .filter((group) => group.phrases.length || group.terms.length);
+}
+
+function buildSearchPlan(query, sourceHints = [], options = {}) {
+  const supportingQuery = options.supportingQuery || "";
+  const fullQuery = options.fullQuery || query;
+  const allTerms = uniqueTerms(splitSearchTerms(query), 48);
+  const supportingTerms = uniqueTerms(
+    splitSearchTerms(supportingQuery).filter(
+      (term) => !SEARCH_STOP_WORDS.has(term),
+    ),
+    24,
+  );
+  const quotedPhrases = Array.isArray(options.quotedPhrases)
+    ? uniqueTerms(options.quotedPhrases, 24)
+    : extractQuotedTerms(query);
+  const aliasPhrases = uniqueTerms(
+    [
+      ...getAliasPhrasesForText(fullQuery),
+      ...quotedPhrases.flatMap(getAliasPhrasesForText),
+    ],
+    48,
+  );
+  const quotedTerms = uniqueTerms(
+    [...quotedPhrases, ...aliasPhrases].flatMap(splitSearchTerms),
+    48,
+  );
+  const sourceTerms = getSourceHintTermSet(sourceHints);
+  const nonSourceTerms = allTerms.filter(
+    (term) => !isSourceHintTerm(term, sourceTerms),
+  );
+  const usefulTerms = nonSourceTerms.filter(
+    (term) => !SEARCH_STOP_WORDS.has(term),
+  );
+  const aliasTerms = uniqueTerms(aliasPhrases.flatMap(splitSearchTerms), 48);
+  const conceptInputTerms = uniqueTerms(
+    [...allTerms, ...quotedTerms, ...aliasTerms],
+    96,
+  );
+  const conceptPlan = getConceptExpansions(conceptInputTerms);
+  const quotedPrimaryTerms = quotedTerms.filter(
+    (term) =>
+      !SEARCH_STOP_WORDS.has(term) &&
+      !isConceptTrigger(term) &&
+      !isSourceHintTerm(term, sourceTerms),
+  );
+  const primaryTerms = uniqueTerms(
+    [
+      ...quotedPrimaryTerms,
+      ...aliasTerms.filter(
+        (term) =>
+          !SEARCH_STOP_WORDS.has(term) &&
+          !isConceptTrigger(term) &&
+          !isSourceHintTerm(term, sourceTerms),
+      ),
+      ...usefulTerms.filter((term) => !isConceptTrigger(term)),
+    ],
+    24,
+  );
+  const fallbackTerms = uniqueTerms(
+    usefulTerms.length
+      ? usefulTerms
+      : extractSearchTerms(query).filter(
+          (term) => !isSourceHintTerm(term, sourceTerms),
+        ),
+    16,
+  );
+  const effectivePrimaryTerms = primaryTerms.length
+    ? primaryTerms
+    : fallbackTerms;
+  const expansionTerms = uniqueTerms(
+    [
+      ...aliasTerms,
+      ...conceptPlan.expansions,
+    ].filter(
+      (term) =>
+        !isSourceHintTerm(term, sourceTerms) &&
+        !effectivePrimaryTerms.includes(term),
+    ),
+    64,
+  );
+  const ftsTerms = effectivePrimaryTerms.length
+    ? effectivePrimaryTerms
+    : uniqueTerms([...quotedTerms, ...aliasTerms, ...expansionTerms, ...fallbackTerms], 16);
+  return {
+    allTerms,
+    quotedPhrases,
+    aliasPhrases,
+    quotedTerms,
+    quoteScopeGroups: buildQuoteScopeGroups(quotedPhrases),
+    concepts: conceptPlan.concepts,
+    primaryTerms: effectivePrimaryTerms,
+    supportingTerms,
+    expansionTerms,
+    metadataTerms: uniqueTerms(
+      [...effectivePrimaryTerms, ...quotedPrimaryTerms, ...aliasTerms],
+      24,
+    ),
+    ftsTerms: uniqueTerms(ftsTerms, 16),
+    scoringTerms: uniqueTerms(
+      [...effectivePrimaryTerms, ...expansionTerms, ...supportingTerms],
+      80,
+    ),
   };
 }
 
@@ -2521,73 +2909,6 @@ function isSourceHintTerm(term, sourceTerms) {
   return false;
 }
 
-function buildSearchPlan(query, sourceHints = []) {
-  const allTerms = uniqueTerms(splitSearchTerms(query), 48);
-  const quotedPhrases = extractQuotedTerms(query);
-  const quotedTerms = uniqueTerms(quotedPhrases.flatMap(splitSearchTerms), 24);
-  const sourceTerms = getSourceHintTermSet(sourceHints);
-  const nonSourceTerms = allTerms.filter(
-    (term) => !isSourceHintTerm(term, sourceTerms),
-  );
-  const usefulTerms = nonSourceTerms.filter(
-    (term) => !SEARCH_STOP_WORDS.has(term),
-  );
-  const conceptInputTerms = uniqueTerms([...allTerms, ...quotedTerms], 64);
-  const conceptPlan = getConceptExpansions(conceptInputTerms);
-  const quotedPrimaryTerms = quotedTerms.filter(
-    (term) =>
-      !SEARCH_STOP_WORDS.has(term) &&
-      !isConceptTrigger(term) &&
-      !isSourceHintTerm(term, sourceTerms),
-  );
-  const primaryTerms = uniqueTerms(
-    [
-      ...quotedPrimaryTerms,
-      ...usefulTerms.filter((term) => !isConceptTrigger(term)),
-    ],
-    16,
-  );
-  const fallbackTerms = uniqueTerms(
-    usefulTerms.length
-      ? usefulTerms
-      : extractSearchTerms(query).filter(
-          (term) => !isSourceHintTerm(term, sourceTerms),
-        ),
-    16,
-  );
-  const effectivePrimaryTerms = primaryTerms.length
-    ? primaryTerms
-    : fallbackTerms;
-  const expansionTerms = uniqueTerms(
-    conceptPlan.expansions.filter(
-      (term) =>
-        !isSourceHintTerm(term, sourceTerms) &&
-        !effectivePrimaryTerms.includes(term),
-    ),
-    48,
-  );
-  const ftsTerms = effectivePrimaryTerms.length
-    ? effectivePrimaryTerms
-    : uniqueTerms([...quotedTerms, ...expansionTerms, ...fallbackTerms], 12);
-  return {
-    allTerms,
-    quotedPhrases,
-    quotedTerms,
-    concepts: conceptPlan.concepts,
-    primaryTerms: effectivePrimaryTerms,
-    expansionTerms,
-    metadataTerms: uniqueTerms(
-      [...effectivePrimaryTerms, ...quotedPrimaryTerms],
-      16,
-    ),
-    ftsTerms: uniqueTerms(ftsTerms, 12),
-    scoringTerms: uniqueTerms(
-      [...effectivePrimaryTerms, ...expansionTerms],
-      64,
-    ),
-  };
-}
-
 function queryRefersToPreviousSource(query) {
   return /\b(ese|esa|este|esta|that|previous)\s+(libro|obra|book|work|source)\b/i.test(
     normalizeSearchText(query),
@@ -2615,7 +2936,63 @@ function normalizeResult(row, kind) {
   };
 }
 
-async function searchFts(config, query, limit, sourceHints = [], plan = null) {
+// Book filter: chat requests may restrict retrieval to specific
+// library_files ids. Sanitized to at most 10 positive integers.
+const LIBRARY_FILE_FILTER_MAX = 10;
+
+function sanitizeLibraryFileIds(value) {
+  if (!Array.isArray(value)) return [];
+  const ids = [];
+  for (const item of value) {
+    const id = Number.parseInt(item, 10);
+    if (!Number.isInteger(id) || id <= 0 || ids.includes(id)) continue;
+    ids.push(id);
+    if (ids.length >= LIBRARY_FILE_FILTER_MAX) break;
+  }
+  return ids;
+}
+
+function fileIdFilterSql(fileIds, column) {
+  if (!Array.isArray(fileIds) || !fileIds.length) return "";
+  return ` AND ${column} IN (${fileIds.map((id) => sqlInteger(id)).join(", ")})`;
+}
+
+async function searchLibraryFiles(query, options = {}) {
+  const config = options.config || loadLibraryConfig();
+  if (!fs.existsSync(config.databasePath)) return [];
+  const term = String(query || "")
+    .trim()
+    .toLowerCase();
+  if (!term) return [];
+  const limit = clampNumber(options.limit, 1, 50, 12);
+  const like = sqlLiteral(`%${term}%`);
+  const rows = await runSqliteJson(
+    config.databasePath,
+    `SELECT f.id AS id, f.title AS title, f.author AS author, f.path AS path
+FROM library_files f
+WHERE lower(f.title) LIKE ${like} OR lower(f.author) LIKE ${like}
+ORDER BY lower(f.title)
+LIMIT ${sqlInteger(limit)};`,
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    title:
+      String(row.title || "").trim() ||
+      path.basename(String(row.path || "")) ||
+      "Untitled",
+    author: String(row.author || "").trim(),
+    path: String(row.path || ""),
+  }));
+}
+
+async function searchFts(
+  config,
+  query,
+  limit,
+  sourceHints = [],
+  plan = null,
+  fileIds = [],
+) {
   if (config.search?.keywordEnabled !== true) return [];
   const ftsQuery = buildFtsQuery(query, sourceHints, plan);
   if (!ftsQuery) return [];
@@ -2641,7 +3018,7 @@ async function searchFts(config, query, limit, sourceHints = [], plan = null) {
 FROM library_chunks_fts
 JOIN library_chunks c ON c.id = library_chunks_fts.rowid
 JOIN library_files f ON f.id = c.file_id
-WHERE library_chunks_fts MATCH ${sqlLiteral(ftsQuery)}
+WHERE library_chunks_fts MATCH ${sqlLiteral(ftsQuery)}${fileIdFilterSql(fileIds, "c.file_id")}
 ORDER BY score
 LIMIT ${sqlInteger(limit)};`,
   );
@@ -2666,6 +3043,7 @@ async function searchMetadata(
   limit,
   sourceHints = [],
   plan = null,
+  fileIds = [],
 ) {
   const queryPlan = plan || buildSearchPlan(query, sourceHints);
   const terms = queryPlan.metadataTerms.filter((term) => term.length > 2);
@@ -2686,7 +3064,7 @@ async function searchMetadata(
   0 AS score
 FROM library_chunks c
 JOIN library_files f ON f.id = c.file_id
-WHERE ${conditions.join(" OR ")}
+WHERE (${conditions.join(" OR ")})${fileIdFilterSql(fileIds, "f.id")}
 ORDER BY lower(f.path), c.chunk_index
 LIMIT ${sqlInteger(limit)};`,
   );
@@ -2716,6 +3094,7 @@ async function searchSourceDeepScan(
   limit,
   sourceHints = [],
   plan = null,
+  fileIds = [],
 ) {
   if (!sourceHints.length) return [];
   const conditions = sourceHintFileConditions(sourceHints);
@@ -2729,7 +3108,7 @@ FROM library_chunks c
 JOIN library_files f ON f.id = c.file_id
 WHERE f.id IN (
   SELECT id FROM library_files f
-  WHERE ${conditions.join(" OR ")}
+  WHERE (${conditions.join(" OR ")})${fileIdFilterSql(fileIds, "f.id")}
   ORDER BY lower(path)
   LIMIT 20
 )
@@ -2737,14 +3116,21 @@ ORDER BY f.path, c.chunk_index
 LIMIT 5000;`,
   );
   const queryPlan = plan || buildSearchPlan(query, sourceHints);
+  const queryLang = detectLanguageHint(query);
   return rows
     .map((row) => normalizeResult(row, "source"))
     .map((result) => {
-      const contentScore = computePlannedContentBonus(result.text, queryPlan, config);
+      const contentScore = computePlannedContentBonus(
+        result.text,
+        queryPlan,
+        config,
+        queryLang,
+      );
       const headingScore = computePlannedContentBonus(
         result.heading,
         queryPlan,
-        config
+        config,
+        queryLang,
       );
       const sourceScore = computeSourceHintBoost(result, sourceHints, true);
       const penalty = computePassagePenalty(result, query);
@@ -2766,11 +3152,17 @@ LIMIT 5000;`,
     .map((item) => ({ ...item.result, score: item.score }));
 }
 
-async function searchVector(config, query, limit) {
+async function searchVector(config, query, limit, fileIds = []) {
   if (!isVectorSearchConfigured(config)) return [];
   const queryEmbedding = (await embedTexts(config, [query], "query"))[0];
   if (!Array.isArray(queryEmbedding) || !queryEmbedding.length) return [];
   const vectorJson = JSON.stringify(queryEmbedding);
+  // The vec0 KNN picks the k nearest chunks across the whole library and the
+  // file filter is applied after the join, so widen k when filtering to keep
+  // recall inside the selected books.
+  const knnLimit = fileIds.length
+    ? Math.min(Math.max(limit * 20, 200), 1000)
+    : limit;
   const rows = await runSqliteJson(
     config.databasePath,
     `SELECT
@@ -2789,7 +3181,7 @@ FROM library_chunks_vec v
 JOIN library_chunks c ON c.id = v.chunk_id
 JOIN library_files f ON f.id = c.file_id
 WHERE v.embedding MATCH ${vectorSqlExpression(config, vectorJson)}
-  AND k = ${sqlInteger(limit)}
+  AND k = ${sqlInteger(knnLimit)}${fileIdFilterSql(fileIds, "c.file_id")}
 ORDER BY v.distance
 LIMIT ${sqlInteger(limit)};`,
     { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
@@ -2834,15 +3226,26 @@ function computeMetadataBonus(
   quotedTerms,
   sourceHints,
   strongSourceHints,
-  config = {}
+  config = {},
+  queryLang = "",
 ) {
   const haystack = normalizeSearchText(
     [result.title, result.author, result.path, result.heading]
       .filter(Boolean)
       .join(" "),
   );
+  // Source-hint boosts (e.g. "according to Apolodoro") are intentionally
+  // language-neutral: they apply at full strength regardless of the
+  // chunk's language. Only the term-match bonuses below are damped when
+  // the chunk language clearly differs from the query language.
   let bonus = computeSourceHintBoost(result, sourceHints, strongSourceHints);
-  const metadataKeywordBonus = config.search?.metadataKeywordBonus ?? 0.06;
+  const chunkLang = detectLanguageHint(
+    [result.title, result.author, result.heading].filter(Boolean).join(" ") ||
+      result.text,
+  );
+  const multiplier = crossLingualMultiplier(queryLang, chunkLang);
+  const metadataKeywordBonus =
+    (config.search?.metadataKeywordBonus ?? 0.06) * multiplier;
   const exactPhraseBonus = metadataKeywordBonus * 3;
   for (const term of quotedTerms) {
     if (term && haystack.includes(term)) bonus += exactPhraseBonus;
@@ -2854,15 +3257,22 @@ function computeMetadataBonus(
   return Math.min(bonus, DEFAULT_METADATA_CAP + DEFAULT_SOURCE_HINT_CAP);
 }
 
-function computePlannedContentBonus(text, plan = {}, config = {}) {
+function computePlannedContentBonus(text, plan = {}, config = {}, queryLang = "") {
   const haystack = normalizeSearchText(text);
   if (!haystack) return 0;
+  const chunkLang = detectLanguageHint(text);
+  const multiplier = crossLingualMultiplier(queryLang, chunkLang);
   let bonus = 0;
-  const contentKeywordBonus = config.search?.contentKeywordBonus ?? 0.16;
+  const contentKeywordBonus =
+    (config.search?.contentKeywordBonus ?? 0.16) * multiplier;
   const exactPhraseBonus = contentKeywordBonus * 1.75;
   const quotedTermBonus = contentKeywordBonus * 0.75;
   const expansionTermBonus = contentKeywordBonus * 0.25;
-  for (const phrase of plan.quotedPhrases || []) {
+  const phraseTerms = uniqueTerms(
+    [...(plan.quotedPhrases || []), ...(plan.aliasPhrases || [])],
+    64,
+  );
+  for (const phrase of phraseTerms) {
     if (phrase && haystack.includes(phrase)) bonus += exactPhraseBonus;
   }
   for (const term of plan.quotedTerms || []) {
@@ -2873,6 +3283,11 @@ function computePlannedContentBonus(text, plan = {}, config = {}) {
   }
   for (const term of plan.expansionTerms || []) {
     if (term && hasNormalizedSearchTerm(haystack, term)) bonus += expansionTermBonus;
+  }
+  for (const term of plan.supportingTerms || []) {
+    if (term && hasNormalizedSearchTerm(haystack, term)) {
+      bonus += contentKeywordBonus * 0.15;
+    }
   }
   return Math.min(bonus, 0.85);
 }
@@ -2907,6 +3322,65 @@ function resultHasExpansionContent(result, plan = {}) {
   return plan.expansionTerms.some(
     (term) => term && hasNormalizedSearchTerm(haystack, term),
   );
+}
+
+function resultMatchesQuoteScope(result, plan = {}) {
+  if (!Array.isArray(plan.quoteScopeGroups) || !plan.quoteScopeGroups.length) {
+    return true;
+  }
+  const haystack = normalizeSearchText(
+    [result?.title, result?.author, result?.heading, result?.text]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return plan.quoteScopeGroups.every((group) => {
+    if ((group.phrases || []).some((phrase) => haystack.includes(phrase))) {
+      return true;
+    }
+    const terms = (group.terms || []).filter(Boolean);
+    if (!terms.length) return false;
+    const matches = terms.filter((term) =>
+      hasNormalizedSearchTerm(haystack, term),
+    ).length;
+    return matches >= Math.min(2, terms.length);
+  });
+}
+
+function computeHistoricalCooccurrenceBonus(result, plan = {}) {
+  const haystack = normalizeSearchText(
+    [result?.title, result?.author, result?.heading, result?.text]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const queryTerms = new Set([
+    ...(plan.allTerms || []),
+    ...(plan.quotedTerms || []),
+    ...(plan.aliasPhrases || []).flatMap(splitSearchTerms),
+  ]);
+  const asksLasCasas =
+    queryTerms.has("bartolome") && queryTerms.has("casas");
+  const asksLawsOfIndies =
+    queryTerms.has("laws") ||
+    queryTerms.has("indies") ||
+    queryTerms.has("leyes") ||
+    queryTerms.has("indias") ||
+    (plan.aliasPhrases || []).some((phrase) =>
+      /\b(leyes|laws)\b/u.test(phrase),
+    );
+  if (!asksLasCasas || !asksLawsOfIndies) return 0;
+  const hasLasCasas =
+    hasNormalizedSearchTerm(haystack, "bartolome") &&
+    hasNormalizedSearchTerm(haystack, "casas");
+  const hasLawsTopic =
+    haystack.includes("leyes nuevas") ||
+    haystack.includes("leyes de indias") ||
+    haystack.includes("leyes nuevas de indias") ||
+    (hasNormalizedSearchTerm(haystack, "leyes") &&
+      hasNormalizedSearchTerm(haystack, "indias")) ||
+    (hasNormalizedSearchTerm(haystack, "1542") &&
+      (hasNormalizedSearchTerm(haystack, "carlos") ||
+        hasNormalizedSearchTerm(haystack, "emperador")));
+  return hasLasCasas && hasLawsTopic ? 0.55 : 0;
 }
 
 function queryRequestsReferenceMaterial(query) {
@@ -2966,30 +3440,39 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
     : extractSearchTerms(query);
   const strongSourceHints =
     queryRefersToPreviousSource(query) && sourceHints.length > 0;
+  const queryLang = detectLanguageHint(query);
   return candidates.map((candidate) => {
     const metadataBonus = computeMetadataBonus(
       candidate.result,
       searchTerms,
-      queryPlan.quotedPhrases,
+      [...(queryPlan.quotedPhrases || []), ...(queryPlan.aliasPhrases || [])],
       sourceHints,
       strongSourceHints,
-      config
+      config,
+      queryLang,
     );
     const contentBonus = computePlannedContentBonus(
       candidate.result.text,
       queryPlan,
-      config
+      config,
+      queryLang,
     );
     const headingBonus = computePlannedContentBonus(
       candidate.result.heading,
       queryPlan,
-      config
+      config,
+      queryLang,
     );
+    // primaryContentBonus is a fixed-size kicker (~0.12-0.16) tied to the
+    // same content match. Damp it identically so a cross-language hit isn't
+    // double-rewarded relative to its damped content bonus.
+    const chunkLang = detectLanguageHint(candidate.result.text);
     const primaryContentBonus = resultHasStrongPrimaryContent(
       candidate.result,
       queryPlan,
     )
-      ? config.search?.contentKeywordBonus ?? 0.12
+      ? (config.search?.contentKeywordBonus ?? 0.12) *
+        crossLingualMultiplier(queryLang, chunkLang)
       : 0;
     const conceptPenalty =
       queryPlan.concepts.length > 0 &&
@@ -2997,6 +3480,10 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
         ? 0.35
         : 0;
     const passagePenalty = computePassagePenalty(candidate.result, query);
+    const cooccurrenceBonus = computeHistoricalCooccurrenceBonus(
+      candidate.result,
+      queryPlan,
+    );
     return {
       ...candidate,
       score:
@@ -3006,13 +3493,15 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
         headingBonus +
         primaryContentBonus -
         conceptPenalty -
-        passagePenalty,
+        passagePenalty +
+        cooccurrenceBonus,
       metadataBonus,
       contentBonus,
       headingBonus,
       primaryContentBonus,
       conceptPenalty,
       passagePenalty,
+      cooccurrenceBonus,
     };
   });
 }
@@ -3034,11 +3523,28 @@ function resultTextFingerprint(result, plan = null) {
   return normalized.slice(0, 700);
 }
 
-function diversifyResults(scored, limit, sourceHints = [], plan = null) {
+function diversifyResults(
+  scored,
+  limit,
+  sourceHints = [],
+  plan = null,
+  config = {},
+) {
   const selected = [];
   const perPath = new Map();
   const fingerprints = new Set();
+  const maxPerSource = Math.max(
+    1,
+    Math.min(
+      limit,
+      Number(config.search?.maxPassagesPerSource || 5),
+    ),
+  );
   const takeUpTo = (maxPerPath, target = limit, predicate = null) => {
+    const effectiveMaxPerPath = Math.max(
+      1,
+      Math.min(limit, Number(maxPerPath || maxPerSource), maxPerSource),
+    );
     for (const item of scored) {
       if (selected.length >= target) return;
       if (predicate && !predicate(item)) continue;
@@ -3048,7 +3554,7 @@ function diversifyResults(scored, limit, sourceHints = [], plan = null) {
       const fingerprint = resultTextFingerprint(item.result, plan);
       if (fingerprint && fingerprints.has(fingerprint)) continue;
       const count = perPath.get(item.result.path) || 0;
-      if (count >= maxPerPath) continue;
+      if (count >= effectiveMaxPerPath) continue;
       perPath.set(item.result.path, count + 1);
       if (fingerprint) fingerprints.add(fingerprint);
       selected.push(item);
@@ -3057,7 +3563,7 @@ function diversifyResults(scored, limit, sourceHints = [], plan = null) {
   const diversityTarget = Math.min(limit, Math.max(1, Math.ceil(limit * 0.6)));
   if (!sourceHints.length && plan?.primaryTerms?.length) {
     takeUpTo(
-      5,
+      maxPerSource,
       Math.min(limit, Math.max(3, Math.ceil(limit * 0.45))),
       (item) =>
         resultHasStrongPrimaryContent(item.result, plan) &&
@@ -3066,15 +3572,15 @@ function diversifyResults(scored, limit, sourceHints = [], plan = null) {
   }
   if (sourceHints.length) {
     takeUpTo(
-      5,
+      maxPerSource,
       Math.min(limit, Math.max(3, Math.ceil(limit * 0.45))),
       (item) =>
         resultMatchesSourceHints(item.result, sourceHints) &&
         Number(item.contentBonus || 0) > 0,
     );
   }
-  takeUpTo(1, diversityTarget);
-  if (selected.length < limit) takeUpTo(sourceHints.length ? 5 : 3);
+  takeUpTo(Math.min(maxPerSource, 2), diversityTarget);
+  if (selected.length < limit) takeUpTo(maxPerSource);
   return selected.map((item) => ({
     ...item.result,
     score: item.score,
@@ -3083,7 +3589,10 @@ function diversifyResults(scored, limit, sourceHints = [], plan = null) {
 }
 
 async function searchLibrary(query, options = {}) {
-  const config = options.config || loadLibraryConfig();
+  const config = resolveSearchConfigForMode(
+    options.config || loadLibraryConfig(),
+    options.mode,
+  );
   await initDatabase(config);
   const maxLimit = config.search.maxLimit || 20;
   const limit = clampNumber(
@@ -3098,13 +3607,30 @@ async function searchLibrary(query, options = {}) {
     250,
     DEFAULT_HYBRID_CANDIDATE_LIMIT,
   );
-  const sourceHints = mergeSourceHints(query, options.sourceHints);
-  const plan = buildSearchPlan(query, sourceHints);
+  const fileIds = sanitizeLibraryFileIds(options.fileIds);
+  // Quote-scoped retrieval: quoted text remains the lexical scope for
+  // keyword/metadata/source scans, while semantic search receives the full
+  // question so unquoted intent still has weaker vector influence.
+  const split = splitQueryForRetrieval(query);
+  const lexicalQuery = split.hasQuotedScope ? split.retrievalQuery : query;
+  const semanticQuery = split.hasQuotedScope ? query : lexicalQuery;
+  const effectiveQuery = lexicalQuery || query;
+  const sourceHints = mergeSourceHints(effectiveQuery, options.sourceHints);
+  const plan = buildSearchPlan(effectiveQuery, sourceHints, {
+    supportingQuery: split.userInstruction,
+    fullQuery: query,
+    quotedPhrases: split.quotedPhrases,
+  });
   const groups = [];
 
   if (isVectorSearchConfigured(config)) {
     try {
-      const vectorResults = await searchVector(config, query, candidateLimit);
+      const vectorResults = await searchVector(
+        config,
+        semanticQuery,
+        candidateLimit,
+        fileIds,
+      );
       groups.push({ name: "semantic", weight: config.search?.semanticWeight ?? 1.0, results: vectorResults });
     } catch (error) {
       console.warn(
@@ -3115,28 +3641,31 @@ async function searchLibrary(query, options = {}) {
 
   const ftsResults = await searchFts(
     config,
-    query,
+    effectiveQuery,
     candidateLimit,
     sourceHints,
     plan,
+    fileIds,
   );
   groups.push({ name: "keyword", weight: config.search?.keywordWeight ?? 1.1, results: ftsResults });
 
   const metadataResults = await searchMetadata(
     config,
-    query,
+    effectiveQuery,
     Math.min(candidateLimit, 120),
     sourceHints,
     plan,
+    fileIds,
   );
   groups.push({ name: "metadata", weight: config.search?.metadataWeight ?? 0.8, results: metadataResults });
 
   const sourceResults = await searchSourceDeepScan(
     config,
-    query,
+    effectiveQuery,
     Math.min(candidateLimit, 80),
     sourceHints,
     plan,
+    fileIds,
   );
   groups.push({ name: "source", weight: config.search?.sourceWeight ?? 1.2, results: sourceResults });
 
@@ -3148,7 +3677,7 @@ async function searchLibrary(query, options = {}) {
     ]);
   }
 
-  const scored = applyHybridBonuses(candidates, query, sourceHints, plan, config).sort(
+  const scored = applyHybridBonuses(candidates, effectiveQuery, sourceHints, plan, config).sort(
     (a, b) => {
       if (a.score !== b.score) return b.score - a.score;
       return String(a.result.path || "").localeCompare(
@@ -3156,16 +3685,20 @@ async function searchLibrary(query, options = {}) {
       );
     },
   );
+  const quoteScoped = split.hasQuotedScope
+    ? scored.filter((item) => resultMatchesQuoteScope(item.result, plan))
+    : scored;
+  const scopedScored = quoteScoped.length ? quoteScoped : scored;
   const conceptEvidence = plan.concepts.length
-    ? scored.filter(
+    ? scopedScored.filter(
         (item) =>
           resultHasStrongPrimaryContent(item.result, plan) &&
           resultHasExpansionContent(item.result, plan),
       )
     : [];
   const finalScored =
-    conceptEvidence.length >= Math.min(3, limit) ? conceptEvidence : scored;
-  return diversifyResults(finalScored, limit, sourceHints, plan);
+    conceptEvidence.length >= Math.min(3, limit) ? conceptEvidence : scopedScored;
+  return diversifyResults(finalScored, limit, sourceHints, plan, config);
 }
 
 function trimToContextWithStats(results, maxContextChars) {
@@ -3174,7 +3707,15 @@ function trimToContextWithStats(results, maxContextChars) {
   for (const result of results) {
     const remaining = maxContextChars - used;
     if (remaining <= 0) break;
-    const text = result.text.slice(0, Math.max(0, remaining));
+
+    let text = result.text;
+    if (text.length > remaining) {
+      if (remaining < 150) break;
+      const cutIdx = text.lastIndexOf(" ", remaining - 4);
+      const safeCut = cutIdx > 0 ? cutIdx : Math.max(0, remaining - 4);
+      text = text.slice(0, safeCut).trimEnd() + " ...";
+    }
+
     used += text.length;
     trimmed.push({ ...result, text });
   }
@@ -3236,7 +3777,7 @@ function buildLibraryContextPayload(results, options = {}) {
   const modeInstruction = strict
     ? "Strict database-only mode is enabled for this question. Answer only from the local library passages below. If the passages do not contain enough evidence, say that the local database did not provide enough evidence. Do not use general knowledge, tools, web results, or assumptions."
     : "Database Context is enabled, so the local library has priority for this question. Local library passages have already been retrieved. Answer from these passages when they contain relevant evidence. Do not call external tools or skills for this turn unless the user explicitly asked for a specific tool. If the passages do not contain the answer, say that the local library did not provide enough evidence.";
-  const context = `${modeInstruction} Respond as a careful academic researcher writing for scholars, professors, and advanced readers. Answer naturally and substantively: explain the evidence, distinguish main accounts from variants or notes, identify uncertainty, and teach the user what the passages imply. Do not give a skinny one-line extraction when the passages contain richer context. If the passages contain multiple relevant origins, causes, agents, parentages, locations, source traditions, or variant accounts, explain each distinction clearly. Keep the response concise but intellectually useful; avoid padding. Do not print passage numbers, bracket citations, local file paths, a "Source:" line, or a "Retrieved passages" section in your final answer. The app displays source files separately below the response.\n\n${passages}`;
+  const context = `${modeInstruction} Respond as a careful academic researcher writing for scholars, professors, and advanced readers. Answer naturally and substantively: explain the evidence, distinguish main accounts from variants or notes, identify uncertainty, and teach the user what the passages imply. Do not give a skinny one-line extraction when the passages contain richer context. If the passages contain multiple relevant origins, causes, agents, parentages, locations, source traditions, or variant accounts, explain each distinction clearly. Every factual claim drawn from these passages must name its source inside the body of the answer, using prose attribution such as "According to Apolodoro's Biblioteca..." or "In Colin Wilson's The Outsider...". Do not write vague source-free claims like "there are accounts that say..." when a passage identifies the work or author. This attribution requirement is about naming the author/work/source in the sentence, not about hyperlinks. Keep the response concise but intellectually useful; avoid padding. Do not print passage numbers, bracket citations, local file paths, a "Source:" line, or a "Retrieved passages" section in your final answer. The app displays source files separately below the response.\n\n${passages}`;
   return {
     context,
     contextResults: trimmed,
@@ -3269,20 +3810,38 @@ async function buildChatLibraryContext(query, requestOptions = {}) {
   if (!chatSettings.enabled) {
     return { enabled: false, results: [], contextMessage: null };
   }
+  const { retrievalQuery, userInstruction, hasQuotedScope } =
+    splitQueryForRetrieval(query);
   const results = await searchLibrary(query, {
     config,
+    mode: requestOptions?.mode,
     limit: chatSettings.limit,
     sourceHints: requestOptions?.sourceHints,
+    fileIds: requestOptions?.fileIds,
   });
   const payload = buildLibraryContextPayload(results, chatSettings);
+  let contextText = payload.context;
+  // When the user scoped retrieval with quotes, tell the LLM exactly which
+  // part of the message was a search restriction and which part was the
+  // instruction to act on the retrieved passages. This keeps the model
+  // from re-treating the quoted span as the question.
+  if (hasQuotedScope && contextText) {
+    const instruction = userInstruction
+      ? `The user typed a quoted search scope (${JSON.stringify(retrievalQuery)}) and an instruction outside the quotes: ${JSON.stringify(userInstruction)}. Use the retrieved passages only to satisfy that instruction. Do not answer the quoted text as if it were the question.`
+      : `The user typed a quoted search scope (${JSON.stringify(retrievalQuery)}) without a separate instruction. Answer using the retrieved passages and treat the quoted text as the topic, not as a verbatim question.`;
+    contextText = `${instruction}\n\n${contextText}`;
+  }
   return {
     enabled: true,
     results,
     contextResults: payload.contextResults,
     contextMeta: payload.meta,
-    contextMessage: payload.context
-      ? { role: "system", content: payload.context }
+    contextMessage: contextText
+      ? { role: "system", content: contextText }
       : null,
+    retrievalQuery,
+    userInstruction,
+    hasQuotedScope,
   };
 }
 
@@ -3311,6 +3870,14 @@ async function getLibraryStatus() {
       defaultLimit: config.search.defaultLimit,
       maxLimit: config.search.maxLimit,
       maxContextChars: config.search.maxContextChars,
+      rrfK: config.search.rrfK,
+      semanticWeight: config.search.semanticWeight,
+      keywordWeight: config.search.keywordWeight,
+      metadataWeight: config.search.metadataWeight,
+      sourceWeight: config.search.sourceWeight,
+      contentKeywordBonus: config.search.contentKeywordBonus,
+      metadataKeywordBonus: config.search.metadataKeywordBonus,
+      maxPassagesPerSource: config.search.maxPassagesPerSource,
     },
     embedding: {
       enabled: config.embedding.enabled,
@@ -3322,6 +3889,12 @@ async function getLibraryStatus() {
       storedDimensions: 0,
       storedModel: "",
       storedQuantization: "",
+      ready: false,
+      readyCount: 0,
+      missingCount: 0,
+      vectorRows: 0,
+      matchingRows: 0,
+      expectedDimensions: 0,
     },
     chatIntegration: config.chatIntegration,
     files: 0,
@@ -3357,6 +3930,56 @@ async function getLibraryStatus() {
     status.embedding.storedDimensions = Number(vectorMeta.dimensions || 0);
     status.embedding.storedModel = vectorMeta.model || "";
     status.embedding.storedQuantization = vectorMeta.quantization || "";
+    const expectedDimensions =
+      Number(config.embedding.dimensions || 0) ||
+      status.embedding.storedDimensions ||
+      0;
+    status.embedding.expectedDimensions = expectedDimensions;
+    const dimensionFilter = expectedDimensions
+      ? ` AND e.dimensions = ${sqlInteger(expectedDimensions)}`
+      : "";
+    const matchingRows = await runSqliteJson(
+      config.databasePath,
+      `SELECT COUNT(*) AS count
+FROM library_embeddings e
+JOIN library_chunks c ON c.id = e.chunk_id
+WHERE e.model = ${sqlLiteral(config.embedding.model)}${dimensionFilter};`,
+    );
+    status.embedding.matchingRows = Number(matchingRows[0]?.count || 0);
+    status.embedding.readyCount = status.embedding.matchingRows;
+    const vectorConfigured = isVectorSearchConfigured(config);
+    if (vectorConfigured) {
+      try {
+        const vectorRows = await runSqliteJson(
+          config.databasePath,
+          `SELECT COUNT(*) AS count FROM library_chunks_vec;`,
+          { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
+        );
+        status.embedding.vectorRows = Number(vectorRows[0]?.count || 0);
+        status.embedding.readyCount = Math.min(
+          status.embedding.readyCount,
+          status.embedding.vectorRows,
+        );
+      } catch (vectorError) {
+        status.embedding.vectorStatusError = vectorError.message;
+        status.embedding.vectorRows = 0;
+        status.embedding.readyCount = 0;
+      }
+    } else {
+      status.embedding.readyCount = 0;
+    }
+    status.embedding.missingCount =
+      config.embedding.enabled === true
+        ? Math.max(
+            0,
+            status.chunks - (vectorConfigured ? status.embedding.readyCount : 0),
+          )
+        : 0;
+    status.embedding.ready =
+      config.embedding.enabled === true &&
+      vectorConfigured &&
+      status.chunks > 0 &&
+      status.embedding.missingCount === 0;
   } catch (error) {
     status.error = error.message;
   }
@@ -3419,4 +4042,7 @@ module.exports = {
   saveLibraryChatSettings,
   saveLibraryConfig,
   searchLibrary,
+  searchLibraryFiles,
+  splitQueryForRetrieval,
+  detectLanguageHint,
 };

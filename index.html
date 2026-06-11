@@ -791,6 +791,122 @@
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
+      input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        background: var(--bg-inverse);
+        height: 26px;
+        margin: 0;
+        padding: 0 3px;
+        cursor: pointer;
+        border: 1px solid var(--text-inverse);
+        box-sizing: border-box;
+      }
+      input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px;
+        background: var(--text-inverse);
+      }
+      input[type="range"]::-moz-range-track {
+        height: 4px;
+        background: var(--text-inverse);
+      }
+      input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        height: 16px;
+        width: 12px;
+        border-radius: 0;
+        background: var(--accent);
+        margin-top: -6px;
+        border: 2px solid var(--text-inverse);
+      }
+      input[type="range"]::-moz-range-thumb {
+        height: 16px;
+        width: 12px;
+        border-radius: 0;
+        background: var(--accent);
+        border: 2px solid var(--text-inverse);
+      }
+      input[type="range"]:focus {
+        outline: none;
+      }
+      input[type="range"]:focus::-webkit-slider-thumb {
+        box-shadow: 0 0 0 1px var(--text-inverse);
+      }
+      input[type="range"]:focus::-moz-range-thumb {
+        box-shadow: 0 0 0 1px var(--text-inverse);
+      }
+      .setting-range {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 26px;
+      }
+      .setting-range-value {
+        font-size: 10px;
+        color: var(--text-normal);
+        background: var(--bg-primary);
+        border: 1px solid var(--text-inverse);
+        min-width: 38px;
+        padding: 3px 4px;
+        text-align: right;
+        font-family: inherit;
+      }
+      .search-algorithm-settings {
+        border: 1px dashed var(--text-inverse);
+        padding: 12px 10px 10px;
+        margin-top: 12px;
+        gap: 8px;
+      }
+      .search-algorithm-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 2px;
+      }
+      .search-algorithm-mode-tabs {
+        display: flex;
+        gap: 6px;
+      }
+      .search-algo-mode-btn {
+        flex: 1;
+        padding: 4px 8px;
+        background: transparent;
+        color: var(--text-inverse);
+        border: var(--border-width) solid var(--text-inverse);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        transition:
+          background 0.1s,
+          color 0.1s;
+      }
+      .search-algo-mode-btn:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .search-algo-mode-btn.active {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .search-algorithm-control {
+        display: grid;
+        grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        border-top: 1px solid var(--text-inverse);
+        padding-top: 8px;
+      }
+      .search-algorithm-control label {
+        line-height: 1.25;
+      }
+      .search-algorithm-control .setting-help {
+        grid-column: 2;
+        margin-top: -2px;
+      }
       .setting-row {
         display: flex;
         flex-direction: column;
@@ -959,6 +1075,13 @@
         .database-source-grid-wide,
         .database-metrics-grid {
           grid-template-columns: 1fr;
+        }
+        .search-algorithm-control {
+          grid-template-columns: 1fr;
+          gap: 5px;
+        }
+        .search-algorithm-control .setting-help {
+          grid-column: auto;
         }
         .database-metric-wide {
           grid-column: auto;
@@ -1484,6 +1607,9 @@
         border-radius: 0;
         padding: 6px 10px;
         background: var(--bg-secondary);
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
       }
       .thinking-details summary {
         cursor: pointer;
@@ -1498,6 +1624,54 @@
         font-size: 12px;
         line-height: 1.4;
         opacity: 0.9;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .thinking-details-body pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        overflow-x: auto;
+        max-width: 100%;
+      }
+      .thinking-details-body code {
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      .thinking-details-body table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      /* Rendered-markdown containers inside thinking bubbles: markdown
+         supplies its own block spacing, so disable inherited pre-wrap. */
+      .thinking-markdown {
+        white-space: normal;
+      }
+      .thinking-markdown p {
+        margin: 0 0 8px;
+      }
+      .thinking-markdown p:last-child {
+        margin-bottom: 0;
+      }
+      .thinking-markdown h1,
+      .thinking-markdown h2,
+      .thinking-markdown h3,
+      .thinking-markdown h4,
+      .thinking-markdown h5,
+      .thinking-markdown h6 {
+        font-size: 13px;
+        margin: 8px 0 4px;
+      }
+      .thinking-markdown ul,
+      .thinking-markdown ol {
+        margin: 0 0 8px;
+        padding-left: 18px;
+      }
+      .thinking-markdown blockquote {
+        margin: 0 0 8px;
+        padding-left: 10px;
+        border-left: 2px solid var(--border-color);
+        opacity: 0.85;
       }
 
       /* BOTTOM */
@@ -1620,6 +1794,214 @@
         width: 18px;
         height: 18px;
         stroke: currentColor;
+      }
+      /* BOOK FILTER */
+      #bookFilterBtn {
+        position: relative;
+        height: 42px;
+        width: 42px;
+        min-width: 42px;
+        padding: 0;
+        background: var(--bg-primary);
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
+          var(--border-color);
+        transition:
+          transform 0.1s ease,
+          box-shadow 0.1s ease,
+          background 0.2s,
+          color 0.2s,
+          border-color 0.2s;
+      }
+      #bookFilterBtn:hover {
+        transform: translate(-2px, -2px);
+        box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
+          var(--border-color);
+      }
+      #bookFilterBtn:active {
+        transform: translate(2px, 2px);
+        box-shadow: none;
+      }
+      #bookFilterBtn svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+      }
+      #bookFilterDot {
+        position: absolute;
+        top: -5px;
+        right: -5px;
+        width: 10px;
+        height: 10px;
+        background: var(--accent);
+        border: var(--border-width) solid var(--border-color);
+      }
+      #bookFilterOverlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 220;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      #bookFilterPanel {
+        width: min(560px, 100%);
+        max-height: 80vh;
+        overflow-y: auto;
+        background: var(--bg-primary);
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
+          var(--border-color);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      #bookFilterPanel > * {
+        flex-shrink: 0;
+      }
+      #bookFilterHeader {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 1px;
+      }
+      #bookFilterCloseBtn {
+        padding: 2px 8px;
+        background: transparent;
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      #bookFilterCloseBtn:hover {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+      }
+      #bookFilterHelp {
+        font-size: 11px;
+        opacity: 0.8;
+        line-height: 1.4;
+      }
+      #bookFilterSearchInput {
+        padding: 8px 10px;
+        background: var(--bg-secondary);
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        font-family: inherit;
+        font-size: 12px;
+        outline: none;
+      }
+      #bookFilterSearchInput:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #bookFilterSuggestions {
+        display: flex;
+        flex-direction: column;
+      }
+      .book-filter-suggestion {
+        padding: 6px 10px;
+        border: var(--border-width) solid var(--border-color);
+        border-top: none;
+        background: var(--bg-secondary);
+        cursor: pointer;
+        font-size: 12px;
+        text-align: left;
+        font-family: inherit;
+        color: var(--text-normal);
+      }
+      .book-filter-suggestion:first-child {
+        border-top: var(--border-width) solid var(--border-color);
+      }
+      .book-filter-suggestion:hover {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+      }
+      #bookFilterMaxWarning {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent);
+        letter-spacing: 0.5px;
+      }
+      #bookFilterSelectedList {
+        border: var(--border-width) dashed var(--border-color);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 44px;
+      }
+      .book-filter-empty {
+        font-size: 11px;
+        opacity: 0.7;
+      }
+      .book-filter-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        border-bottom: 1px dashed var(--border-color);
+        padding-bottom: 6px;
+      }
+      .book-filter-row:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+      }
+      .book-filter-row-label {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .book-filter-remove-btn {
+        flex: 0 0 auto;
+        padding: 2px 7px;
+        background: transparent;
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .book-filter-remove-btn:hover {
+        background: var(--accent);
+        color: var(--bg-primary);
+        border-color: var(--accent);
+      }
+      #bookFilterActions {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      #bookFilterActions button {
+        flex: 1;
+        padding: 8px 10px;
+        background: transparent;
+        color: var(--text-normal);
+        border: var(--border-width) solid var(--border-color);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+      #bookFilterActions button:hover {
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
       }
       .skill-sources-container {
         margin-top: 12px;
@@ -2049,6 +2431,15 @@
             rows="1"
             placeholder="Type a message..."
           ></textarea>
+          <button
+            id="bookFilterBtn"
+            aria-label="Book filter"
+            title="Restrict database search to specific books"
+            style="display: none"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-book-open-icon lucide-book-open"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+            <span id="bookFilterDot" style="display: none"></span>
+          </button>
           <button id="uploadBtn" aria-label="Upload file" title="Upload file">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -2070,6 +2461,42 @@
             aria-label="Send message"
             title="Send message"
           ></button>
+        </div>
+      </div>
+
+      <div id="bookFilterOverlay" style="display: none">
+        <div
+          id="bookFilterPanel"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Book filter"
+        >
+          <div id="bookFilterHeader">
+            <span>BOOK FILTER — <span id="bookFilterModeLabel"></span></span>
+            <button id="bookFilterCloseBtn" aria-label="Close book filter">
+              ✕
+            </button>
+          </div>
+          <div id="bookFilterHelp">
+            Restrict database passages to up to 10 books for this chat mode.
+            Type a title and pick a suggestion. An empty list searches the
+            whole library.
+          </div>
+          <input
+            id="bookFilterSearchInput"
+            type="text"
+            placeholder="Type a book title..."
+            autocomplete="off"
+          />
+          <div id="bookFilterSuggestions"></div>
+          <div id="bookFilterMaxWarning" style="display: none">
+            MAXIMUM LIMIT OF 10 BOOKS REACHED
+          </div>
+          <div id="bookFilterSelectedList"></div>
+          <div id="bookFilterActions">
+            <button id="bookFilterClearBtn">CLEAR ALL</button>
+            <button id="bookFilterApplyBtn">APPLY</button>
+          </div>
         </div>
       </div>
 
@@ -2853,82 +3280,85 @@
                 keyword search only.
               </div>
             </div>
-            <div class="setting-row">
-              <label style="font-size: 10px">SEARCH ALGORITHM SETTINGS</label>
-              <div class="setting-row-inline" style="gap: 12px">
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">RRF k (1-100)</label>
-                  <div class="setting-number">
-                    <input id="databaseRrfKInput" type="number" min="1" max="100" step="1" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseRrfKInput" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseRrfKInput" data-dir="down">-</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">CONTENT KEYWORD WEIGHT (0-1)</label>
-                  <div class="setting-number">
-                    <input id="databaseContentKeywordBonusInput" type="number" min="0" max="1" step="0.01" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseContentKeywordBonusInput" data-step="0.05" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseContentKeywordBonusInput" data-step="0.05" data-dir="down">-</button>
-                    </div>
-                  </div>
+            <div class="setting-row search-algorithm-settings">
+              <div class="search-algorithm-header">
+                <label style="font-size: 10px; opacity: 0.8; letter-spacing: 0.5px;">SEARCH ALGORITHM SETTINGS</label>
+                <button
+                  id="resetSearchAlgorithmSettingsBtn"
+                  type="button"
+                  class="settings-action-btn"
+                  style="padding: 2px 6px; font-size: 9px; min-width: auto; height: auto;"
+                >
+                  RESET DEFAULTS
+                </button>
+              </div>
+              <div id="searchAlgorithmModeTabs" class="search-algorithm-mode-tabs">
+                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="ollama">OLLAMA</button>
+                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="pi">PI</button>
+                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="cloud">CLOUD</button>
+              </div>
+              <div class="setting-help">
+                Each chat mode keeps its own copy of these weights. The sliders
+                below edit the selected mode only; Save Database Settings
+                stores all three. Reset Defaults resets the selected mode.
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">RRF k (1-100) (Default: 60)</label>
+                <div class="setting-range">
+                  <input id="databaseRrfKInput" type="range" min="1" max="100" step="1" />
+                  <div class="setting-range-value"></div>
                 </div>
               </div>
-              <div class="setting-row-inline" style="gap: 12px; margin-top: 8px;">
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">METADATA KEYWORD WEIGHT (0-1)</label>
-                  <div class="setting-number">
-                    <input id="databaseMetadataKeywordBonusInput" type="number" min="0" max="1" step="0.01" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseMetadataKeywordBonusInput" data-step="0.05" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseMetadataKeywordBonusInput" data-step="0.05" data-dir="down">-</button>
-                    </div>
-                  </div>
-                </div>
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">SEMANTIC WEIGHT (0-3)</label>
-                  <div class="setting-number">
-                    <input id="databaseSemanticWeightInput" type="number" min="0" max="3" step="0.1" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseSemanticWeightInput" data-step="0.1" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseSemanticWeightInput" data-step="0.1" data-dir="down">-</button>
-                    </div>
-                  </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">CONTENT KEYWORD BONUS (0-1) (Default: 0.16)</label>
+                <div class="setting-range">
+                  <input id="databaseContentKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
+                  <div class="setting-range-value"></div>
                 </div>
               </div>
-              <div class="setting-row-inline" style="gap: 12px; margin-top: 8px;">
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">KEYWORD (FTS) WEIGHT (0-3)</label>
-                  <div class="setting-number">
-                    <input id="databaseKeywordWeightInput" type="number" min="0" max="3" step="0.1" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseKeywordWeightInput" data-step="0.1" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseKeywordWeightInput" data-step="0.1" data-dir="down">-</button>
-                    </div>
-                  </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">METADATA KEYWORD BONUS (0-1) (Default: 0.06)</label>
+                <div class="setting-range">
+                  <input id="databaseMetadataKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
+                  <div class="setting-range-value"></div>
                 </div>
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">METADATA SEARCH WEIGHT (0-3)</label>
-                  <div class="setting-number">
-                    <input id="databaseMetadataWeightInput" type="number" min="0" max="3" step="0.1" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseMetadataWeightInput" data-step="0.1" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseMetadataWeightInput" data-step="0.1" data-dir="down">-</button>
-                    </div>
-                  </div>
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">SEMANTIC WEIGHT (0-3) (Default: 1.0)</label>
+                <div class="setting-range">
+                  <input id="databaseSemanticWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <div class="setting-range-value"></div>
                 </div>
-                <div class="setting-row" style="flex: 1">
-                  <label style="font-size: 10px">SOURCE PATH WEIGHT (0-3)</label>
-                  <div class="setting-number">
-                    <input id="databaseSourceWeightInput" type="number" min="0" max="3" step="0.1" />
-                    <div class="setting-number-controls">
-                      <button type="button" class="setting-number-btn" data-target="databaseSourceWeightInput" data-step="0.1" data-dir="up">+</button>
-                      <button type="button" class="setting-number-btn" data-target="databaseSourceWeightInput" data-step="0.1" data-dir="down">-</button>
-                    </div>
-                  </div>
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">KEYWORD (FTS) WEIGHT (0-3) (Default: 1.1)</label>
+                <div class="setting-range">
+                  <input id="databaseKeywordWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <div class="setting-range-value"></div>
+                </div>
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">METADATA SEARCH WEIGHT (0-3) (Default: 0.8)</label>
+                <div class="setting-range">
+                  <input id="databaseMetadataWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <div class="setting-range-value"></div>
+                </div>
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">SOURCE PATH WEIGHT (0-3) (Default: 1.2)</label>
+                <div class="setting-range">
+                  <input id="databaseSourceWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <div class="setting-range-value"></div>
+                </div>
+              </div>
+              <div class="search-algorithm-control">
+                <label style="font-size: 10px">MAX PASSAGES PER SOURCE (1-20) (Default: 5)</label>
+                <div class="setting-range">
+                  <input id="databaseMaxPassagesPerSourceInput" type="range" min="1" max="20" step="1" />
+                  <div class="setting-range-value"></div>
+                </div>
+                <div class="setting-help">
+                  Allows several relevant chunks from the same book while still blocking duplicate repeated text.
                 </div>
               </div>
             </div>
@@ -2966,9 +3396,27 @@
                   </div>
                 </div>
                 <div class="database-metric">
-                  <div class="database-metric-label">EMBEDDINGS</div>
+                  <div class="database-metric-label">EMBED ROWS</div>
                   <div
                     id="libraryStatusEmbeddingsValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">READY</div>
+                  <div
+                    id="libraryStatusEmbeddingsReadyValue"
+                    class="database-metric-value"
+                  >
+                    --
+                  </div>
+                </div>
+                <div class="database-metric">
+                  <div class="database-metric-label">MISSING</div>
+                  <div
+                    id="libraryStatusEmbeddingsMissingValue"
                     class="database-metric-value"
                   >
                     --
@@ -3131,7 +3579,7 @@
                   </div>
                 </div>
                 <div class="database-metric">
-                  <div class="database-metric-label">EMBEDDINGS</div>
+                  <div class="database-metric-label">GENERATED THIS RUN</div>
                   <div
                     id="libraryJobEmbeddingsValue"
                     class="database-metric-value"
@@ -3140,7 +3588,7 @@
                   </div>
                 </div>
                 <div class="database-metric">
-                  <div class="database-metric-label">PENDING</div>
+                  <div class="database-metric-label">MISSING NOW</div>
                   <div
                     id="libraryJobPendingEmbeddingsValue"
                     class="database-metric-value"
@@ -3731,10 +4179,12 @@
           </div>
 
           <div id="builtinSkillsGroup" class="setting-group">
-            <label>OLLAMA BUILT-IN SKILLS</label>
+            <label>BUILT-IN SKILLS</label>
             <div class="setting-help">
-              Enable or disable built-in skills for Ollama. Shell Command
-              requires explicit interactive confirmation even when enabled.
+              Enable or disable built-in skills. Ollama and Cloud models can
+              trigger enabled skills automatically; slash commands force a
+              specific skill. Shell Command requires explicit interactive
+              confirmation even when enabled.
             </div>
             <div
               id="builtinSkillsList"
@@ -3752,8 +4202,8 @@
           <div id="customSkillsGroup" class="setting-group">
             <label>MANAGE CUSTOM SKILLS</label>
             <div class="setting-help">
-              Define tools the Ollama model can trigger to run shell commands or
-              JS.
+              Define tools for local skill execution. Shell and JavaScript
+              skills remain local and require the app's safety checks.
             </div>
             <button
               id="refactored_btn_11"
@@ -4038,7 +4488,7 @@
       });
       const CLOUD_DEFAULT_MODELS = {
         openai: "gpt-5",
-        anthropic: "claude-sonnet-4-20250514",
+        anthropic: "claude-opus-4-8",
         mistral: "mistral-large-latest",
         google: "gemini-2.5-pro",
       };
@@ -4048,6 +4498,64 @@
         mistral: "https://api.mistral.ai/v1",
         google: "https://generativelanguage.googleapis.com/v1beta/openai",
       };
+      const SEARCH_ALGO_MODE_KEYS = ["ollama", "pi", "cloud"];
+      function normalizeSearchAlgorithmValues(raw, fallback) {
+        return {
+          rrfK: clampInteger(raw?.rrfK, fallback.rrfK, 1, 100),
+          contentKeywordBonus: clampFloat(
+            raw?.contentKeywordBonus,
+            fallback.contentKeywordBonus,
+            0,
+            1,
+          ),
+          metadataKeywordBonus: clampFloat(
+            raw?.metadataKeywordBonus,
+            fallback.metadataKeywordBonus,
+            0,
+            1,
+          ),
+          semanticWeight: clampFloat(
+            raw?.semanticWeight,
+            fallback.semanticWeight,
+            0,
+            3,
+          ),
+          keywordWeight: clampFloat(
+            raw?.keywordWeight,
+            fallback.keywordWeight,
+            0,
+            3,
+          ),
+          metadataWeight: clampFloat(
+            raw?.metadataWeight,
+            fallback.metadataWeight,
+            0,
+            3,
+          ),
+          sourceWeight: clampFloat(
+            raw?.sourceWeight,
+            fallback.sourceWeight,
+            0,
+            3,
+          ),
+          maxPassagesPerSource: clampInteger(
+            raw?.maxPassagesPerSource,
+            fallback.maxPassagesPerSource,
+            1,
+            20,
+          ),
+        };
+      }
+      const SEARCH_ALGORITHM_DEFAULTS = Object.freeze({
+        rrfK: 60,
+        contentKeywordBonus: 0.16,
+        metadataKeywordBonus: 0.06,
+        semanticWeight: 1,
+        keywordWeight: 1.1,
+        metadataWeight: 0.8,
+        sourceWeight: 1.2,
+        maxPassagesPerSource: 5,
+      });
       let cloudSettings = {
         provider: "openai",
         models: { ...CLOUD_DEFAULT_MODELS },
@@ -4069,8 +4577,8 @@
       let ollamaOptions = { ...OLLAMA_DEFAULT_OPTIONS };
       let librarySettings = {
         enabled: false,
-        limit: 5,
-        maxContextChars: 12000,
+        limit: 20,
+        maxContextChars: 30000,
         includeSourcePaths: true,
       };
       let databaseConfig = {
@@ -4101,7 +4609,9 @@
           defaultLimit: 5,
           maxLimit: 50,
           maxContextChars: 12000,
+          ...SEARCH_ALGORITHM_DEFAULTS,
         },
+        searchModes: {},
         embedding: {
           enabled: false,
           model: "nomic-embed-text-v2-moe:latest",
@@ -4153,7 +4663,20 @@
         /^\s*(?:translate(?:\s+to)?\s+english|translate\s+into\s+english|traduce?\s+(?:al?|a)\s+ingl[eé]s)\s*:?\s*/i;
       const TRANSLATE_TO_ES_TRIGGER =
         /^\s*(?:translate(?:\s+to)?\s+spanish|translate\s+into\s+spanish|traduce?\s+(?:al?|a)\s+espa[ñn]ol)\s*:?\s*/i;
-      let builtinSkillsConfig = {};
+      const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
+        shell_command: false,
+        wikipedia: true,
+        britannica: true,
+        wiktionary: true,
+        deep_etymology: true,
+        duckduckgo: true,
+        web_scraper: true,
+        calculator: true,
+        time_and_date: true,
+        fact_check: true,
+        local_notes: true,
+      });
+      let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
       const ALL_BUILTIN_SKILLS_INFO = {
         wikipedia: {
           desc: "Searches Wikipedia for factual information and summaries.",
@@ -4208,6 +4731,7 @@
 You have access to external tools (skills) to fetch real-time information or perform actions.
 Use these tools when the user explicitly asks for a skill, web lookup, recent/current information, calculation, or external action.
 If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not call tools unless the database passages are insufficient or the user explicitly requested a specific tool.
+When retrieved passages are provided, name the author, work, book, article, or source inside the body of the answer for every factual claim. Do not rely only on source boxes, hyperlinks, bracket numbers, or vague phrases such as "some accounts say".
 
 `,
       ];
@@ -4394,6 +4918,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       const chat = document.getElementById("chat");
+      let chatPinnedToBottom = true;
+      chat.addEventListener("scroll", () => {
+        const distanceFromBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight;
+        chatPinnedToBottom = distanceFromBottom < 60;
+      }, { passive: true });
+      function scrollChatToBottom() {
+        if (chatPinnedToBottom) chat.scrollTop = chat.scrollHeight;
+      }
       const input = document.getElementById("input");
       const modelSelect = document.getElementById("modelSelect");
       const topbarPromptSelect = document.getElementById("topbarPromptSelect");
@@ -4897,10 +5429,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const source = raw && typeof raw === "object" ? raw : {};
         return {
           enabled: source.enabled === true,
-          limit: clampInteger(source.limit, 5, 1, 50),
+          limit: clampInteger(source.limit, 20, 1, 50),
           maxContextChars: clampInteger(
             source.maxContextChars,
-            12000,
+            30000,
             1000,
             50000,
           ),
@@ -4961,6 +5493,18 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const chatIntegration = normalizeLibrarySettings(
           source.chatIntegration || source.library || librarySettings,
         );
+        const normalizedSearch = {
+          keywordEnabled: search.keywordEnabled === true,
+          defaultLimit: clampInteger(search.defaultLimit, 5, 1, 50),
+          maxLimit: clampInteger(search.maxLimit, 50, 1, 50),
+          maxContextChars: clampInteger(
+            search.maxContextChars,
+            12000,
+            1000,
+            50000,
+          ),
+          ...normalizeSearchAlgorithmValues(search, SEARCH_ALGORITHM_DEFAULTS),
+        };
         return {
           version: 1,
           databasePath:
@@ -4993,17 +5537,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               20000,
             ),
           },
-          search: {
-            keywordEnabled: search.keywordEnabled === true,
-            defaultLimit: clampInteger(search.defaultLimit, 5, 1, 50),
-            maxLimit: clampInteger(search.maxLimit, 50, 1, 50),
-            maxContextChars: clampInteger(
-              search.maxContextChars,
-              12000,
-              1000,
-              50000,
-            ),
-          },
+          search: normalizedSearch,
+          searchModes: Object.fromEntries(
+            SEARCH_ALGO_MODE_KEYS.map((modeKey) => [
+              modeKey,
+              normalizeSearchAlgorithmValues(
+                source.searchModes?.[modeKey],
+                normalizedSearch,
+              ),
+            ]),
+          ),
           embedding: {
             enabled: embedding.enabled === true,
             model:
@@ -5203,13 +5746,6 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const sqliteVecInput = document.getElementById(
           "databaseSqliteVecPathInput",
         );
-        const rrfKInput = document.getElementById("databaseRrfKInput");
-        const contentBonusInput = document.getElementById("databaseContentKeywordBonusInput");
-        const metadataBonusInput = document.getElementById("databaseMetadataKeywordBonusInput");
-        const semanticWeightInput = document.getElementById("databaseSemanticWeightInput");
-        const keywordWeightInput = document.getElementById("databaseKeywordWeightInput");
-        const metadataWeightInput = document.getElementById("databaseMetadataWeightInput");
-        const sourceWeightInput = document.getElementById("databaseSourceWeightInput");
         if (dbPathInput) dbPathInput.value = databaseConfig.databasePath;
         if (enabledInput) enabledInput.checked = settings.enabled;
         if (limitInput) limitInput.value = String(settings.limit);
@@ -5247,14 +5783,163 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           sqliteVecInput.value =
             databaseConfig.embedding.sqliteVecExtensionPath;
         }
-        if (rrfKInput) rrfKInput.value = String(databaseConfig.search.rrfK);
-        if (contentBonusInput) contentBonusInput.value = String(databaseConfig.search.contentKeywordBonus);
-        if (metadataBonusInput) metadataBonusInput.value = String(databaseConfig.search.metadataKeywordBonus);
-        if (semanticWeightInput) semanticWeightInput.value = String(databaseConfig.search.semanticWeight);
-        if (keywordWeightInput) keywordWeightInput.value = String(databaseConfig.search.keywordWeight);
-        if (metadataWeightInput) metadataWeightInput.value = String(databaseConfig.search.metadataWeight);
-        if (sourceWeightInput) sourceWeightInput.value = String(databaseConfig.search.sourceWeight);
+        populateSearchAlgorithmSliders();
+        updateBookFilterUi();
+        document.querySelectorAll('input[type="range"]').forEach(input => {
+          const display = input.nextElementSibling;
+          if (display && display.classList.contains('setting-range-value')) {
+            display.textContent = input.value;
+          }
+        });
+
         renderDatabaseSources(databaseConfig.sources);
+      }
+
+      function setRangeValue(inputId, value) {
+        const input = document.getElementById(inputId);
+        if (!input) return;
+        input.value = String(value);
+        const display = input.nextElementSibling;
+        if (display && display.classList.contains("setting-range-value")) {
+          display.textContent = input.value;
+        }
+      }
+
+      let searchAlgorithmMode = null;
+      let searchAlgorithmSlidersReady = false;
+
+      function activeSearchAlgorithmMode() {
+        if (!SEARCH_ALGO_MODE_KEYS.includes(searchAlgorithmMode)) {
+          searchAlgorithmMode = SEARCH_ALGO_MODE_KEYS.includes(mode)
+            ? mode
+            : "ollama";
+        }
+        return searchAlgorithmMode;
+      }
+
+      function getSearchAlgorithmValuesForMode(modeKey) {
+        return normalizeSearchAlgorithmValues(
+          databaseConfig.searchModes?.[modeKey],
+          databaseConfig.search || SEARCH_ALGORITHM_DEFAULTS,
+        );
+      }
+
+      function readSearchAlgorithmSlidersFromForm(fallback) {
+        return normalizeSearchAlgorithmValues(
+          {
+            rrfK: document.getElementById("databaseRrfKInput")?.value,
+            contentKeywordBonus: document.getElementById(
+              "databaseContentKeywordBonusInput",
+            )?.value,
+            metadataKeywordBonus: document.getElementById(
+              "databaseMetadataKeywordBonusInput",
+            )?.value,
+            semanticWeight: document.getElementById(
+              "databaseSemanticWeightInput",
+            )?.value,
+            keywordWeight: document.getElementById("databaseKeywordWeightInput")
+              ?.value,
+            metadataWeight: document.getElementById(
+              "databaseMetadataWeightInput",
+            )?.value,
+            sourceWeight: document.getElementById("databaseSourceWeightInput")
+              ?.value,
+            maxPassagesPerSource: document.getElementById(
+              "databaseMaxPassagesPerSourceInput",
+            )?.value,
+          },
+          fallback,
+        );
+      }
+
+      function commitActiveSearchAlgorithmSliders() {
+        if (!searchAlgorithmSlidersReady) return;
+        const modeKey = activeSearchAlgorithmMode();
+        if (
+          !databaseConfig.searchModes ||
+          typeof databaseConfig.searchModes !== "object"
+        ) {
+          databaseConfig.searchModes = {};
+        }
+        databaseConfig.searchModes[modeKey] = readSearchAlgorithmSlidersFromForm(
+          getSearchAlgorithmValuesForMode(modeKey),
+        );
+      }
+
+      function populateSearchAlgorithmSliders() {
+        const modeKey = activeSearchAlgorithmMode();
+        const values = getSearchAlgorithmValuesForMode(modeKey);
+        setRangeValue("databaseRrfKInput", values.rrfK);
+        setRangeValue("databaseContentKeywordBonusInput", values.contentKeywordBonus);
+        setRangeValue("databaseMetadataKeywordBonusInput", values.metadataKeywordBonus);
+        setRangeValue("databaseSemanticWeightInput", values.semanticWeight);
+        setRangeValue("databaseKeywordWeightInput", values.keywordWeight);
+        setRangeValue("databaseMetadataWeightInput", values.metadataWeight);
+        setRangeValue("databaseSourceWeightInput", values.sourceWeight);
+        setRangeValue(
+          "databaseMaxPassagesPerSourceInput",
+          values.maxPassagesPerSource,
+        );
+        document
+          .querySelectorAll("#searchAlgorithmModeTabs .search-algo-mode-btn")
+          .forEach((btn) => {
+            btn.classList.toggle(
+              "active",
+              btn.dataset.searchAlgoMode === modeKey,
+            );
+          });
+        searchAlgorithmSlidersReady = true;
+      }
+
+      function selectSearchAlgorithmMode(nextMode) {
+        if (!SEARCH_ALGO_MODE_KEYS.includes(nextMode)) return;
+        if (nextMode === activeSearchAlgorithmMode()) return;
+        commitActiveSearchAlgorithmSliders();
+        searchAlgorithmMode = nextMode;
+        populateSearchAlgorithmSliders();
+      }
+
+      // The settings tab always follows the active chat mode; a manual tab
+      // selection persists only until the next mode switch.
+      function syncSearchAlgorithmModeToChatMode() {
+        if (!SEARCH_ALGO_MODE_KEYS.includes(mode)) return;
+        if (searchAlgorithmMode === mode) return;
+        commitActiveSearchAlgorithmSliders();
+        searchAlgorithmMode = mode;
+        populateSearchAlgorithmSliders();
+      }
+
+      function resetSearchAlgorithmSettings() {
+        setRangeValue("databaseRrfKInput", SEARCH_ALGORITHM_DEFAULTS.rrfK);
+        setRangeValue(
+          "databaseContentKeywordBonusInput",
+          SEARCH_ALGORITHM_DEFAULTS.contentKeywordBonus,
+        );
+        setRangeValue(
+          "databaseMetadataKeywordBonusInput",
+          SEARCH_ALGORITHM_DEFAULTS.metadataKeywordBonus,
+        );
+        setRangeValue(
+          "databaseSemanticWeightInput",
+          SEARCH_ALGORITHM_DEFAULTS.semanticWeight,
+        );
+        setRangeValue(
+          "databaseKeywordWeightInput",
+          SEARCH_ALGORITHM_DEFAULTS.keywordWeight,
+        );
+        setRangeValue(
+          "databaseMetadataWeightInput",
+          SEARCH_ALGORITHM_DEFAULTS.metadataWeight,
+        );
+        setRangeValue(
+          "databaseSourceWeightInput",
+          SEARCH_ALGORITHM_DEFAULTS.sourceWeight,
+        );
+        setRangeValue(
+          "databaseMaxPassagesPerSourceInput",
+          SEARCH_ALGORITHM_DEFAULTS.maxPassagesPerSource,
+        );
+        databaseConfig = collectDatabaseConfigFromForm();
       }
 
       function collectLibrarySettingsFromForm() {
@@ -5305,6 +5990,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function collectDatabaseConfigFromForm() {
+        commitActiveSearchAlgorithmSliders();
         const current = normalizeDatabaseConfig(databaseConfig);
         const requestedDefaultLimit = clampInteger(
           document.getElementById("databaseDefaultLimitInput")?.value,
@@ -5338,14 +6024,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             maxLimit: requestedMaxLimit,
             maxContextChars: document.getElementById("libraryMaxContextInput")
               ?.value,
-            rrfK: document.getElementById("databaseRrfKInput")?.value,
-            contentKeywordBonus: document.getElementById("databaseContentKeywordBonusInput")?.value,
-            metadataKeywordBonus: document.getElementById("databaseMetadataKeywordBonusInput")?.value,
-            semanticWeight: document.getElementById("databaseSemanticWeightInput")?.value,
-            keywordWeight: document.getElementById("databaseKeywordWeightInput")?.value,
-            metadataWeight: document.getElementById("databaseMetadataWeightInput")?.value,
-            sourceWeight: document.getElementById("databaseSourceWeightInput")?.value,
           },
+          searchModes: current.searchModes,
           embedding: {
             ...current.embedding,
             enabled: document.getElementById("databaseSemanticEnabledInput")
@@ -5521,6 +6201,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "libraryStatusEmbeddingsValue",
           formatMetricNumber(status.embeddings),
         );
+        const readyCount =
+          status.embedding?.readyCount ?? status.embedding?.matchingRows ?? 0;
+        const missingCount = status.embedding?.missingCount ?? 0;
+        setElementText(
+          "libraryStatusEmbeddingsReadyValue",
+          formatMetricNumber(readyCount),
+        );
+        setElementText(
+          "libraryStatusEmbeddingsMissingValue",
+          formatMetricNumber(missingCount),
+        );
         setElementText(
           "libraryStatusSourcesValue",
           formatMetricNumber(sourceCount),
@@ -5552,8 +6243,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             statusEl.textContent = "SQLite not available. Set SQLITE3_PATH.";
             return;
           }
-          statusEl.textContent =
-            "Saved database snapshot. Live job counts appear below.";
+          const readyCount =
+            status.embedding?.readyCount ?? status.embedding?.matchingRows ?? 0;
+          const missingCount = status.embedding?.missingCount ?? 0;
+          if (status.embedding?.enabled) {
+            statusEl.textContent = `Semantic search ${
+              missingCount === 0 && Number(status.chunks || 0) > 0
+                ? "ready"
+                : "not complete"
+            }: ${formatMetricNumber(readyCount)} / ${formatMetricNumber(status.chunks)} passages embedded, ${formatMetricNumber(missingCount)} missing. Live job counts appear below.`;
+          } else {
+            statusEl.textContent =
+              "Semantic embeddings are disabled. Saved database snapshot appears above; live job counts appear below.";
+          }
         } catch (error) {
           console.error("Could not load library status", error);
           statusEl.textContent = "Library status unavailable.";
@@ -5804,9 +6506,36 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
       }
 
+      function getEmbeddingReadinessFromStatus(status) {
+        const chunks = Number(status?.chunks || 0);
+        const ready = Number(
+          status?.embedding?.readyCount ??
+            status?.embedding?.matchingRows ??
+            status?.embeddings ??
+            0,
+        );
+        const missing = Number(
+          status?.embedding?.missingCount ?? Math.max(0, chunks - ready),
+        );
+        return { chunks, ready, missing };
+      }
+
+      function formatEmbeddingReadiness(status) {
+        if (!status || status.error) return "";
+        const summary = getEmbeddingReadinessFromStatus(status);
+        if (!status.embedding?.enabled) {
+          return "Semantic embeddings disabled.";
+        }
+        return `Semantic ready: ${formatMetricNumber(summary.ready)} / ${formatMetricNumber(summary.chunks)} passages embedded; ${formatMetricNumber(summary.missing)} missing.`;
+      }
+
       function renderLibraryIndexJob(payload) {
         const statusEl = document.getElementById("libraryIndexStatusText");
         if (!statusEl) return;
+        const savedStatus = payload?.status || null;
+        if (savedStatus && !savedStatus.error) {
+          renderSavedDatabaseStatus(savedStatus);
+        }
         const job = payload?.job || null;
         if (!job) {
           statusEl.textContent = "No active index job.";
@@ -5860,7 +6589,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const estimateText = estimatedFinalBytes
           ? ` | est ${formatByteSize(estimatedFinalBytes)}`
           : "";
-        const progressLine = `${Math.round(percent)}% | ${processed}/${scanned} files | ${chunks} passages | ${embedded} embeddings | ${embeddingPending} pending${estimateText}`;
+        const progressLine = `${Math.round(percent)}% | ${processed}/${scanned} files | ${chunks} passages touched | ${embedded} generated this run | ${embeddingPending} missing now${estimateText}`;
         setLibraryIndexProgress(percent, progressLine);
         setLibraryIndexButtons(job.status === "running");
         renderIndexJobGrid({
@@ -5895,19 +6624,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
         if (job.status === "completed") {
           const errors = Array.isArray(stats.errors) ? stats.errors.length : 0;
+          const readiness = getEmbeddingReadinessFromStatus(savedStatus);
           const completedPending =
-            stats.embeddingPending ??
-            Math.max(
-              0,
-              Number(stats.chunks || chunks || 0) -
-                Number(stats.embedded || embedded || 0) -
-                Number(embeddingErrors || 0) -
-                Number(stats.embeddingsSkipped || 0),
-            );
+            savedStatus && !savedStatus.error
+              ? readiness.missing
+              : stats.embeddingPending ??
+                Math.max(
+                  0,
+                  Number(stats.chunks || chunks || 0) -
+                    Number(stats.embedded || embedded || 0) -
+                    Number(embeddingErrors || 0) -
+                    Number(stats.embeddingsSkipped || 0),
+                );
           const preflightError = stats.embeddingPreflightError
             ? ` ${stats.embeddingPreflightError}`
             : "";
-          statusEl.textContent = `Index completed: ${stats.indexed || 0} indexed, ${stats.skipped || 0} unchanged, ${skippedDocs} skipped documents, ${stats.chunks || 0} passages, ${stats.embedded || 0} embeddings, ${completedPending} pending, ${embeddingErrors} embedding failures, ${errors} file errors.${preflightError}`;
+          const readinessText = formatEmbeddingReadiness(savedStatus);
+          statusEl.textContent = `Index completed: ${formatMetricNumber(stats.indexed || 0)} indexed this run, ${formatMetricNumber(stats.skipped || 0)} unchanged, ${formatMetricNumber(skippedDocs)} skipped documents, ${formatMetricNumber(stats.embedded || embedded)} embeddings generated this run, ${formatMetricNumber(completedPending)} missing now, ${formatMetricNumber(embeddingErrors)} embedding failures, ${formatMetricNumber(errors)} file errors.${readinessText ? ` ${readinessText}` : ""}${preflightError}`;
           setLibraryIndexProgress(100, "100%");
           renderIndexJobGrid({
             phase: "Completed",
@@ -6063,8 +6796,201 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function getLibraryRequestPayload() {
-        return collectLibrarySettingsFromForm();
+        const payload = collectLibrarySettingsFromForm();
+        const fileIds = getBookFilterFileIds(mode);
+        if (fileIds.length) payload.fileIds = fileIds;
+        return payload;
       }
+
+      // BOOK FILTER (per-mode restriction of database passages to <=10 books)
+      const BOOK_FILTER_MAX = 10;
+      const BOOK_FILTER_STORAGE_KEY = "dive-book-filters";
+      let bookFilterSelections = { ollama: [], pi: [], cloud: [] };
+      let bookFilterDraft = [];
+      let bookFilterSuggestTimer = null;
+
+      function sanitizeBookFilterList(list) {
+        const seen = new Set();
+        const books = [];
+        for (const item of Array.isArray(list) ? list : []) {
+          const id = Number.parseInt(item?.id, 10);
+          if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+          seen.add(id);
+          books.push({
+            id,
+            title: String(item?.title || "Untitled"),
+            author: String(item?.author || ""),
+          });
+          if (books.length >= BOOK_FILTER_MAX) break;
+        }
+        return books;
+      }
+
+      function loadBookFilterSelections() {
+        try {
+          const raw = JSON.parse(
+            localStorage.getItem(BOOK_FILTER_STORAGE_KEY) || "{}",
+          );
+          for (const key of ["ollama", "pi", "cloud"]) {
+            bookFilterSelections[key] = sanitizeBookFilterList(raw?.[key]);
+          }
+        } catch (_e) {
+          bookFilterSelections = { ollama: [], pi: [], cloud: [] };
+        }
+      }
+
+      function saveBookFilterSelections() {
+        try {
+          localStorage.setItem(
+            BOOK_FILTER_STORAGE_KEY,
+            JSON.stringify(bookFilterSelections),
+          );
+        } catch (_e) {}
+      }
+
+      function getBookFilterFileIds(modeKey) {
+        return (bookFilterSelections[modeKey] || []).map((book) => book.id);
+      }
+
+      function isDatabaseContextEnabledNow() {
+        const input = document.getElementById("librarySearchEnabledInput");
+        if (input) return input.checked === true;
+        return librarySettings.enabled === true;
+      }
+
+      function updateBookFilterUi() {
+        const btn = document.getElementById("bookFilterBtn");
+        if (!btn) return;
+        btn.style.display = isDatabaseContextEnabledNow() ? "" : "none";
+        const active = getBookFilterFileIds(mode).length > 0;
+        const dot = document.getElementById("bookFilterDot");
+        if (dot) dot.style.display = active ? "" : "none";
+        btn.title = active
+          ? `Book filter active (${getBookFilterFileIds(mode).length} book(s)) — chat is restricted`
+          : "Restrict database search to specific books";
+      }
+
+      function renderBookFilterSuggestions(files) {
+        const container = document.getElementById("bookFilterSuggestions");
+        if (!container) return;
+        container.innerHTML = "";
+        const selectedIds = new Set(bookFilterDraft.map((book) => book.id));
+        for (const file of (Array.isArray(files) ? files : [])
+          .filter((file) => !selectedIds.has(Number(file.id)))
+          .slice(0, 8)) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "book-filter-suggestion";
+          item.textContent =
+            file.title + (file.author ? ` — ${file.author}` : "");
+          item.addEventListener("click", () => {
+            addBookToFilterDraft({
+              id: Number(file.id),
+              title: String(file.title || "Untitled"),
+              author: String(file.author || ""),
+            });
+          });
+          container.appendChild(item);
+        }
+      }
+
+      function renderBookFilterDraft() {
+        const list = document.getElementById("bookFilterSelectedList");
+        if (!list) return;
+        list.innerHTML = "";
+        if (!bookFilterDraft.length) {
+          const empty = document.createElement("div");
+          empty.className = "book-filter-empty";
+          empty.textContent =
+            "No books selected — the whole library is searched.";
+          list.appendChild(empty);
+        }
+        bookFilterDraft.forEach((book, index) => {
+          const row = document.createElement("div");
+          row.className = "book-filter-row";
+          const label = document.createElement("span");
+          label.className = "book-filter-row-label";
+          label.textContent =
+            book.title + (book.author ? ` — ${book.author}` : "");
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.className = "book-filter-remove-btn";
+          removeBtn.textContent = "✕";
+          removeBtn.setAttribute("aria-label", `Remove ${book.title}`);
+          removeBtn.addEventListener("click", () => {
+            bookFilterDraft.splice(index, 1);
+            renderBookFilterDraft();
+          });
+          row.appendChild(label);
+          row.appendChild(removeBtn);
+          list.appendChild(row);
+        });
+        const atMax = bookFilterDraft.length >= BOOK_FILTER_MAX;
+        const input = document.getElementById("bookFilterSearchInput");
+        if (input) {
+          input.disabled = atMax;
+          if (atMax) input.value = "";
+        }
+        const warning = document.getElementById("bookFilterMaxWarning");
+        if (warning) warning.style.display = atMax ? "" : "none";
+        if (atMax) renderBookFilterSuggestions([]);
+      }
+
+      function addBookToFilterDraft(book) {
+        if (bookFilterDraft.length >= BOOK_FILTER_MAX) return;
+        if (bookFilterDraft.some((item) => item.id === book.id)) return;
+        bookFilterDraft.push(book);
+        const input = document.getElementById("bookFilterSearchInput");
+        if (input) input.value = "";
+        renderBookFilterSuggestions([]);
+        renderBookFilterDraft();
+      }
+
+      async function fetchBookFilterSuggestions(term) {
+        try {
+          const res = await fetch(apiUrl("/api/library/files/search"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: term }),
+          });
+          const data = await readJsonResponse(res, "Search library books");
+          renderBookFilterSuggestions(Array.isArray(data?.files) ? data.files : []);
+        } catch (error) {
+          console.error("Book title search failed", error);
+          renderBookFilterSuggestions([]);
+        }
+      }
+
+      function openBookFilterPanel() {
+        bookFilterDraft = (bookFilterSelections[mode] || []).map((book) => ({
+          ...book,
+        }));
+        const label = document.getElementById("bookFilterModeLabel");
+        if (label) label.textContent = mode.toUpperCase();
+        const input = document.getElementById("bookFilterSearchInput");
+        if (input) input.value = "";
+        renderBookFilterSuggestions([]);
+        renderBookFilterDraft();
+        const overlay = document.getElementById("bookFilterOverlay");
+        if (overlay) overlay.style.display = "flex";
+        if (input && !input.disabled) input.focus();
+      }
+
+      function closeBookFilterPanel() {
+        const overlay = document.getElementById("bookFilterOverlay");
+        if (overlay) overlay.style.display = "none";
+      }
+
+      function applyBookFilterDraft() {
+        bookFilterSelections[mode] = bookFilterDraft.map((book) => ({
+          ...book,
+        }));
+        saveBookFilterSelections();
+        updateBookFilterUi();
+        closeBookFilterPanel();
+      }
+
+      loadBookFilterSelections();
 
       function normalizeFontStack(fontStack) {
         const trimmed = typeof fontStack === "string" ? fontStack.trim() : "";
@@ -6350,7 +7276,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           m === "cloud" ? "active" : "";
         modelSelect.classList.toggle("mode-hidden", !isOllamaMode);
         topbarPromptSelect.classList.toggle("mode-hidden", !isOllamaMode);
-        updateSettingsTabAvailability(isOllamaMode);
+        updateSettingsTabAvailability({ isOllamaMode, isCloudMode });
         ollamaPaletteGroup.style.display = isOllamaMode ? "" : "none";
         piPaletteGroup.style.display = isPiMode ? "" : "none";
         cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
@@ -6365,7 +7291,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           document.getElementById("builtinSkillsGroup");
         const customSkillsGroup = document.getElementById("customSkillsGroup");
         if (builtinSkillsGroup) {
-          builtinSkillsGroup.style.display = isOllamaMode ? "" : "none";
+          builtinSkillsGroup.style.display =
+            isOllamaMode || isCloudMode ? "" : "none";
         }
         if (customSkillsGroup) {
           customSkillsGroup.style.display = isOllamaMode ? "" : "none";
@@ -6396,6 +7323,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         } else {
           updateModeStatus();
         }
+        syncSearchAlgorithmModeToChatMode();
+        updateBookFilterUi();
         updateTokenCounter();
         updateSendButtonState();
       }
@@ -6937,11 +7866,38 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
 
             if (
+              evt.type === "thinking_start" ||
+              evt.type === "thinking_delta" ||
+              evt.type === "thinking_end" ||
+              evt.type === "tool_start" ||
+              evt.type === "tool_end" ||
+              evt.type === "skill_links" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
               evt.type === "slash_command"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
+              continue;
+            }
+
+            if (evt.type === "needs_ui") {
+              if (typeof onEvent === "function") onEvent(evt);
+              const activeSessionId = evt.sessionId;
+              if (!activeSessionId)
+                throw new Error(
+                  "Missing sessionId for Cloud permission response.",
+                );
+              const uiResponse = await askPiPermission(evt.request, signal);
+              await postJson(
+                "/api/ollama/tool-respond",
+                {
+                  sessionId: activeSessionId,
+                  uiResponse,
+                  streaming: true,
+                },
+                "Respond to Cloud permission request",
+                signal,
+              );
               continue;
             }
 
@@ -7378,8 +8334,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
         wrap.appendChild(actions);
         chat.appendChild(wrap);
-        chat.scrollTop = chat.scrollHeight;
+        scrollChatToBottom();
         return div;
+      }
+
+      function stripMarkdownHeadingMarkers(value) {
+        return String(value || "")
+          .replace(/^\s*#{1,6}\s+/, "")
+          .replace(/^\s*>+\s*/, "")
+          .trim();
       }
 
       function addThinking(initialSnapshot = {}) {
@@ -7398,7 +8361,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         summary.textContent = "Thinking...";
 
         const body = document.createElement("div");
-        body.className = "thinking-details-body";
+        body.className = "thinking-details-body thinking-markdown";
 
         details.appendChild(summary);
         details.appendChild(body);
@@ -7439,7 +8402,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         wrap.appendChild(debugDetails);
         wrap.appendChild(passagesDetails);
         chat.appendChild(wrap);
-        chat.scrollTop = chat.scrollHeight;
+        scrollChatToBottom();
 
         let reasoningText =
           typeof initialSnapshot.thinking === "string"
@@ -7471,7 +8434,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             reasoningText += chunk;
             body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
-            chat.scrollTop = chat.scrollHeight;
+            scrollChatToBottom();
           },
           setPassages(passagesArray) {
             if (!Array.isArray(passagesArray) || passagesArray.length === 0) return;
@@ -7487,26 +8450,40 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               const titleEl = document.createElement("div");
               titleEl.style.fontWeight = "bold";
               titleEl.style.marginBottom = "4px";
-              titleEl.textContent = passage.title + (passage.author ? ` by ${passage.author}` : "");
+              titleEl.textContent =
+                stripMarkdownHeadingMarkers(passage.title) +
+                (passage.author ? ` by ${passage.author}` : "");
               entry.appendChild(titleEl);
-              
+
               if (passage.heading) {
                 const headingEl = document.createElement("div");
                 headingEl.style.fontStyle = "italic";
                 headingEl.style.marginBottom = "4px";
-                headingEl.textContent = passage.heading;
+                headingEl.textContent = stripMarkdownHeadingMarkers(
+                  passage.heading,
+                );
                 entry.appendChild(headingEl);
               }
-              
+
               const textEl = document.createElement("div");
-              textEl.style.whiteSpace = "pre-wrap";
+              textEl.className = "thinking-markdown";
               textEl.style.marginTop = "4px";
-              textEl.textContent = passage.text || "";
+              if (
+                typeof marked !== "undefined" &&
+                typeof DOMPurify !== "undefined"
+              ) {
+                textEl.innerHTML = DOMPurify.sanitize(
+                  marked.parse(passage.text || ""),
+                );
+              } else {
+                textEl.style.whiteSpace = "pre-wrap";
+                textEl.textContent = passage.text || "";
+              }
               entry.appendChild(textEl);
               
               passagesBody.appendChild(entry);
             });
-            chat.scrollTop = chat.scrollHeight;
+            scrollChatToBottom();
           },
           addTraceLine(line, opts = {}) {
             if (!line) return;
@@ -7522,7 +8499,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             }
             debugBody.textContent = `${traceLines.join("\n")}\n`;
             debugBody.scrollTop = debugBody.scrollHeight;
-            chat.scrollTop = chat.scrollHeight;
+            scrollChatToBottom();
           },
           addEvent(evt) {
             if (!evt || typeof evt !== "object") return;
@@ -7552,6 +8529,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           },
           get hadTrace() {
             return traceLines.length > 0;
+          },
+          get hadPassages() {
+            return currentPassages.length > 0;
           },
         };
         if (hasReasoning) {
@@ -7636,6 +8616,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 traceEvents: activeThinkingSnapshot.traceEvents?.length
                   ? activeThinkingSnapshot.traceEvents
                   : metadata.traceEvents,
+                passages: activeThinkingSnapshot.passages?.length
+                  ? activeThinkingSnapshot.passages
+                  : metadata.passages,
                 status: activeThinkingSnapshot.status || metadata.status,
               },
             );
@@ -7658,10 +8641,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function setDraftAssistant(modeName, content, librarySources, metadata) {
         const session = getActiveModeSession(modeName);
+        const existingMetadata = getAssistantMetadataFromMessage(
+          session.draftAssistant,
+        );
         const nextMetadata =
           metadata ||
           session.thinkingController?.getSnapshot?.() ||
-          getAssistantMetadataFromMessage(session.draftAssistant);
+          existingMetadata;
+        if (
+          (!Array.isArray(nextMetadata.passages) ||
+            nextMetadata.passages.length === 0) &&
+          Array.isArray(existingMetadata.passages) &&
+          existingMetadata.passages.length
+        ) {
+          nextMetadata.passages = existingMetadata.passages;
+        }
         session.draftAssistant = buildAssistantHistoryMessage(
           content || "",
           librarySources || [],
@@ -7683,15 +8677,26 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             content || "",
             librarySources || [],
           );
-          chat.scrollTop = chat.scrollHeight;
+          scrollChatToBottom();
         }
       }
 
       function finalizeDraftAssistant(modeName, content, librarySources) {
         const session = getActiveModeSession(modeName);
+        const existingMetadata = getAssistantMetadataFromMessage(
+          session.draftAssistant,
+        );
         const metadata =
           session.thinkingController?.getSnapshot?.() ||
-          getAssistantMetadataFromMessage(session.draftAssistant);
+          existingMetadata;
+        if (
+          (!Array.isArray(metadata.passages) ||
+            metadata.passages.length === 0) &&
+          Array.isArray(existingMetadata.passages) &&
+          existingMetadata.passages.length
+        ) {
+          metadata.passages = existingMetadata.passages;
+        }
         metadata.status = "done";
         const assistantMessage = buildAssistantHistoryMessage(
           content || "",
@@ -8071,12 +9076,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       async function loadOllamaSkillsConfig() {
+        renderBuiltinSkillsList();
         try {
           const res = await fetch(apiUrl("/api/ollama/skills/settings"));
-          builtinSkillsConfig = await res.json();
+          builtinSkillsConfig = {
+            ...DEFAULT_BUILTIN_SKILLS_CONFIG,
+            ...(await res.json()),
+          };
           renderBuiltinSkillsList();
         } catch (error) {
           console.error("Could not load Ollama skills config", error);
+          renderBuiltinSkillsList();
         }
       }
 
@@ -8616,6 +9626,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function captureLibrarySources(evt, state, assistantDiv) {
         if (evt?.type !== "library_results" || !state) return;
         state.results = Array.isArray(evt.results) ? evt.results : [];
+        state.passages = Array.isArray(evt.passages) ? evt.passages : [];
         if (assistantDiv?.isConnected) {
           renderAssistantMessage(
             assistantDiv,
@@ -8884,7 +9895,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -8932,7 +9943,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                       `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`,
                     );
                   }
-                  chat.scrollTop = chat.scrollHeight;
+                  scrollChatToBottom();
                 }
               },
               (evt) => {
@@ -8989,7 +10000,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
               thinking.remove();
             }
             if (persistToHistory) {
@@ -9020,7 +10031,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               runConvId,
               lastUserMessage.slice(0, 40),
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -9057,7 +10068,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
               thinking.remove();
             }
             const assistantMessage = finalizeDraftAssistant(
@@ -9087,7 +10098,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -9118,7 +10129,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace) {
+            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
               thinking.remove();
             }
             const assistantMessage = finalizeDraftAssistant(
@@ -9230,7 +10241,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           if (
             thinking?.isConnected &&
             !thinking.hadReasoning &&
-            !thinking.hadTrace
+            !thinking.hadTrace &&
+            !thinking.hadPassages
           ) {
             thinking.remove();
             if (runSession.thinkingController === thinking) {
@@ -9295,7 +10307,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (
               thinking?.isConnected &&
               !thinking.hadReasoning &&
-              !thinking.hadTrace
+              !thinking.hadTrace &&
+              !thinking.hadPassages
             ) {
               thinking.remove();
             }
@@ -9337,7 +10350,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (
               thinking?.isConnected &&
               !thinking.hadReasoning &&
-              !thinking.hadTrace
+              !thinking.hadTrace &&
+              !thinking.hadPassages
             ) {
               thinking.remove();
             }
@@ -9378,7 +10392,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (
               thinking?.isConnected &&
               !thinking.hadReasoning &&
-              !thinking.hadTrace
+              !thinking.hadTrace &&
+              !thinking.hadPassages
             ) {
               thinking.remove();
             }
@@ -9697,16 +10712,24 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         });
       }
 
-      function updateSettingsTabAvailability(isOllamaMode) {
-        ["prompts", "skills"].forEach((tabName) => {
-          const tab = document.querySelector(
-            `.settings-tab[data-settings-tab="${tabName}"]`,
-          );
-          if (tab) tab.style.display = isOllamaMode ? "" : "none";
-        });
+      function updateSettingsTabAvailability(state = {}) {
+        const isOllamaMode =
+          typeof state === "boolean" ? state : state.isOllamaMode === true;
+        const isCloudMode =
+          typeof state === "object" && state.isCloudMode === true;
+        const promptsVisible = isOllamaMode;
+        const skillsVisible = isOllamaMode || isCloudMode;
+        const promptsTab = document.querySelector(
+          '.settings-tab[data-settings-tab="prompts"]',
+        );
+        const skillsTab = document.querySelector(
+          '.settings-tab[data-settings-tab="skills"]',
+        );
+        if (promptsTab) promptsTab.style.display = promptsVisible ? "" : "none";
+        if (skillsTab) skillsTab.style.display = skillsVisible ? "" : "none";
         if (
-          !isOllamaMode &&
-          ["prompts", "skills"].includes(activeSettingsTab)
+          (activeSettingsTab === "prompts" && !promptsVisible) ||
+          (activeSettingsTab === "skills" && !skillsVisible)
         ) {
           switchSettingsTab("main");
         }
@@ -9800,6 +10823,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       // Auto-save notes on input
+      document.addEventListener("input", (e) => {
+        if (e.target.matches('input[type="range"]')) {
+          const display = e.target.nextElementSibling;
+          if (display && display.classList.contains('setting-range-value')) {
+            display.textContent = e.target.value;
+          }
+        }
+      });
+
       document.addEventListener("DOMContentLoaded", () => {
         const area = document.getElementById("notesArea");
         if (area)
@@ -10332,6 +11364,85 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           btn_saveDatabaseSettingsBtn.addEventListener("click", function () {
             saveLibrarySettingsFromForm();
           });
+        }
+
+        const btn_resetSearchAlgorithmSettingsBtn = document.getElementById(
+          "resetSearchAlgorithmSettingsBtn",
+        );
+        if (btn_resetSearchAlgorithmSettingsBtn) {
+          btn_resetSearchAlgorithmSettingsBtn.addEventListener(
+            "click",
+            function () {
+              resetSearchAlgorithmSettings();
+            },
+          );
+        }
+
+        document
+          .querySelectorAll("#searchAlgorithmModeTabs .search-algo-mode-btn")
+          .forEach((btn) => {
+            btn.addEventListener("click", function () {
+              selectSearchAlgorithmMode(btn.dataset.searchAlgoMode);
+            });
+          });
+
+        const bookFilterBtn = document.getElementById("bookFilterBtn");
+        if (bookFilterBtn) {
+          bookFilterBtn.addEventListener("click", openBookFilterPanel);
+        }
+        const bookFilterCloseBtn = document.getElementById(
+          "bookFilterCloseBtn",
+        );
+        if (bookFilterCloseBtn) {
+          bookFilterCloseBtn.addEventListener("click", closeBookFilterPanel);
+        }
+        const bookFilterOverlayEl = document.getElementById(
+          "bookFilterOverlay",
+        );
+        if (bookFilterOverlayEl) {
+          bookFilterOverlayEl.addEventListener("click", function (event) {
+            if (event.target === bookFilterOverlayEl) closeBookFilterPanel();
+          });
+        }
+        const bookFilterClearBtn = document.getElementById(
+          "bookFilterClearBtn",
+        );
+        if (bookFilterClearBtn) {
+          bookFilterClearBtn.addEventListener("click", function () {
+            bookFilterDraft = [];
+            renderBookFilterDraft();
+          });
+        }
+        const bookFilterApplyBtn = document.getElementById(
+          "bookFilterApplyBtn",
+        );
+        if (bookFilterApplyBtn) {
+          bookFilterApplyBtn.addEventListener("click", applyBookFilterDraft);
+        }
+        const bookFilterSearchInputEl = document.getElementById(
+          "bookFilterSearchInput",
+        );
+        if (bookFilterSearchInputEl) {
+          bookFilterSearchInputEl.addEventListener("input", function () {
+            clearTimeout(bookFilterSuggestTimer);
+            const term = bookFilterSearchInputEl.value.trim();
+            if (term.length < 2) {
+              renderBookFilterSuggestions([]);
+              return;
+            }
+            bookFilterSuggestTimer = setTimeout(() => {
+              fetchBookFilterSuggestions(term);
+            }, 200);
+          });
+        }
+        const librarySearchEnabledInputEl = document.getElementById(
+          "librarySearchEnabledInput",
+        );
+        if (librarySearchEnabledInputEl) {
+          librarySearchEnabledInputEl.addEventListener(
+            "change",
+            updateBookFilterUi,
+          );
         }
 
         const btn_reloadLibraryStatusBtn = document.getElementById(

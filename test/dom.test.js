@@ -59,7 +59,7 @@ function createFetchStub() {
           provider: "openai",
           models: {
             openai: "gpt-5",
-            anthropic: "claude-sonnet-4-20250514",
+            anthropic: "claude-opus-4-8",
             mistral: "mistral-large-latest",
           },
           baseUrls: {
@@ -105,6 +105,14 @@ function createFetchStub() {
             defaultLimit: 5,
             maxLimit: 20,
             maxContextChars: 12000,
+            rrfK: 60,
+            semanticWeight: 1,
+            keywordWeight: 1.1,
+            metadataWeight: 0.8,
+            sourceWeight: 1.2,
+            contentKeywordBonus: 0.16,
+            metadataKeywordBonus: 0.06,
+            maxPassagesPerSource: 5,
           },
           embedding: {
             enabled: false,
@@ -147,6 +155,14 @@ function createFetchStub() {
           defaultLimit: 5,
           maxLimit: 20,
           maxContextChars: 12000,
+          rrfK: 60,
+          semanticWeight: 1,
+          keywordWeight: 1.1,
+          metadataWeight: 0.8,
+          sourceWeight: 1.2,
+          contentKeywordBonus: 0.16,
+          metadataKeywordBonus: 0.06,
+          maxPassagesPerSource: 5,
         },
       });
     }
@@ -257,6 +273,12 @@ test("frontend boots without network fetch crashes", async () => {
   );
   assert.ok(dom.window.document.getElementById("libraryEstimateTotalValue"));
   assert.ok(dom.window.document.getElementById("libraryStatusFilesValue"));
+  assert.ok(
+    dom.window.document.getElementById("libraryStatusEmbeddingsReadyValue"),
+  );
+  assert.ok(
+    dom.window.document.getElementById("libraryStatusEmbeddingsMissingValue"),
+  );
   assert.ok(dom.window.document.getElementById("libraryJobPhaseValue"));
   assert.ok(
     dom.window.document.getElementById("libraryJobPendingEmbeddingsValue"),
@@ -267,6 +289,24 @@ test("frontend boots without network fetch crashes", async () => {
   assert.ok(dom.window.document.getElementById("libraryJobRecentIssuesValue"));
   assert.ok(dom.window.document.getElementById("libraryIndexProgressFill"));
   assert.ok(dom.window.document.getElementById("retryLibraryEmbeddingsBtn"));
+  assert.ok(
+    dom.window.document.getElementById("resetSearchAlgorithmSettingsBtn"),
+  );
+  assert.ok(
+    dom.window.document.querySelectorAll("#builtinSkillsList .builtin-skill-toggle")
+      .length > 0,
+  );
+  assert.strictEqual(
+    dom.window.document.querySelector(
+      '#builtinSkillsList .builtin-skill-toggle[data-skill="shell_command"]',
+    ).checked,
+    false,
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("databaseMaxPassagesPerSourceInput")
+      .value,
+    "5",
+  );
   assert.strictEqual(
     dom.window.document.querySelectorAll(".settings-tab").length,
     4,
@@ -347,7 +387,7 @@ test("palette change listener updates UI state", async () => {
   );
 });
 
-test("mode switch hides Ollama-only settings outside Ollama mode", async () => {
+test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
   const { dom, errors } = createDom();
   await waitFor(
     () =>
@@ -385,10 +425,87 @@ test("mode switch hides Ollama-only settings outside Ollama mode", async () => {
     "",
   );
   assert.strictEqual(
+    dom.window.document.getElementById("builtinSkillsGroup").style.display,
+    "",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("customSkillsGroup").style.display,
+    "none",
+  );
+  assert.strictEqual(
+    dom.window.document.querySelector('[data-settings-tab="skills"]').style
+      .display,
+    "",
+  );
+  assert.strictEqual(
+    dom.window.document.querySelector('[data-settings-tab="prompts"]').style
+      .display,
+    "none",
+  );
+  assert.strictEqual(
     dom.window.document.getElementById("piSettingsGroup").style.display,
     "none",
   );
 
+  assert.deepStrictEqual(errors, []);
+});
+
+test("passages bubble survives history render and mode switch", async () => {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  const passage = {
+    title: "Biblioteca",
+    author: "Apolodoro",
+    heading: "La Esfinge",
+    text: "Hera envio a la Esfinge, hija de Equidna y Tifon.",
+  };
+
+  dom.window.loadConversation({
+    id: "conv_passages_history",
+    mode: "ollama",
+    title: "Passages history",
+    history: [
+      { role: "user", content: "genealogia de la esfinge" },
+      {
+        role: "assistant",
+        content: "Segun la Biblioteca de Apolodoro...",
+        passages: [passage],
+      },
+    ],
+  });
+
+  const findPassagesDetails = () =>
+    Array.from(dom.window.document.querySelectorAll(".thinking-details")).find(
+      (node) => node.querySelector("summary")?.textContent === "Passages",
+    );
+
+  assert.match(findPassagesDetails()?.textContent || "", /Equidna/);
+
+  dom.window.document.getElementById("btnPi").click();
+  dom.window.document.getElementById("btnOllama").click();
+
+  assert.match(findPassagesDetails()?.textContent || "", /Equidna/);
+
+  const session = dom.window.getActiveModeSession("ollama");
+  session.history = [];
+  session.draftAssistant = dom.window.buildAssistantHistoryMessage(
+    "Draft answer",
+    [],
+    { passages: [passage] },
+  );
+  dom.window.renderSessionTranscript(session);
+
+  assert.match(findPassagesDetails()?.textContent || "", /Equidna/);
+
+  dom.window.document.getElementById("btnPi").click();
+  dom.window.document.getElementById("btnOllama").click();
+
+  assert.match(findPassagesDetails()?.textContent || "", /Equidna/);
   assert.deepStrictEqual(errors, []);
 });
 
