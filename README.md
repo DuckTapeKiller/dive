@@ -72,7 +72,7 @@ In Pi Mode, the app acts as a secure bridge to the **Pi agent command-line tool*
 In Cloud Mode, the app sends chat requests directly from the local server to the cloud provider you configure.
 
 - **Best for**: Using hosted models when you want higher capacity, a specific provider model, or a fallback when local models are not enough.
-- **Supported providers**: OpenAI, Anthropic Claude, and Mistral.
+- **Supported providers**: OpenAI, Anthropic Claude, Mistral, and Google Gemini.
 - **How it works**: Open Settings, choose the Cloud provider, paste your API key, set the model id, and save. Then switch to the Cloud icon in the top-left mode selector and chat normally.
 - **Privacy note**: Cloud prompts and uploaded text are sent to the selected provider. Use Ollama or Pi mode for workflows that must remain fully local.
 
@@ -87,7 +87,7 @@ Dive is packed with premium, user-friendly utilities:
 - **Auto-Saving Notes Panel**: Click the **Notes** icon on the top right to slide open a dedicated notepad. Type notes, cheat sheets, or drafts; the app autosaves them directly to your browser's memory, persisting them even if you refresh the page.
 - **Smart File Uploader**: Drag or select documents (like `.txt`, `.md`, `.json`, `.py`, `.js`, `.css`, etc.). The app extracts and loads the text into your prompt box. If you upload a `.pdf` file, the app automatically runs local text extraction utility (`pdftotext`) to ingest it.
 - **Local Library Research**: Build a private SQLite index from Calibre EPUB books plus configured TXT or Markdown note folders, then let Ollama retrieve relevant passages before answering.
-- **Cloud Mode**: Use OpenAI, Anthropic Claude, or Mistral models with your own API keys while keeping the app UI, history, and settings local.
+- **Cloud Mode**: Use OpenAI, Anthropic Claude, Mistral, or Google Gemini models with your own API keys while keeping the app UI, history, and settings local.
 - **System Prompt Overlays Manager**: Click **Settings** and scroll to "Custom Overlay Prompt" to create templates (like a translation assistant, code reviewer, or copy editor). You can switch between system personalities instantly using the top bar selector.
 - **Conversation History**: Reload, manage, or clear past chat sessions from the historical drawer on the left side.
 - **Log Auditing**: The application maintains a health log of system start times, timeout issues, and a detailed audit of every permission you granted or denied in Pi mode.
@@ -111,7 +111,7 @@ To run this application locally, you will need a few simple components installed
      ollama run llama3
      ```
 3. **Pi CLI (Only required for Pi Mode)**: The agent execution engine. Make sure the `pi` command is installed and accessible in your environment PATH.
-4. **Cloud Provider API Key (Only required for Cloud Mode)**: Bring an API key from OpenAI, Anthropic, or Mistral if you want to use hosted models.
+4. **Cloud Provider API Key (Only required for Cloud Mode)**: Bring an API key from OpenAI, Anthropic, Mistral, or Google if you want to use hosted models.
 5. **SQLite (Optional - for Local Library Research)**: Keyword database search works with normal SQLite. Semantic vector search requires a SQLite build that can load extensions, the sqlite-vec extension, and a local Ollama embedding model. Apple `/usr/bin/sqlite3` cannot load sqlite-vec because it is built with `OMIT_LOAD_EXTENSION`; install Homebrew SQLite for semantic search.
 6. **pdftotext (Optional - for PDF uploads)**: To extract and read PDF uploads, install `poppler`. On macOS with Homebrew:
    ```bash
@@ -258,6 +258,7 @@ These parameters let you control the "personality" and behavior of the local Oll
 - **Keyword FTS Index**: Optional exact-term fallback search. It increases database size, so leave it off unless you specifically need keyword matching.
 - **Embedding Model**: Choose an installed Ollama model for embeddings. `nomic-embed-text-v2-moe:latest` is a good multilingual choice for English and Spanish libraries.
 - **Vector Dims**: Controls stored embedding dimensions. The default is `256`, which keeps the index smaller while still using the compact Matryoshka representation from Nomic-style embedding models.
+- **Search Algorithm Settings**: Fine-tune retrieval ranking (RRF k, semantic/keyword/metadata/source weights, keyword bonuses, max passages per source). Each chat mode (Ollama, Pi, Cloud) keeps its own independent copy of these weights — pick the mode tab inside the section, adjust the sliders, and Save Database Settings stores all three. Changes apply to the next message without reindexing.
 - **Source Folders**: Add, remove, and edit folders from the UI. The default Books source indexes EPUB files only, while note sources can index `.md` and `.txt`.
 - **Estimate Index Size**: Samples the configured source folders and estimates final passage count and database size before a full index run.
 - **Build / Update Index**: Scans changed source files and updates `library.sqlite`. It also repairs missing embeddings for unchanged files, so a temporary embedding failure can be retried without re-reading every EPUB.
@@ -275,9 +276,9 @@ These parameters let you control the "personality" and behavior of the local Oll
   - **Normal**: Prompts you for critical operations but automates standard lookups.
   - **Strict**: Hard-blocks root access, shortens decision timers, and prompts you for everything to ensure maximum security.
 
-### 5. Built-in Agent Skills (Ollama)
+### 5. Built-in Agent Skills (Ollama & Cloud)
 
-Dive comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models can automatically invoke these skills to perform actions or look up real-time information:
+Dive comes with a suite of native tools that you can toggle on or off in the settings. When enabled, your local Ollama models and Cloud models can automatically invoke these skills to perform actions or look up real-time information. Cloud models are instructed to treat skill results as the primary source of truth and to fall back to their own training data only when the skills return nothing useful:
 
 - **Wikipedia**: Searches Wikipedia for factual information and summaries. Requires internet access.
 - **Britannica**: Searches the Encyclopedia Britannica for curated facts. Requires internet access.
@@ -293,7 +294,7 @@ Dive comes with a suite of native tools that you can toggle on or off in the set
 
 ### 6. Cloud Mode Settings
 
-- **Provider**: Choose OpenAI, Anthropic Claude, or Mistral.
+- **Provider**: Choose OpenAI, Anthropic Claude, Mistral, or Google Gemini.
 - **API Key**: Paste your provider key. Keys are saved on disk by the local server and are never returned to the browser UI after saving.
 - **Model**: Enter the exact model id you want to use for that provider.
 - **Base URL**: Keep the provider default unless you use a compatible gateway or proxy.
@@ -546,7 +547,7 @@ For source-grounded answers:
 1. Make sure the index exists and status shows files/passages.
 2. Turn on **Enable Database Context**.
 3. Keep **Include Source Paths in Source Boxes** enabled if you want source buttons to copy local paths.
-4. Set **Passages** to `5` or `8`.
+4. Keep **Passages** at the default `20` (lower it to `5`-`8` for smaller, faster prompts).
 5. Ask a direct question, for example:
    ```text
    What did Freud say about incest?
@@ -556,20 +557,20 @@ The app retrieves passages, sends them to the active model as temporary context,
 
 ### Slash Commands
 
-Slash commands are optional overrides. If you do not type a slash command, normal behavior is unchanged: Ollama can still decide to call enabled skills automatically, and Database Context follows the Settings toggle.
+Slash commands are optional overrides. If you do not type a slash command, normal behavior is unchanged: Ollama and Cloud can still decide to call enabled skills automatically, and Database Context follows the Settings toggle.
 
 - `/db question`: Global database-only mode for Ollama, Pi, and Cloud. This forces a database search for that prompt, even if Database Context is off, and instructs the model to answer only from retrieved passages.
-- `/wiki query`: Force Wikipedia in Ollama mode.
-- `/britannica query`: Force Britannica in Ollama mode.
-- `/wiktionary word`: Force Wiktionary in Ollama mode.
-- `/etymology word`: Force Deep Etymology in Ollama mode.
-- `/duckduckgo query`: Force DuckDuckGo search in Ollama mode.
-- `/scrape URL`: Force Web Scraper in Ollama mode.
-- `/calc expression`: Force Calculator in Ollama mode.
-- `/time timezone`: Force Time & Date in Ollama mode. The timezone is optional.
-- `/factcheck claim`: Force Fact Check in Ollama mode.
-- `/notes read` or `/notes append text`: Force Local Notes in Ollama mode.
-- `/shell command`: Force Shell Command in Ollama mode. It still requires explicit confirmation.
+- `/wiki query`: Force Wikipedia in Ollama and Cloud modes.
+- `/britannica query`: Force Britannica in Ollama and Cloud modes.
+- `/wiktionary word`: Force Wiktionary in Ollama and Cloud modes.
+- `/etymology word`: Force Deep Etymology in Ollama and Cloud modes.
+- `/duckduckgo query`: Force DuckDuckGo search in Ollama and Cloud modes.
+- `/scrape URL`: Force Web Scraper in Ollama and Cloud modes.
+- `/calc expression`: Force Calculator in Ollama and Cloud modes.
+- `/time timezone`: Force Time & Date in Ollama and Cloud modes. The timezone is optional.
+- `/factcheck claim`: Force Fact Check in Ollama and Cloud modes.
+- `/notes read` or `/notes append text`: Force Local Notes in Ollama and Cloud modes.
+- `/shell command`: Force Shell Command in Ollama and Cloud modes. It still requires explicit confirmation.
 
 For language-sensitive commands, prefix the query with `en:`, `es:`, or `fr:` when useful, for example `/wiki es: Nijinsky` or `/etymology es: eventualmente`.
 

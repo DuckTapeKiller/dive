@@ -25,8 +25,17 @@
     "keywordEnabled": false,
     "defaultLimit": 5,
     "maxLimit": 50,
-    "maxContextChars": 12000
+    "maxContextChars": 12000,
+    "rrfK": 60,
+    "semanticWeight": 1,
+    "keywordWeight": 1.1,
+    "metadataWeight": 0.8,
+    "sourceWeight": 1.2,
+    "contentKeywordBonus": 0.16,
+    "metadataKeywordBonus": 0.06,
+    "maxPassagesPerSource": 5
   },
+  "searchModes": {},
   "embedding": {
     "enabled": false,
     "model": "nomic-embed-text-v2-moe:latest",
@@ -38,8 +47,8 @@
   },
   "chatIntegration": {
     "enabled": false,
-    "limit": 5,
-    "maxContextChars": 12000,
+    "limit": 20,
+    "maxContextChars": 30000,
     "includeSourcePaths": true
   },
   "watch": {

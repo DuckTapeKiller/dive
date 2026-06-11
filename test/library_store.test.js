@@ -6,9 +6,12 @@ const path = require("path");
 const {
   buildLibraryContext,
   collectSourceFiles,
+  detectLanguageHint,
   indexLibrary,
   normalizeConfig,
   searchLibrary,
+  searchLibraryFiles,
+  splitQueryForRetrieval,
 } = require("../library/store");
 const defaultConfig = require("../library/config.default.json");
 
@@ -74,13 +77,506 @@ test("legacy chunk defaults are upgraded to compact defaults", () => {
   assert.strictEqual(legacyConfig.search.keywordEnabled, false);
 });
 
+test("chat integration defaults to 20 passages and 30000 context chars", () => {
+  const config = normalizeConfig({});
+  assert.strictEqual(config.chatIntegration.limit, 20);
+  assert.strictEqual(config.chatIntegration.maxContextChars, 30000);
+});
+
+test("legacy chat integration defaults are upgraded to new defaults", () => {
+  const legacyConfig = normalizeConfig({
+    ...defaultConfig,
+    chatIntegration: {
+      enabled: true,
+      limit: 5,
+      maxContextChars: 12000,
+      includeSourcePaths: true,
+    },
+  });
+  assert.strictEqual(legacyConfig.chatIntegration.limit, 20);
+  assert.strictEqual(legacyConfig.chatIntegration.maxContextChars, 30000);
+  assert.strictEqual(legacyConfig.chatIntegration.enabled, true);
+
+  const customConfig = normalizeConfig({
+    ...defaultConfig,
+    chatIntegration: {
+      enabled: true,
+      limit: 8,
+      maxContextChars: 12000,
+      includeSourcePaths: false,
+    },
+  });
+  assert.strictEqual(customConfig.chatIntegration.limit, 8);
+  assert.strictEqual(customConfig.chatIntegration.maxContextChars, 12000);
+});
+
+test("per-mode search algorithm overrides are materialized and clamped", () => {
+  const config = normalizeConfig({
+    ...defaultConfig,
+    search: { ...defaultConfig.search, rrfK: 33 },
+    searchModes: {
+      cloud: { rrfK: 999, metadataWeight: 2.5 },
+    },
+  });
+  // All three modes exist and seed from the shared search settings.
+  assert.strictEqual(config.searchModes.ollama.rrfK, 33);
+  assert.strictEqual(config.searchModes.pi.rrfK, 33);
+  // Explicit overrides are clamped to the documented ranges.
+  assert.strictEqual(config.searchModes.cloud.rrfK, 100);
+  assert.strictEqual(config.searchModes.cloud.metadataWeight, 2.5);
+  assert.strictEqual(
+    config.searchModes.cloud.maxPassagesPerSource,
+    config.search.maxPassagesPerSource,
+  );
+});
+
+test("searchLibrary applies per-mode search algorithm settings", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-pi-chat-modes-"));
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    const paragraph =
+      "El magnetismo aparece descrito en este parrafo con detalle tecnico. ";
+    fs.writeFileSync(
+      path.join(sourceDir, "apuntes.txt"),
+      Array.from(
+        { length: 10 },
+        (_v, i) => `Seccion ${i + 1}\n\n${paragraph.repeat(4)}`,
+      ).join("\n\n"),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      chunking: { targetChars: 500, overlapChars: 0, minChars: 40, maxChars: 700 },
+      search: { ...defaultConfig.search, keywordEnabled: true },
+      searchModes: {
+        ollama: { maxPassagesPerSource: 1 },
+        cloud: { maxPassagesPerSource: 5 },
+      },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const ollamaResults = await searchLibrary("magnetismo", {
+      config,
+      mode: "ollama",
+      limit: 5,
+    });
+    const cloudResults = await searchLibrary("magnetismo", {
+      config,
+      mode: "cloud",
+      limit: 5,
+    });
+    assert.strictEqual(ollamaResults.length, 1);
+    assert.ok(cloudResults.length > ollamaResults.length);
+
+    // Unknown or missing mode falls back to the shared search settings.
+    const sharedResults = await searchLibrary("magnetismo", {
+      config,
+      limit: 5,
+    });
+    assert.ok(sharedResults.length > 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("book filter restricts search results to the selected files", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-pi-chat-filter-"));
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, "Libro Alfa.txt"),
+      "El magnetismo aparece en el libro alfa con explicaciones extensas. ".repeat(
+        8,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Libro Beta.txt"),
+      "El magnetismo se estudia en el libro beta desde otra perspectiva. ".repeat(
+        8,
+      ),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      search: { ...defaultConfig.search, keywordEnabled: true },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const files = await searchLibraryFiles("libro", { config });
+    assert.strictEqual(files.length, 2);
+    assert.ok(files.every((file) => Number.isInteger(file.id) && file.id > 0));
+    const alfa = files.find((file) => file.path.endsWith("Libro Alfa.txt"));
+    assert.ok(alfa);
+
+    const unfiltered = await searchLibrary("magnetismo", { config, limit: 5 });
+    assert.ok(
+      new Set(unfiltered.map((result) => result.path)).size === 2,
+      "both files should match without a filter",
+    );
+
+    const filtered = await searchLibrary("magnetismo", {
+      config,
+      limit: 5,
+      fileIds: [alfa.id],
+    });
+    assert.ok(filtered.length > 0);
+    assert.ok(
+      filtered.every((result) => result.path.endsWith("Libro Alfa.txt")),
+      "filtered results must come only from the selected book",
+    );
+
+    // Invalid ids are ignored entirely (no filter applied).
+    const sloppy = await searchLibrary("magnetismo", {
+      config,
+      limit: 5,
+      fileIds: ["nonsense", -4, null],
+    });
+    assert.ok(new Set(sloppy.map((result) => result.path)).size === 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("splitQueryForRetrieval extracts quoted span and outside instruction", () => {
+  const ascii = splitQueryForRetrieval(
+    '"Toads stomach Robert Burton" I want to know the story',
+  );
+  // Case is preserved so the embedding model receives the original text.
+  assert.strictEqual(ascii.retrievalQuery, "Toads stomach Robert Burton");
+  assert.strictEqual(ascii.userInstruction, "I want to know the story");
+  assert.strictEqual(ascii.hasQuotedScope, true);
+
+  // Smart curly quotes are also recognized.
+  const curly = splitQueryForRetrieval(
+    "I want to know the story in “Anatomy of Melancholy” of a man",
+  );
+  assert.strictEqual(curly.retrievalQuery, "Anatomy of Melancholy");
+  assert.match(curly.userInstruction, /I want to know the story/);
+  assert.strictEqual(curly.hasQuotedScope, true);
+
+  // No quotes: behaviour unchanged (whole query is retrieval, no instruction).
+  const plain = splitQueryForRetrieval("Toads stomach Robert Burton");
+  assert.strictEqual(plain.retrievalQuery, "Toads stomach Robert Burton");
+  assert.strictEqual(plain.userInstruction, "");
+  assert.strictEqual(plain.hasQuotedScope, false);
+
+  // Whitespace-only quotes degrade to the default path.
+  const empty = splitQueryForRetrieval('Tell me " " about the story');
+  assert.strictEqual(empty.hasQuotedScope, false);
+  assert.strictEqual(empty.userInstruction, "");
+});
+
+test("quote-restricted search filters retrieval to the quoted scope only", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ollama-pi-chat-quote-"));
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    // The body of the unrelated file contains the instructional verbiage; if
+    // the whole sentence were used for retrieval it would dominate.
+    fs.writeFileSync(
+      path.join(sourceDir, "guia-de-busqueda.txt"),
+      "I want to know the story of how to use this library. ".repeat(20),
+    );
+    // The relevant file matches the quoted scope only.
+    fs.writeFileSync(
+      path.join(sourceDir, "anatomy-of-melancholy.txt"),
+      "Robert Burton describes a man who believes he has toads in his stomach. ".repeat(
+        10,
+      ),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      search: { ...defaultConfig.search, keywordEnabled: true },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const quoted = await searchLibrary(
+      '"Toads stomach Robert Burton" I want to know the story',
+      { config, limit: 5 },
+    );
+    assert.ok(quoted.length > 0);
+    assert.ok(
+      quoted.every((result) =>
+        result.path.endsWith("anatomy-of-melancholy.txt"),
+      ),
+      "quoted scope must keep instructional file out of results",
+    );
+
+    // Without quotes, the original whole-query behaviour applies.
+    const unquoted = await searchLibrary(
+      "I want to know the story Robert Burton toads",
+      { config, limit: 5 },
+    );
+    assert.ok(
+      unquoted.some((result) =>
+        result.path.endsWith("anatomy-of-melancholy.txt"),
+      ),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("mixed quotes and aliases retrieve Spanish Laws of the Indies passages", async (t) => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "ollama-pi-chat-laws-alias-"),
+  );
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, "Bartolome leyes nuevas.txt"),
+      [
+        "LAS LEYES NUEVAS DE INDIAS",
+        "",
+        "Bartolomé de las Casas expuso al emperador Carlos V una extensa relacion sobre la destruccion de las Indias.",
+        "Las Leyes Nuevas de Indias fueron promulgadas por Carlos V en Barcelona el 20 de noviembre de 1542.",
+        "La participacion de Bartolomé de las Casas en la genesis de esta legislacion fue decisiva.",
+        "Las Casas propuso abolir las encomiendas, tratar a los indigenas como vasallos de la Corona y suspender las guerras de conquista.",
+      ].join("\n\n"),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Bibliografia Bartolome.txt"),
+      "Bartolomé de las Casas bibliografia critica cuerpo de materiales vida escritos actuacion polemicas. ".repeat(
+        20,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Biografia Indias.txt"),
+      "Bartolomé de las Casas viajo a las Indias y participo en episodios biograficos de la conquista. ".repeat(
+        20,
+      ),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      chunking: { targetChars: 900, overlapChars: 0, minChars: 80, maxChars: 1200 },
+      search: { ...defaultConfig.search, keywordEnabled: true },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const english = await searchLibrary(
+      'When were the "Laws of the Indies” established, and what was the opinion of “Bartolomé de las Casas” on the matter?',
+      { config, limit: 5 },
+    );
+    assert.ok(english.length > 0);
+    assert.ok(
+      english[0].path.endsWith("Bartolome leyes nuevas.txt"),
+      `English alias query should rank the laws passage first, got ${english[0].path}`,
+    );
+    assert.match(
+      `${english[0].heading} ${english[0].text}`,
+      /Leyes Nuevas de Indias|1542/i,
+    );
+    assert.ok(
+      english.every(
+        (result) => !result.path.endsWith("Bibliografia Bartolome.txt"),
+      ),
+      "quoted scope should reject author-only bibliography passages",
+    );
+
+    const spanish = await searchLibrary(
+      "¿Cuándo se establecieron las Leyes de Indias y qué opinaba Bartolomé de las Casas al respecto?",
+      { config, limit: 5 },
+    );
+    assert.ok(spanish.length > 0);
+    assert.ok(
+      spanish[0].path.endsWith("Bartolome leyes nuevas.txt"),
+      `Spanish query should rank the laws passage first, got ${spanish[0].path}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("guillemets are treated as quote scope", () => {
+  const scoped = splitQueryForRetrieval(
+    "Cuando se promulgaron «Laws of the Indies» segun «Bartolomé de las Casas»",
+  );
+  assert.strictEqual(
+    scoped.retrievalQuery,
+    "Laws of the Indies Bartolomé de las Casas",
+  );
+  assert.strictEqual(scoped.hasQuotedScope, true);
+});
+
+test("detectLanguageHint recognises Spanish and English", () => {
+  assert.strictEqual(
+    detectLanguageHint("¿Qué dijo Freud sobre el incesto?"),
+    "es",
+  );
+  assert.strictEqual(
+    detectLanguageHint("Los heroes de la mitologia clasica"),
+    "es",
+  );
+  assert.strictEqual(
+    detectLanguageHint("What did Freud say about incest?"),
+    "en",
+  );
+  // Single proper-noun queries with no stop words are unknown.
+  assert.strictEqual(detectLanguageHint("Nijinsky"), "");
+});
+
+test("cross-lingual hits are not buried by same-language bonus stacking", async (t) => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "ollama-pi-chat-bilingual-"),
+  );
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    // English book — its title and chunk text both contain the query terms,
+    // so before the fix it would stack a large same-language bonus.
+    fs.writeFileSync(
+      path.join(sourceDir, "The Magnetism of Iron.txt"),
+      "The magnetism of iron has been studied by scientists for centuries. ".repeat(
+        12,
+      ),
+    );
+    // Spanish book — its title is in Spanish; the chunk explains the same
+    // concept. Vector search would surface it; the bonus stage used to bury
+    // it. With the Tier 1 fix the same-language bonus is damped 4x so the
+    // Spanish book stays in the top-3.
+    fs.writeFileSync(
+      path.join(sourceDir, "El magnetismo del hierro.txt"),
+      "El magnetismo del hierro ha sido estudiado por cientificos durante siglos. ".repeat(
+        12,
+      ),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
+      ],
+      search: { ...defaultConfig.search, keywordEnabled: true },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    // English query against the bilingual library — both books should
+    // appear, not just the English one.
+    const english = await searchLibrary(
+      "What is the magnetism of iron and how was it studied?",
+      { config, limit: 5 },
+    );
+    const englishPaths = new Set(english.map((r) => r.path));
+    assert.ok(
+      englishPaths.size >= 2,
+      `English query should surface both files, got: ${[...englishPaths].join(", ")}`,
+    );
+
+    // Symmetric: a Spanish query should not bury the English file either.
+    const spanish = await searchLibrary(
+      "¿Qué se sabe del magnetismo del hierro y cómo se ha estudiado?",
+      { config, limit: 5 },
+    );
+    const spanishPaths = new Set(spanish.map((r) => r.path));
+    assert.ok(
+      spanishPaths.size >= 2,
+      `Spanish query should surface both files, got: ${[...spanishPaths].join(", ")}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("search algorithm settings are normalized and persisted in config", () => {
+  const config = normalizeConfig({
+    ...defaultConfig,
+    search: {
+      ...defaultConfig.search,
+      rrfK: "12",
+      semanticWeight: "2.5",
+      keywordWeight: "0.4",
+      metadataWeight: "0.7",
+      sourceWeight: "1.9",
+      contentKeywordBonus: "0.33",
+      metadataKeywordBonus: "0.11",
+      maxPassagesPerSource: "9",
+    },
+  });
+
+  assert.strictEqual(config.search.rrfK, 12);
+  assert.strictEqual(config.search.semanticWeight, 2.5);
+  assert.strictEqual(config.search.keywordWeight, 0.4);
+  assert.strictEqual(config.search.metadataWeight, 0.7);
+  assert.strictEqual(config.search.sourceWeight, 1.9);
+  assert.strictEqual(config.search.contentKeywordBonus, 0.33);
+  assert.strictEqual(config.search.metadataKeywordBonus, 0.11);
+  assert.strictEqual(config.search.maxPassagesPerSource, 9);
+});
+
 test("library context does not expose local paths or bracket citation instructions", () => {
   const context = buildLibraryContext(
     [
       {
         title: "The Outsider",
         author: "Colin Wilson",
-        path: "/Users/orlandoeb/Libros/Colin Wilson/The Outsider (5126)/The Outsider - Colin Wilson.epub",
+        path: "/Users/sample-user/Libros/Colin Wilson/The Outsider (5126)/The Outsider - Colin Wilson.epub",
         heading: "The Attempt to Gain Control",
         text: "Madame Nijinsky consulted a psychiatrist.",
       },
@@ -89,11 +585,13 @@ test("library context does not expose local paths or bracket citation instructio
   );
 
   assert.match(context, /Work: The Outsider by Colin Wilson/);
-  assert.doesNotMatch(context, /\/Users\/orlandoeb/);
+  assert.doesNotMatch(context, /\/Users\/sample-user/);
   assert.doesNotMatch(context, /\[1\]/);
   assert.doesNotMatch(context, /Cite retrieved passages/i);
   assert.match(context, /local library has priority/i);
   assert.match(context, /do not call external tools/i);
+  assert.match(context, /Every factual claim drawn from these passages/i);
+  assert.match(context, /According to Apolodoro's Biblioteca/i);
 });
 
 test("source collection skips Calibre sidecar files", () => {
