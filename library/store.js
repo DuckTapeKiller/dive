@@ -21,6 +21,9 @@ const DEFAULT_METADATA_CAP = 0.45;
 const DEFAULT_SOURCE_HINT_CAP = 0.75;
 const SEMANTIC_BRIDGE_RESULT_LIMIT = 40;
 const SEMANTIC_BRIDGE_TERM_LIMIT = 14;
+const SEMANTIC_DOMINANT_WEIGHT = 2.75;
+const STRICT_FTS_DEFAULT_WEIGHT = 3.0;
+const SOURCE_STRICT_FTS_DEFAULT_WEIGHT = 3.25;
 const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud"];
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
@@ -82,6 +85,8 @@ const SEARCH_STOP_WORDS = new Set([
   "fue",
   "fueron",
   "how",
+  "in",
+  "is",
   "la",
   "las",
   "libro",
@@ -127,6 +132,144 @@ const SEARCH_STOP_WORDS = new Set([
   "who",
   "why",
 ]);
+
+const RETRIEVAL_WEAK_TERMS = new Set([
+  "argue",
+  "argued",
+  "believe",
+  "believed",
+  "claim",
+  "claimed",
+  "creia",
+  "decir",
+  "defendia",
+  "dice",
+  "did",
+  "dijo",
+  "does",
+  "escribe",
+  "escribio",
+  "explain",
+  "explained",
+  "explains",
+  "explica",
+  "explicaba",
+  "explico",
+  "feel",
+  "happen",
+  "happens",
+  "happened",
+  "ocurre",
+  "ocurria",
+  "ocurrio",
+  "kill",
+  "killed",
+  "matar",
+  "mato",
+  "opina",
+  "opinaba",
+  "opinar",
+  "opinion",
+  "pensaba",
+  "piensa",
+  "practicaba",
+  "practiced",
+  "practise",
+  "practised",
+  "say",
+  "said",
+  "says",
+  "think",
+  "thinking",
+  "thought",
+  "view",
+  "views",
+  "write",
+  "writes",
+  "wrote",
+]);
+
+function normalizeEarlySearchTerm(term) {
+  return String(term || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/[^\p{L}\p{N}\s/]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueEarlyTerms(terms, limit = 64) {
+  const seen = new Set();
+  const result = [];
+  for (const term of Array.isArray(terms) ? terms : []) {
+    const normalized = normalizeEarlySearchTerm(term);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+const CROSS_LINGUAL_EQUIVALENT_GROUPS = [
+  ["arab", "arabe", "arabes"],
+  ["apollodorus", "apolodoro"],
+  ["atom", "atomo", "atomos"],
+  ["bestiality", "bestialismo", "zoofilia", "zoophilia"],
+  ["biblioteca", "library"],
+  ["comedy", "comedia", "comedias"],
+  ["conquest", "conquista"],
+  ["daughter", "hija"],
+  ["evolution", "evolucion"],
+  ["father", "padre"],
+  ["genealogy", "genealogia", "linaje"],
+  ["gravity", "gravedad"],
+  ["indies", "indias"],
+  ["labour", "labor", "trabajo"],
+  ["law", "laws", "ley", "leyes"],
+  ["light", "luz"],
+  ["literature", "literatura"],
+  ["metamorphosis", "metamorfosis"],
+  ["meursault", "mersault"],
+  ["mother", "madre"],
+  ["myth", "myths", "mito", "mitos", "mitologia", "mythology"],
+  ["natural", "natural"],
+  ["new", "nueva", "nuevas", "nuevo", "nuevos"],
+  ["novel", "novela"],
+  ["origin", "origen", "origenes", "origins"],
+  ["parentage", "descendencia"],
+  ["poetry", "poesia"],
+  ["opposition", "oposicion"],
+  ["relativity", "relatividad"],
+  ["religious", "religioso", "religiosa", "religion"],
+  ["science", "ciencia"],
+  ["scientific", "cientifico", "cientifica"],
+  ["selection", "seleccion"],
+  ["sphinx", "esfinge"],
+  ["species", "especie", "especies"],
+  ["time", "tiempo"],
+  ["tragedy", "tragedia"],
+  ["typographer", "typographers", "tipografo", "tipografos", "tipografia"],
+  ["zoophilia", "zoofilia", "bestialismo"],
+];
+
+const CROSS_LINGUAL_EQUIVALENTS = new Map();
+for (const group of CROSS_LINGUAL_EQUIVALENT_GROUPS) {
+  const normalizedGroup = Array.from(
+    new Set(group.map((term) => normalizeEarlySearchTerm(term)).filter(Boolean)),
+  );
+  for (const term of normalizedGroup) {
+    CROSS_LINGUAL_EQUIVALENTS.set(
+      term,
+      uniqueEarlyTerms([
+        ...(CROSS_LINGUAL_EQUIVALENTS.get(term) || []),
+        ...normalizedGroup.filter((candidate) => candidate !== term),
+      ]),
+    );
+  }
+}
 
 const QUERY_CONCEPTS = [
   {
@@ -2684,6 +2827,24 @@ function uniqueTerms(terms, limit = 32) {
   return result;
 }
 
+function equivalentTermsFor(term) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized) return [];
+  return uniqueTerms(
+    [normalized, ...(CROSS_LINGUAL_EQUIVALENTS.get(normalized) || [])],
+    16,
+  );
+}
+
+function expandEquivalentTerms(terms, limit = 64) {
+  return uniqueTerms(
+    (Array.isArray(terms) ? terms : []).flatMap((term) =>
+      equivalentTermsFor(term),
+    ),
+    limit,
+  );
+}
+
 function splitSearchTerms(text) {
   return normalizeSearchText(text).match(/[\p{L}\p{N}]{2,}/gu) || [];
 }
@@ -2714,6 +2875,7 @@ function buildQuoteScopeGroups(quotedPhrases) {
       const terms = uniqueTerms(
         phrases
           .flatMap(splitSearchTerms)
+          .flatMap((term) => equivalentTermsFor(term))
           .filter((term) => !SEARCH_STOP_WORDS.has(term)),
         48,
       );
@@ -2722,12 +2884,61 @@ function buildQuoteScopeGroups(quotedPhrases) {
     .filter((group) => group.phrases.length || group.terms.length);
 }
 
+function isStrictFacetTerm(term) {
+  const normalized = normalizeSearchText(term);
+  if (!normalized || normalized.length < 3) return false;
+  if (SEARCH_STOP_WORDS.has(normalized)) return false;
+  if (RETRIEVAL_WEAK_TERMS.has(normalized)) return false;
+  if (isConceptTrigger(normalized)) return false;
+  return true;
+}
+
+function buildFacetGroups(terms, limit = 4) {
+  const groups = [];
+  const seen = new Set();
+  for (const term of uniqueTerms(terms, 32)) {
+    if (!isStrictFacetTerm(term)) continue;
+    const equivalents = expandEquivalentTerms([term], 12).filter(
+      (candidate) => candidate.length >= 3,
+    );
+    if (!equivalents.length) continue;
+    const key = equivalents.slice().sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push(equivalents);
+    if (groups.length >= limit) break;
+  }
+  return groups;
+}
+
+function buildSourceFacetGroups(sourceHints = []) {
+  const groups = [];
+  const seen = new Set();
+  for (const hint of Array.isArray(sourceHints) ? sourceHints : []) {
+    const terms = expandEquivalentTerms(
+      [
+        ...(hint.sourceTerms || hint.terms || []),
+        ...(hint.titleHint ? [] : splitSearchTerms(hint.label || "")),
+        ...splitSearchTerms(hint.author || ""),
+      ],
+      32,
+    ).filter((term) => term.length >= 3 && !SEARCH_STOP_WORDS.has(term));
+    if (!terms.length) continue;
+    const key = terms.slice().sort().join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push(terms.slice(0, 12));
+    if (groups.length >= 3) break;
+  }
+  return groups;
+}
+
 function buildSearchPlan(query, sourceHints = [], options = {}) {
   const supportingQuery = options.supportingQuery || "";
   const allTerms = uniqueTerms(splitSearchTerms(query), 48);
   const supportingTerms = uniqueTerms(
     splitSearchTerms(supportingQuery).filter(
-      (term) => !SEARCH_STOP_WORDS.has(term),
+      (term) => !SEARCH_STOP_WORDS.has(term) && !RETRIEVAL_WEAK_TERMS.has(term),
     ),
     24,
   );
@@ -2740,13 +2951,14 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
     (term) => !isSourceHintTerm(term, sourceTerms),
   );
   const usefulTerms = nonSourceTerms.filter(
-    (term) => !SEARCH_STOP_WORDS.has(term),
+    (term) => !SEARCH_STOP_WORDS.has(term) && !RETRIEVAL_WEAK_TERMS.has(term),
   );
   const conceptInputTerms = uniqueTerms([...allTerms, ...quotedTerms], 96);
   const conceptPlan = getConceptExpansions(conceptInputTerms);
   const quotedPrimaryTerms = quotedTerms.filter(
     (term) =>
       !SEARCH_STOP_WORDS.has(term) &&
+      !RETRIEVAL_WEAK_TERMS.has(term) &&
       !isConceptTrigger(term) &&
       !isSourceHintTerm(term, sourceTerms),
   );
@@ -2779,6 +2991,25 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
   const ftsTerms = effectivePrimaryTerms.length
     ? effectivePrimaryTerms
     : uniqueTerms([...quotedTerms, ...expansionTerms, ...fallbackTerms], 16);
+  const lexicalExpansionTerms = expandEquivalentTerms(
+    [...effectivePrimaryTerms, ...quotedTerms],
+    80,
+  ).filter((term) => !effectivePrimaryTerms.includes(term));
+  const sourceFacetGroups = buildSourceFacetGroups(sourceHints);
+  const topicFacetGroups = buildFacetGroups(
+    uniqueTerms(
+      [
+        ...quotedPrimaryTerms,
+        ...effectivePrimaryTerms,
+        ...supportingTerms,
+      ].filter((term) => !isSourceHintTerm(term, sourceTerms)),
+      24,
+    ),
+    sourceFacetGroups.length ? 4 : 3,
+  );
+  const strictFacetGroups = sourceFacetGroups.length
+    ? [...sourceFacetGroups, ...topicFacetGroups.slice(0, 4)]
+    : topicFacetGroups.slice(0, 3);
   return {
     allTerms,
     quotedPhrases,
@@ -2788,16 +3019,30 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
     concepts: conceptPlan.concepts,
     primaryTerms: effectivePrimaryTerms,
     supportingTerms,
-    expansionTerms,
+    expansionTerms: uniqueTerms([...expansionTerms, ...lexicalExpansionTerms], 96),
+    lexicalExpansionTerms,
     metadataTerms: uniqueTerms(
-      [...effectivePrimaryTerms, ...quotedPrimaryTerms],
+      [
+        ...effectivePrimaryTerms,
+        ...quotedPrimaryTerms,
+        ...lexicalExpansionTerms.slice(0, 24),
+      ],
       24,
     ),
-    ftsTerms: uniqueTerms(ftsTerms, 16),
+    ftsTerms: uniqueTerms([...ftsTerms, ...lexicalExpansionTerms.slice(0, 12)], 24),
     scoringTerms: uniqueTerms(
-      [...effectivePrimaryTerms, ...expansionTerms, ...supportingTerms],
+      [
+        ...effectivePrimaryTerms,
+        ...expansionTerms,
+        ...lexicalExpansionTerms,
+        ...supportingTerms,
+      ],
       80,
     ),
+    sourceFacetGroups,
+    topicFacetGroups,
+    strictFacetGroups,
+    hasTitleSourceHint: sourceHints.some((hint) => hint?.titleHint === true),
   };
 }
 
@@ -2866,9 +3111,37 @@ function normalizeSourceHint(raw) {
   const text = [label, author, filePath, raw.text || ""]
     .filter(Boolean)
     .join(" ");
+  const sourceText =
+    raw.titleHint === true
+      ? [author, filePath, raw.text || ""].filter(Boolean).join(" ")
+      : text;
   const terms = extractSearchTerms(text).filter((term) => term.length > 2);
+  const sourceTerms = extractSearchTerms(sourceText).filter(
+    (term) => term.length > 2,
+  );
   if (!label && !author && !filePath && !terms.length) return null;
-  return { label, author, path: filePath, terms };
+  return {
+    label,
+    author,
+    path: filePath,
+    terms,
+    sourceTerms,
+    titleHint: raw.titleHint === true,
+  };
+}
+
+function cleanSourceHintLabel(raw) {
+  return String(raw || "")
+    .replace(
+      /\b(?:cual|cu[aá]l|que|qu[eé]|what|who|where|when|how|why|did|does|do)\b.*$/iu,
+      "",
+    )
+    .replace(
+      /^(?:el|la|los|las|the|a|an|autor|author|filosofo|filosofa|philosopher|writer|escritor|escritora)\s+/iu,
+      "",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractQuerySourceHints(query) {
@@ -2877,17 +3150,43 @@ function extractQuerySourceHints(query) {
     /\bseg[uú]n\s+([^,.;:?!\n]{3,80})/giu,
     /\baccording\s+to\s+([^,.;:?!\n]{3,80})/giu,
     /\b(?:libro|obra|book|work)\s+["“”']?([^"“”'\n]{3,100})["“”']?/giu,
+    /\bwhat\s+(?:did|does|do)\s+([^,.;:?!\n]{3,80}?)\s+(?:say|think|write|argue|claim|believe|feel|explain|thought|wrote|said|argued|claimed|believed|explained|explains)\s+(?:about|of|regarding)\b/giu,
+    /\bqu[eé]\s+(?:dijo|dice|opinaba|opino|opin[oó]|pensaba|piensa|escribio|escribi[oó]|argumentaba|afirmaba|creia|cre[ií]a|explica|explicaba|explico|explic[oó])\s+([^,.;:?!\n]{3,80}?)\s+(?:sobre|de|acerca\s+de|respecto\s+a)\b/giu,
   ];
   for (const pattern of patterns) {
     let match = null;
     while ((match = pattern.exec(query)) !== null) {
-      const raw = String(match[1] || "")
-        .replace(
-          /\b(?:cual|cu[aá]l|que|qu[eé]|what|who|where|when|how)\b.*$/iu,
-          "",
-        )
-        .trim();
+      const raw = cleanSourceHintLabel(match[1]);
       const hint = normalizeSourceHint({ label: raw });
+      if (hint) hints.push(hint);
+    }
+  }
+  const titleAuthorPatterns = [
+    {
+      pattern:
+        /\b(?:en|in)\s+["“”']?(?:el|la|los|las|the)?\s*([^"“”',.;:?!\n]{3,90}?)["“”']?\s+(?:de|by)\s+([A-ZÁÉÍÓÚÑ][^,.;:?!\n]{2,80})/giu,
+      build: (match) => ({ label: match[1], author: match[2] }),
+    },
+    {
+      pattern:
+        /\b([A-ZÁÉÍÓÚÑ][\p{L}ÁÉÍÓÚáéíóúñÑ]+)(?:'s|’s)\s+([^,.;:?!\n]{3,90})/gu,
+      build: (match) => ({ label: match[2], author: match[1] }),
+    },
+    {
+      pattern:
+        /\bwhat\s+is\s+([A-ZÁÉÍÓÚÑ][\p{L}ÁÉÍÓÚáéíóúñÑ]+)\s+([^,.;:?!\n]{3,90}?)\s+about\b/giu,
+      build: (match) => ({ label: match[2], author: match[1] }),
+    },
+  ];
+  for (const { pattern, build } of titleAuthorPatterns) {
+    let match = null;
+    while ((match = pattern.exec(query)) !== null) {
+      const raw = build(match);
+      const hint = normalizeSourceHint({
+        label: cleanSourceHintLabel(raw.label),
+        author: cleanSourceHintLabel(raw.author),
+        titleHint: true,
+      });
       if (hint) hints.push(hint);
     }
   }
@@ -2912,10 +3211,169 @@ function mergeSourceHints(query, providedHints = []) {
   return deduped.slice(0, 5);
 }
 
+function sourceHintResolvedFileIds(sourceHints = []) {
+  return uniqueIntegerList(
+    (Array.isArray(sourceHints) ? sourceHints : []).flatMap(
+      (hint) => hint?.resolvedFileIds || [],
+    ),
+    80,
+  );
+}
+
+function uniqueIntegerList(values, limit = 100) {
+  const seen = new Set();
+  const result = [];
+  for (const value of Array.isArray(values) ? values : []) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0 || seen.has(parsed)) continue;
+    seen.add(parsed);
+    result.push(parsed);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
+function intersectOrUseFileIds(baseIds, extraIds) {
+  const base = uniqueIntegerList(baseIds, 1000);
+  const extra = uniqueIntegerList(extraIds, 1000);
+  if (base.length && extra.length) {
+    const extraSet = new Set(extra);
+    return base.filter((id) => extraSet.has(id));
+  }
+  return base.length ? base : extra;
+}
+
+function levenshteinDistance(a, b) {
+  const left = String(a || "");
+  const right = String(b || "");
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+  const prev = Array.from({ length: right.length + 1 }, (_v, i) => i);
+  const curr = Array(right.length + 1).fill(0);
+  for (let i = 1; i <= left.length; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1,
+        prev[j] + 1,
+        prev[j - 1] + cost,
+      );
+    }
+    for (let j = 0; j <= right.length; j += 1) prev[j] = curr[j];
+  }
+  return prev[right.length];
+}
+
+function normalizedSimilarity(a, b) {
+  const left = normalizeSearchText(a);
+  const right = normalizeSearchText(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (right.includes(left) || left.includes(right)) {
+    return Math.min(left.length, right.length) / Math.max(left.length, right.length);
+  }
+  const maxLength = Math.max(left.length, right.length);
+  if (!maxLength) return 0;
+  return 1 - levenshteinDistance(left, right) / maxLength;
+}
+
+function scoreSourceFileMatch(file, hint) {
+  const label = normalizeSearchText(
+    [hint.label, hint.author].filter(Boolean).join(" "),
+  );
+  const baseHintTerms = uniqueTerms(
+    [...(hint.terms || []), ...splitSearchTerms(label)].filter(
+      (term) => term.length > 2,
+    ),
+    16,
+  );
+  const termGroups = baseHintTerms.map((term) => equivalentTermsFor(term));
+  const haystack = normalizeSearchText(
+    [file.title, file.author, file.path].filter(Boolean).join(" "),
+  );
+  const titleAuthor = normalizeSearchText(
+    [file.title, file.author].filter(Boolean).join(" "),
+  );
+  let score = 0;
+  if (hint.path && hint.path === file.path) score += 3;
+  const labelInTitleAuthor = Boolean(label && titleAuthor.includes(label));
+  const labelInHaystack = Boolean(label && haystack.includes(label));
+  if (labelInTitleAuthor) score += 2.5;
+  if (labelInHaystack) score += 1.5;
+  const matchedGroups = termGroups.filter((group) =>
+    group.some((term) => hasNormalizedSearchTerm(haystack, term)),
+  );
+  if (termGroups.length) {
+    score += (matchedGroups.length / termGroups.length) * 1.6;
+    if (matchedGroups.length >= Math.min(2, termGroups.length)) score += 0.5;
+  }
+  let bestSimilarity = 0;
+  if (label) {
+    const pieces = [file.title, file.author, path.basename(file.path || "")]
+      .filter(Boolean)
+      .map(normalizeSearchText);
+    bestSimilarity = Math.max(
+      ...pieces.map((piece) => normalizedSimilarity(label, piece)),
+      0,
+    );
+    score += bestSimilarity * 1.25;
+  }
+  if (
+    termGroups.length >= 2 &&
+    matchedGroups.length < 2 &&
+    !labelInTitleAuthor &&
+    !labelInHaystack &&
+    bestSimilarity < 0.72
+  ) {
+    return 0;
+  }
+  return score;
+}
+
+async function resolveSourceHints(config, sourceHints = []) {
+  if (!sourceHints.length) return [];
+  let rows = [];
+  try {
+    rows = await runSqliteJson(
+      config.databasePath,
+      `SELECT id, title, author, path
+FROM library_files
+ORDER BY lower(path);`,
+    );
+  } catch (_error) {
+    return sourceHints;
+  }
+  return sourceHints.map((hint) => {
+    const scored = rows
+      .map((row) => ({
+        id: Number(row.id),
+        title: row.title || "",
+        author: row.author || "",
+        path: row.path || "",
+        score: scoreSourceFileMatch(row, hint),
+      }))
+      .filter((item) => item.id > 0 && item.score >= 0.9)
+      .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+      .slice(0, 40);
+    const resolvedTerms = expandEquivalentTerms(
+      [...(hint.terms || []), ...splitSearchTerms(hint.label || hint.author || "")],
+      48,
+    );
+    return {
+      ...hint,
+      terms: uniqueTerms([...(hint.terms || []), ...resolvedTerms], 64),
+      resolvedFileIds: scored.map((item) => item.id),
+      resolvedPaths: scored.map((item) => item.path),
+    };
+  });
+}
+
 function getSourceHintTermSet(sourceHints = []) {
   return new Set(
     (Array.isArray(sourceHints) ? sourceHints : [])
-      .flatMap((hint) => hint?.terms || [])
+      .flatMap((hint) => hint?.sourceTerms || hint?.terms || [])
       .filter((term) => term.length > 2),
   );
 }
@@ -2941,9 +3399,31 @@ function buildFtsQuery(query, sourceHints = [], plan = null) {
   return terms.map((term) => `${term.replace(/"/g, "")}*`).join(" OR ");
 }
 
+function ftsTermQuery(term) {
+  const normalized = normalizeSearchText(term).replace(/[^\p{L}\p{N}]/gu, "");
+  if (!normalized || normalized.length < 2) return "";
+  return `${normalized.replace(/"/g, "")}*`;
+}
+
+function ftsFacetGroupQuery(group) {
+  const terms = uniqueTerms(group, 16).map(ftsTermQuery).filter(Boolean);
+  if (!terms.length) return "";
+  if (terms.length === 1) return terms[0];
+  return `(${terms.join(" OR ")})`;
+}
+
+function buildStrictFtsQuery(groups, minGroups = 2) {
+  const parts = (Array.isArray(groups) ? groups : [])
+    .map(ftsFacetGroupQuery)
+    .filter(Boolean);
+  if (parts.length < minGroups) return "";
+  return parts.join(" AND ");
+}
+
 function normalizeResult(row, kind) {
   return {
     chunkId: Number(row.chunkId),
+    fileId: Number(row.fileId || row.file_id || 0),
     title: row.title || path.basename(row.path || ""),
     author: row.author || "",
     path: row.path || "",
@@ -3016,10 +3496,22 @@ async function searchFts(
   if (config.search?.keywordEnabled !== true) return [];
   const ftsQuery = buildFtsQuery(query, sourceHints, plan);
   if (!ftsQuery) return [];
+  return searchFtsQuery(config, ftsQuery, limit, "keyword", fileIds);
+}
+
+async function searchFtsQuery(
+  config,
+  ftsQuery,
+  limit,
+  kind = "keyword",
+  fileIds = [],
+) {
+  if (config.search?.keywordEnabled !== true || !ftsQuery) return [];
   const rows = await runSqliteJson(
     config.databasePath,
     `SELECT
   c.id AS chunkId,
+  f.id AS fileId,
   f.title AS title,
   f.author AS author,
   f.path AS path,
@@ -3042,11 +3534,12 @@ WHERE library_chunks_fts MATCH ${sqlLiteral(ftsQuery)}${fileIdFilterSql(fileIds,
 ORDER BY score
 LIMIT ${sqlInteger(limit)};`,
   );
-  return rows.map((row) => normalizeResult(row, "keyword"));
+  return rows.map((row) => normalizeResult(row, kind));
 }
 
 function rowSelectSql() {
   return `c.id AS chunkId,
+  f.id AS fileId,
   f.title AS title,
   f.author AS author,
   f.path AS path,
@@ -3092,10 +3585,15 @@ LIMIT ${sqlInteger(limit)};`,
 }
 
 function sourceHintFileConditions(sourceHints) {
+  const exactIds = sourceHintResolvedFileIds(sourceHints).map(
+    (id) => `f.id = ${sqlInteger(id)}`,
+  );
   const exactPaths = sourceHints
-    .map((hint) => hint.path)
+    .flatMap((hint) => [hint.path, ...(hint.resolvedPaths || [])])
     .filter(Boolean)
     .map((filePath) => `f.path = ${sqlLiteral(filePath)}`);
+  const exactConditions = [...exactIds, ...exactPaths];
+  if (exactConditions.length) return exactConditions;
   const fuzzyTerms = Array.from(
     new Set(sourceHints.flatMap((hint) => hint.terms || [])),
   )
@@ -3105,7 +3603,7 @@ function sourceHintFileConditions(sourceHints) {
     const like = sqlLiteral(`%${term}%`);
     return `(lower(f.title) LIKE ${like} OR lower(f.author) LIKE ${like} OR lower(f.path) LIKE ${like})`;
   });
-  return [...exactPaths, ...fuzzy];
+  return fuzzy;
 }
 
 async function searchSourceDeepScan(
@@ -3172,6 +3670,43 @@ LIMIT 5000;`,
     .map((item) => ({ ...item.result, score: item.score }));
 }
 
+async function searchSourceHeadings(
+  config,
+  limit,
+  sourceHints = [],
+  plan = null,
+  fileIds = [],
+) {
+  const sourceIds = intersectOrUseFileIds(
+    fileIds,
+    sourceHintResolvedFileIds(sourceHints),
+  );
+  if (!sourceIds.length) return [];
+  const queryPlan = plan || buildSearchPlan("", sourceHints);
+  const terms = uniqueTerms(
+    (queryPlan.topicFacetGroups || []).flatMap((group) => group),
+    32,
+  ).filter((term) => term.length > 2);
+  if (!terms.length) return [];
+  const conditions = terms.map((term) => {
+    const like = sqlLiteral(`%${term}%`);
+    return `lower(c.heading) LIKE ${like}`;
+  });
+  const rows = await runSqliteJson(
+    config.databasePath,
+    `SELECT
+  ${rowSelectSql()},
+  0 AS score
+FROM library_chunks c
+JOIN library_files f ON f.id = c.file_id
+WHERE c.file_id IN (${sourceIds.map((id) => sqlInteger(id)).join(", ")})
+  AND (${conditions.join(" OR ")})
+ORDER BY f.path, c.chunk_index
+LIMIT ${sqlInteger(limit)};`,
+  );
+  return rows.map((row) => normalizeResult(row, "source-heading"));
+}
+
 async function searchVector(config, query, limit, fileIds = []) {
   if (!isVectorSearchConfigured(config)) return [];
   const queryEmbedding = (await embedTexts(config, [query], "query"))[0];
@@ -3187,6 +3722,7 @@ async function searchVector(config, query, limit, fileIds = []) {
     config.databasePath,
     `SELECT
   c.id AS chunkId,
+  f.id AS fileId,
   f.title AS title,
   f.author AS author,
   f.path AS path,
@@ -3222,8 +3758,18 @@ function computeSourceHintBoost(result, sourceHints = [], strong = false) {
   );
   let boost = 0;
   for (const hint of sourceHints) {
+    if (
+      result.fileId &&
+      Array.isArray(hint.resolvedFileIds) &&
+      hint.resolvedFileIds.includes(result.fileId)
+    ) {
+      boost += strong ? 0.55 : 0.35;
+    }
     if (hint.path && hint.path === result.path) {
       boost += strong ? 0.55 : 0.35;
+    }
+    if (Array.isArray(hint.resolvedPaths) && hint.resolvedPaths.includes(result.path)) {
+      boost += strong ? 0.5 : 0.3;
     }
     const exact = normalizeSearchText(
       [hint.label, hint.author].filter(Boolean).join(" "),
@@ -3311,22 +3857,24 @@ function computePlannedContentBonus(text, plan = {}, config = {}, queryLang = ""
 
 function resultHasPrimaryTerm(result, plan = {}) {
   if (!plan.primaryTerms?.length) return true;
+  const primaryTerms = expandEquivalentTerms(plan.primaryTerms, 64);
   const haystack = normalizeSearchText(
     [result?.title, result?.author, result?.heading, result?.text]
       .filter(Boolean)
       .join(" "),
   );
-  return plan.primaryTerms.some(
+  return primaryTerms.some(
     (term) => term && hasNormalizedSearchTerm(haystack, term),
   );
 }
 
 function resultHasStrongPrimaryContent(result, plan = {}) {
   if (!plan.primaryTerms?.length) return false;
+  const primaryTerms = expandEquivalentTerms(plan.primaryTerms, 64);
   const haystack = normalizeSearchText(
     [result?.heading, result?.text].filter(Boolean).join(" "),
   );
-  return plan.primaryTerms.some(
+  return primaryTerms.some(
     (term) => term && hasNormalizedSearchTerm(haystack, term),
   );
 }
@@ -3527,6 +4075,48 @@ function computeMissingAnswerEvidencePenalty(result, query) {
   return Math.min(penalty, 0.55);
 }
 
+function resultFacetHaystack(result) {
+  return normalizeSearchText(
+    [result?.title, result?.author, result?.path, result?.heading, result?.text]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function resultMatchesFacetGroup(haystack, group) {
+  return (Array.isArray(group) ? group : []).some((term) =>
+    hasNormalizedSearchTerm(haystack, term),
+  );
+}
+
+function countMatchedFacetGroups(result, groups = []) {
+  const haystack = resultFacetHaystack(result);
+  if (!haystack) return 0;
+  return (Array.isArray(groups) ? groups : []).filter((group) =>
+    resultMatchesFacetGroup(haystack, group),
+  ).length;
+}
+
+function computeHeadingFacetBonus(result, plan = {}) {
+  if (Array.isArray(plan.concepts) && plan.concepts.length) return 0;
+  const groups = Array.isArray(plan.topicFacetGroups)
+    ? plan.topicFacetGroups
+    : [];
+  if (!groups.length) return 0;
+  const headingHaystack = normalizeSearchText(
+    plan.hasTitleSourceHint
+      ? result?.heading || ""
+      : [result?.title, result?.heading].filter(Boolean).join(" "),
+  );
+  if (!headingHaystack) return 0;
+  const matched = groups.filter((group) =>
+    resultMatchesFacetGroup(headingHaystack, group),
+  ).length;
+  if (!matched) return 0;
+  const coverage = matched / groups.length;
+  return Math.min(0.9, coverage * 0.55 + (coverage === 1 ? 0.25 : 0));
+}
+
 function fuseRankedResults(groups, options = {}) {
   const k = Math.max(1, Number(options.rrfK || DEFAULT_RRF_K));
   const candidates = new Map();
@@ -3615,6 +4205,43 @@ function applyHybridBonuses(
       candidate.result,
       answerQuery,
     );
+    const facetGroupCount = Array.isArray(queryPlan.strictFacetGroups)
+      ? queryPlan.strictFacetGroups.length
+      : 0;
+    const semanticDominantMode =
+      Number(config.search?.semanticWeight || 0) >= SEMANTIC_DOMINANT_WEIGHT;
+    const matchedFacetGroups = countMatchedFacetGroups(
+      candidate.result,
+      queryPlan.strictFacetGroups,
+    );
+    const facetCoverageBonus =
+      facetGroupCount > 0 && !semanticDominantMode
+        ? (matchedFacetGroups / facetGroupCount) * 0.65
+        : 0;
+    const facetCoveragePenalty =
+      !semanticDominantMode &&
+      facetGroupCount >= 2 &&
+      matchedFacetGroups < Math.min(2, facetGroupCount)
+        ? matchedFacetGroups === 0
+          ? 0.75
+          : 0.38
+        : 0;
+    const headingFacetBonus = semanticDominantMode
+      ? 0
+      : computeHeadingFacetBonus(candidate.result, queryPlan);
+    const strictChannelBonus = semanticDominantMode
+      ? 0
+      : candidate.channels?.has?.("source-heading")
+        ? 1.8
+        : candidate.channels?.has?.("source-strict")
+        ? 1.65
+        : candidate.channels?.has?.("strict")
+          ? 1.35
+          : 0;
+    const semanticDominantBonus =
+      candidate.channels?.has?.("semantic") && semanticDominantMode
+        ? 1.6
+        : 0;
     const semanticQuoteScopeBonus =
       queryPlan.hasQuotedScope && candidateHasSemanticRetrieval(candidate)
         ? 0.25
@@ -3636,8 +4263,13 @@ function applyHybridBonuses(
         conceptPenalty -
         passagePenalty +
         answerEvidenceBonus +
+        strictChannelBonus +
+        semanticDominantBonus +
+        facetCoverageBonus +
+        headingFacetBonus +
         semanticQuoteScopeBonus -
         missingAnswerEvidencePenalty -
+        facetCoveragePenalty -
         metadataOnlyPenalty,
       metadataBonus,
       contentBonus,
@@ -3647,6 +4279,11 @@ function applyHybridBonuses(
       passagePenalty,
       answerEvidenceBonus,
       missingAnswerEvidencePenalty,
+      strictChannelBonus,
+      semanticDominantBonus,
+      facetCoverageBonus,
+      facetCoveragePenalty,
+      headingFacetBonus,
       semanticQuoteScopeBonus,
       metadataOnlyPenalty,
     };
@@ -3708,7 +4345,24 @@ function diversifyResults(
     }
   };
   const diversityTarget = Math.min(limit, Math.max(1, Math.ceil(limit * 0.6)));
-  if (!sourceHints.length && plan?.primaryTerms?.length) {
+  if (
+    plan?.strictFacetGroups?.length &&
+    Number(config.search?.semanticWeight || 0) < SEMANTIC_DOMINANT_WEIGHT
+  ) {
+    takeUpTo(
+      maxPerSource,
+      Math.min(limit, Math.max(3, Math.ceil(limit * 0.5))),
+      (item) =>
+        item.channels?.has?.("source-heading") ||
+        item.channels?.has?.("source-strict") ||
+        item.channels?.has?.("strict"),
+    );
+  }
+  if (
+    !sourceHints.length &&
+    plan?.primaryTerms?.length &&
+    Number(config.search?.semanticWeight || 0) < SEMANTIC_DOMINANT_WEIGHT
+  ) {
     takeUpTo(
       maxPerSource,
       Math.min(limit, Math.max(3, Math.ceil(limit * 0.45))),
@@ -3762,7 +4416,10 @@ async function searchLibrary(query, options = {}) {
   const lexicalQuery = split.hasQuotedScope ? split.retrievalQuery : query;
   const semanticQuery = split.hasQuotedScope ? query : lexicalQuery;
   const effectiveQuery = lexicalQuery || query;
-  const sourceHints = mergeSourceHints(effectiveQuery, options.sourceHints);
+  const sourceHints = await resolveSourceHints(
+    config,
+    mergeSourceHints(query, options.sourceHints),
+  );
   let plan = buildSearchPlan(effectiveQuery, sourceHints, {
     supportingQuery: split.userInstruction,
     quotedPhrases: split.quotedPhrases,
@@ -3770,6 +4427,67 @@ async function searchLibrary(query, options = {}) {
   });
   const groups = [];
   let semanticResults = [];
+
+  const strictFtsQuery = buildStrictFtsQuery(plan.strictFacetGroups, 2);
+  if (strictFtsQuery) {
+    const strictResults = await searchFtsQuery(
+      config,
+      strictFtsQuery,
+      candidateLimit,
+      "strict",
+      fileIds,
+    );
+    if (strictResults.length) {
+      groups.push({
+        name: "strict",
+        weight: config.search?.strictWeight ?? STRICT_FTS_DEFAULT_WEIGHT,
+        results: strictResults,
+      });
+    }
+  }
+
+  const resolvedSourceFileIds = sourceHintResolvedFileIds(sourceHints);
+  const sourceScopedFileIds = intersectOrUseFileIds(
+    fileIds,
+    resolvedSourceFileIds,
+  );
+  const sourceStrictQuery =
+    sourceScopedFileIds.length && plan.topicFacetGroups.length
+      ? buildStrictFtsQuery(plan.topicFacetGroups, 1)
+      : "";
+  if (sourceStrictQuery) {
+    const sourceStrictResults = await searchFtsQuery(
+      config,
+      sourceStrictQuery,
+      candidateLimit,
+      "source-strict",
+      sourceScopedFileIds,
+    );
+    if (sourceStrictResults.length) {
+      groups.push({
+        name: "source-strict",
+        weight:
+          config.search?.sourceStrictWeight ?? SOURCE_STRICT_FTS_DEFAULT_WEIGHT,
+        results: sourceStrictResults,
+      });
+    }
+  }
+  const sourceHeadingResults = await searchSourceHeadings(
+    config,
+    Math.min(candidateLimit, 80),
+    sourceHints,
+    plan,
+    fileIds,
+  );
+  if (sourceHeadingResults.length) {
+    groups.push({
+      name: "source-heading",
+      weight:
+        config.search?.sourceHeadingWeight ??
+        SOURCE_STRICT_FTS_DEFAULT_WEIGHT + 0.4,
+      results: sourceHeadingResults,
+    });
+  }
 
   if (Array.isArray(options.semanticResults)) {
     semanticResults = options.semanticResults;
@@ -3816,7 +4534,7 @@ async function searchLibrary(query, options = {}) {
     if (bridgeResults.length) {
       groups.push({
         name: "semantic-bridge",
-        weight: config.search?.semanticBridgeWeight ?? 1.35,
+        weight: config.search?.semanticBridgeWeight ?? 0.45,
         results: bridgeResults,
       });
     }

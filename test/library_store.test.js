@@ -563,6 +563,121 @@ test("semantic bridge promotes answer-bearing multilingual passages", async (t) 
   }
 });
 
+test("strict bilingual facets retrieve entity-topic evidence", async (t) => {
+  const root = fs.mkdtempSync(
+    path.join(os.tmpdir(), "ollama-pi-chat-strict-facets-"),
+  );
+  try {
+    const sourceDir = path.join(root, "sources");
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(
+      path.join(sourceDir, "Gill Sans - ensayo.txt"),
+      "Eric Gill fue un tipografo britanico asociado a Gill Sans. Este pasaje menciona acusaciones de bestialismo y zoofilia en relacion con su biografia. ".repeat(
+        8,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Historia de la zoofilia.txt"),
+      "La zoofilia aparece aqui como tema general de historia natural y clasificacion juridica. ".repeat(
+        10,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "El extranjero - Albert Camus.txt"),
+      "En la novela, Meursault mato al arabe en la playa bajo el sol. El pasaje se centra en Meursault y el arabe. ".repeat(
+        8,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Historia arabe.txt"),
+      "Este libro trata de historia arabe, cultura arabe y politica arabe en terminos generales. ".repeat(
+        12,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Biblioteca - Apolodoro.txt"),
+      "Durante el reinado de Creonte, Hera envio a la Esfinge, hija de Equidna y Tifon. Apolodoro conserva esta version en la Biblioteca. ".repeat(
+        8,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "La Esfinge egipcia.txt"),
+      "La esfinge egipcia aparece como monumento y simbolo, sin la version de Apolodoro. ".repeat(
+        12,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Francis Bacon - Wisdom of the Ancients.txt"),
+      "Francis Bacon interpreta la Sphinx como una figura de la ciencia y del enigma. In this chapter, Bacon treats the Sphinx as a mythic image of knowledge. ".repeat(
+        8,
+      ),
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "La esfinge en Poe.txt"),
+      "Este texto menciona la esfinge en una narracion moderna, pero no discute a Francis Bacon. ".repeat(
+        12,
+      ),
+    );
+    const config = normalizeConfig({
+      ...defaultConfig,
+      databasePath: path.join(root, "library.sqlite"),
+      sources: [
+        { name: "Books", type: "book", path: sourceDir, extensions: [".txt"] },
+      ],
+      chunking: { targetChars: 700, overlapChars: 0, minChars: 80, maxChars: 1000 },
+      search: {
+        ...defaultConfig.search,
+        keywordEnabled: true,
+        maxPassagesPerSource: 5,
+      },
+      embedding: { ...defaultConfig.embedding, enabled: false },
+    });
+
+    try {
+      await indexLibrary({ config, compact: false });
+    } catch (error) {
+      if (/sqlite3 was not found|contentless_delete/i.test(error.message)) {
+        t.skip(error.message);
+        return;
+      }
+      throw error;
+    }
+
+    const gill = await searchLibrary("typographer who practised zoophilia", {
+      config,
+      limit: 3,
+    });
+    assert.match(gill[0].title, /Gill Sans/);
+
+    const meursault = await searchLibrary("Why did Mersault kill an arab?", {
+      config,
+      limit: 3,
+    });
+    assert.match(meursault[0].title, /extranjero/i);
+
+    const apollodorus = await searchLibrary(
+      "origin of the Sphinx according to Apollodorus",
+      { config, limit: 3 },
+    );
+    assert.match(apollodorus[0].title, /Biblioteca/);
+    assert.match(apollodorus[0].text, /Esfinge/);
+
+    const baconEnglish = await searchLibrary(
+      "What did Francis Bacon think about the Sphinx",
+      { config, limit: 3 },
+    );
+    assert.match(baconEnglish[0].title, /Francis Bacon/);
+
+    const baconSpanish = await searchLibrary(
+      "Qué opinaba Francis Bacon sobre la esfinge",
+      { config, limit: 3 },
+    );
+    assert.match(baconSpanish[0].title, /Francis Bacon/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("guillemets are treated as quote scope", () => {
   const scoped = splitQueryForRetrieval(
     "Que significa «the red illness» segun «María Zambrano»",

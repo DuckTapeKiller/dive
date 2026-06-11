@@ -8147,23 +8147,67 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       // MESSAGES AND RENDERING
       function normalizeLibrarySourceResults(results) {
         const normalized = [];
-        const seen = new Set();
+        const bySource = new Map();
         for (const result of Array.isArray(results) ? results : []) {
           if (!result || typeof result !== "object") continue;
           const pathValue = String(result.path || "").trim();
           const titleValue = String(result.title || "").trim();
           const authorValue = String(result.author || "").trim();
           const key = pathValue || `${titleValue}|${authorValue}`;
-          if (!key || seen.has(key)) continue;
-          seen.add(key);
-          normalized.push({
-            title: titleValue || basenameFromPath(pathValue) || "Untitled",
-            author: authorValue,
-            path: pathValue,
-            heading: String(result.heading || "").trim(),
+          if (!key) continue;
+          if (!bySource.has(key)) {
+            bySource.set(key, {
+              title: titleValue || basenameFromPath(pathValue) || "Untitled",
+              author: authorValue,
+              path: pathValue,
+              heading: String(result.heading || "").trim(),
+              passages: [],
+              passageKeys: new Set(),
+            });
+          }
+          const source = bySource.get(key);
+          const heading = String(result.heading || "").trim();
+          const text = String(result.text || "").trim();
+          const chunkId =
+            result.chunkId === null || result.chunkId === undefined
+              ? ""
+              : String(result.chunkId);
+          if (heading && !source.heading) source.heading = heading;
+          const passageItems = [
+            ...(Array.isArray(result.passages) ? result.passages : []),
+            { chunkId, heading, text },
+          ];
+          passageItems.forEach((passage) => {
+            const passageHeading = String(passage?.heading || "").trim();
+            const passageText = String(passage?.text || "").trim();
+            const passageChunkId =
+              passage?.chunkId === null || passage?.chunkId === undefined
+                ? ""
+                : String(passage.chunkId);
+            if (!passageHeading && !passageText) return;
+            const passageKey = `${passageChunkId}|${passageHeading}|${passageText}`;
+            if (!source.passageKeys.has(passageKey)) {
+              source.passageKeys.add(passageKey);
+              source.passages.push({
+                chunkId: passageChunkId,
+                heading: passageHeading,
+                text: passageText,
+              });
+            }
           });
         }
+        for (const source of bySource.values()) {
+          delete source.passageKeys;
+          normalized.push(source);
+        }
         return normalized;
+      }
+
+      function mergeLibraryResultsWithPassages(results, passages) {
+        return normalizeLibrarySourceResults([
+          ...(Array.isArray(results) ? results : []),
+          ...(Array.isArray(passages) ? passages : []),
+        ]);
       }
 
       function readLibrarySourcesFromMessage(div) {
@@ -8179,9 +8223,38 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function getMessageLibrarySources(message) {
         if (!message || typeof message !== "object") return [];
-        return normalizeLibrarySourceResults(
+        return mergeLibraryResultsWithPassages(
           message.librarySources || message.libraryResults || message.sources,
+          message.passages,
         );
+      }
+
+      function formatSourcePassagesForClipboard(source) {
+        const passages = Array.isArray(source?.passages)
+          ? source.passages
+          : [];
+        const lines = [
+          "BOOK PATH:",
+          source?.path || "(path unavailable)",
+          "",
+          "PASSAGES:",
+        ];
+        if (!passages.length) {
+          lines.push("(No passage text was stored for this source.)");
+          return lines.join("\n");
+        }
+        passages.forEach((passage, index) => {
+          lines.push("");
+          lines.push(`PASSAGE ${index + 1}`);
+          if (passage.heading) {
+            lines.push(`Heading: ${passage.heading}`);
+          }
+          if (passage.text) {
+            lines.push("");
+            lines.push(String(passage.text).trim());
+          }
+        });
+        return lines.join("\n");
       }
 
       function buildAssistantHistoryMessage(
@@ -8294,12 +8367,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           button.className = "source-pill library-source-pill";
           const author = source.author ? ` - ${source.author}` : "";
           button.textContent = `${index + 1}. ${source.title}${author}`;
-          button.title = source.path || source.heading || source.title;
-          button.addEventListener("click", () => {
-            if (!source.path || !navigator.clipboard) return;
-            navigator.clipboard.writeText(source.path);
+          button.title = "Copy source path and retrieved passages";
+          button.addEventListener("click", async () => {
+            if (!navigator.clipboard?.writeText) return;
+            await navigator.clipboard.writeText(
+              formatSourcePassagesForClipboard(source),
+            );
             const prior = button.textContent;
-            button.textContent = "COPIED PATH";
+            button.textContent = "COPIED PASSAGES";
             setTimeout(() => {
               button.textContent = prior;
             }, 1200);
@@ -9694,7 +9769,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function captureLibrarySources(evt, state, assistantDiv) {
         if (evt?.type !== "library_results" || !state) return;
-        state.results = Array.isArray(evt.results) ? evt.results : [];
+        state.results = mergeLibraryResultsWithPassages(
+          evt.results,
+          evt.passages,
+        );
         state.passages = Array.isArray(evt.passages) ? evt.passages : [];
         if (assistantDiv?.isConnected) {
           renderAssistantMessage(
