@@ -19,6 +19,8 @@ const DEFAULT_HYBRID_CANDIDATE_LIMIT = 80;
 const DEFAULT_RRF_K = 60;
 const DEFAULT_METADATA_CAP = 0.45;
 const DEFAULT_SOURCE_HINT_CAP = 0.75;
+const SEMANTIC_BRIDGE_RESULT_LIMIT = 40;
+const SEMANTIC_BRIDGE_TERM_LIMIT = 14;
 const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud"];
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
@@ -225,39 +227,6 @@ const QUERY_CONCEPTS = [
       "versions",
       "tradition",
       "traditions",
-    ],
-  },
-];
-
-const QUERY_ALIAS_SETS = [
-  {
-    triggers: [
-      "laws of the indies",
-      "new laws",
-      "new laws of the indies",
-    ],
-    aliases: [
-      "leyes de indias",
-      "leyes nuevas",
-      "leyes nuevas de indias",
-      "leyes nuevas de las indias",
-      "carlos v",
-      "1542",
-    ],
-  },
-  {
-    triggers: [
-      "leyes de indias",
-      "leyes nuevas",
-      "leyes nuevas de indias",
-      "leyes nuevas de las indias",
-    ],
-    aliases: [
-      "laws of the indies",
-      "new laws",
-      "new laws of the indies",
-      "charles v",
-      "1542",
     ],
   },
 ];
@@ -2574,22 +2543,6 @@ function normalizeRetrievalQuoteMarks(text) {
     .replace(/[\u2018\u2019\u201a\u201b]/g, "'");
 }
 
-function getAliasPhrasesForText(text) {
-  const normalized = normalizeSearchText(text);
-  if (!normalized) return [];
-  const aliases = [];
-  for (const aliasSet of QUERY_ALIAS_SETS) {
-    if (
-      aliasSet.triggers.some((trigger) =>
-        hasNormalizedSearchTerm(normalized, trigger),
-      )
-    ) {
-      aliases.push(...aliasSet.aliases);
-    }
-  }
-  return uniqueTerms(aliases, 32);
-}
-
 // Lightweight language detector. Returns "es", "en", or "" (unknown).
 // Two cheap, fast signals:
 //   1. Spanish-only diacritics / punctuation → "es"
@@ -2757,8 +2710,7 @@ function getConceptExpansions(terms) {
 function buildQuoteScopeGroups(quotedPhrases) {
   return (Array.isArray(quotedPhrases) ? quotedPhrases : [])
     .map((phrase) => {
-      const aliases = getAliasPhrasesForText(phrase);
-      const phrases = uniqueTerms([phrase, ...aliases], 24);
+      const phrases = uniqueTerms([phrase], 24);
       const terms = uniqueTerms(
         phrases
           .flatMap(splitSearchTerms)
@@ -2772,7 +2724,6 @@ function buildQuoteScopeGroups(quotedPhrases) {
 
 function buildSearchPlan(query, sourceHints = [], options = {}) {
   const supportingQuery = options.supportingQuery || "";
-  const fullQuery = options.fullQuery || query;
   const allTerms = uniqueTerms(splitSearchTerms(query), 48);
   const supportingTerms = uniqueTerms(
     splitSearchTerms(supportingQuery).filter(
@@ -2783,17 +2734,7 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
   const quotedPhrases = Array.isArray(options.quotedPhrases)
     ? uniqueTerms(options.quotedPhrases, 24)
     : extractQuotedTerms(query);
-  const aliasPhrases = uniqueTerms(
-    [
-      ...getAliasPhrasesForText(fullQuery),
-      ...quotedPhrases.flatMap(getAliasPhrasesForText),
-    ],
-    48,
-  );
-  const quotedTerms = uniqueTerms(
-    [...quotedPhrases, ...aliasPhrases].flatMap(splitSearchTerms),
-    48,
-  );
+  const quotedTerms = uniqueTerms(quotedPhrases.flatMap(splitSearchTerms), 48);
   const sourceTerms = getSourceHintTermSet(sourceHints);
   const nonSourceTerms = allTerms.filter(
     (term) => !isSourceHintTerm(term, sourceTerms),
@@ -2801,11 +2742,7 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
   const usefulTerms = nonSourceTerms.filter(
     (term) => !SEARCH_STOP_WORDS.has(term),
   );
-  const aliasTerms = uniqueTerms(aliasPhrases.flatMap(splitSearchTerms), 48);
-  const conceptInputTerms = uniqueTerms(
-    [...allTerms, ...quotedTerms, ...aliasTerms],
-    96,
-  );
+  const conceptInputTerms = uniqueTerms([...allTerms, ...quotedTerms], 96);
   const conceptPlan = getConceptExpansions(conceptInputTerms);
   const quotedPrimaryTerms = quotedTerms.filter(
     (term) =>
@@ -2816,12 +2753,6 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
   const primaryTerms = uniqueTerms(
     [
       ...quotedPrimaryTerms,
-      ...aliasTerms.filter(
-        (term) =>
-          !SEARCH_STOP_WORDS.has(term) &&
-          !isConceptTrigger(term) &&
-          !isSourceHintTerm(term, sourceTerms),
-      ),
       ...usefulTerms.filter((term) => !isConceptTrigger(term)),
     ],
     24,
@@ -2838,10 +2769,7 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
     ? primaryTerms
     : fallbackTerms;
   const expansionTerms = uniqueTerms(
-    [
-      ...aliasTerms,
-      ...conceptPlan.expansions,
-    ].filter(
+    conceptPlan.expansions.filter(
       (term) =>
         !isSourceHintTerm(term, sourceTerms) &&
         !effectivePrimaryTerms.includes(term),
@@ -2850,19 +2778,19 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
   );
   const ftsTerms = effectivePrimaryTerms.length
     ? effectivePrimaryTerms
-    : uniqueTerms([...quotedTerms, ...aliasTerms, ...expansionTerms, ...fallbackTerms], 16);
+    : uniqueTerms([...quotedTerms, ...expansionTerms, ...fallbackTerms], 16);
   return {
     allTerms,
     quotedPhrases,
-    aliasPhrases,
     quotedTerms,
     quoteScopeGroups: buildQuoteScopeGroups(quotedPhrases),
+    hasQuotedScope: options.hasQuotedScope === true,
     concepts: conceptPlan.concepts,
     primaryTerms: effectivePrimaryTerms,
     supportingTerms,
     expansionTerms,
     metadataTerms: uniqueTerms(
-      [...effectivePrimaryTerms, ...quotedPrimaryTerms, ...aliasTerms],
+      [...effectivePrimaryTerms, ...quotedPrimaryTerms],
       24,
     ),
     ftsTerms: uniqueTerms(ftsTerms, 16),
@@ -2870,6 +2798,63 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
       [...effectivePrimaryTerms, ...expansionTerms, ...supportingTerms],
       80,
     ),
+  };
+}
+
+function isSemanticBridgeTerm(term) {
+  if (!term) return false;
+  if (SEARCH_STOP_WORDS.has(term)) return false;
+  return term.length >= 4 || /^\d{4}$/u.test(term);
+}
+
+function buildSemanticBridgeTerms(results, limit = SEMANTIC_BRIDGE_TERM_LIMIT) {
+  const docCounts = new Map();
+  const termCounts = new Map();
+  const semanticResults = Array.isArray(results)
+    ? results.slice(0, SEMANTIC_BRIDGE_RESULT_LIMIT)
+    : [];
+  for (const result of semanticResults) {
+    const text = [
+      result?.title,
+      result?.author,
+      result?.heading,
+      String(result?.text || "").slice(0, 1800),
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const terms = splitSearchTerms(text).filter(isSemanticBridgeTerm);
+    const uniqueResultTerms = new Set(terms);
+    for (const term of uniqueResultTerms) {
+      docCounts.set(term, (docCounts.get(term) || 0) + 1);
+    }
+    for (const term of terms) {
+      termCounts.set(term, (termCounts.get(term) || 0) + 1);
+    }
+  }
+
+  const minDocs = semanticResults.length >= 3 ? 2 : 1;
+  return Array.from(docCounts.entries())
+    .filter(([, docCount]) => docCount >= minDocs)
+    .map(([term, docCount]) => ({
+      term,
+      score: docCount * 4 + Math.min(termCounts.get(term) || 0, 12),
+    }))
+    .sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      return a.term.localeCompare(b.term);
+    })
+    .map((item) => item.term)
+    .slice(0, limit);
+}
+
+function addSemanticBridgeTermsToPlan(plan, bridgeTerms) {
+  const terms = uniqueTerms(bridgeTerms, SEMANTIC_BRIDGE_TERM_LIMIT);
+  if (!terms.length) return plan;
+  return {
+    ...plan,
+    semanticBridgeTerms: terms,
+    expansionTerms: uniqueTerms([...(plan.expansionTerms || []), ...terms], 96),
+    scoringTerms: uniqueTerms([...(plan.scoringTerms || []), ...terms], 96),
   };
 }
 
@@ -3303,10 +3288,7 @@ function computePlannedContentBonus(text, plan = {}, config = {}, queryLang = ""
   const exactPhraseBonus = contentKeywordBonus * 1.75;
   const quotedTermBonus = contentKeywordBonus * 0.75;
   const expansionTermBonus = contentKeywordBonus * 0.25;
-  const phraseTerms = uniqueTerms(
-    [...(plan.quotedPhrases || []), ...(plan.aliasPhrases || [])],
-    64,
-  );
+  const phraseTerms = uniqueTerms(plan.quotedPhrases || [], 64);
   for (const phrase of phraseTerms) {
     if (phrase && haystack.includes(phrase)) bonus += exactPhraseBonus;
   }
@@ -3381,46 +3363,64 @@ function resultMatchesQuoteScope(result, plan = {}) {
   });
 }
 
-function computeHistoricalCooccurrenceBonus(result, plan = {}) {
-  const haystack = normalizeSearchText(
-    [result?.title, result?.author, result?.heading, result?.text]
-      .filter(Boolean)
-      .join(" "),
+function candidateHasSemanticRetrieval(candidate) {
+  return (
+    candidate?.channels?.has?.("semantic") ||
+    candidate?.channels?.has?.("semantic-bridge")
   );
-  const queryTerms = new Set([
-    ...(plan.allTerms || []),
-    ...(plan.quotedTerms || []),
-    ...(plan.aliasPhrases || []).flatMap(splitSearchTerms),
-  ]);
-  const asksLasCasas =
-    queryTerms.has("bartolome") && queryTerms.has("casas");
-  const asksLawsOfIndies =
-    queryTerms.has("laws") ||
-    queryTerms.has("indies") ||
-    queryTerms.has("leyes") ||
-    queryTerms.has("indias") ||
-    (plan.aliasPhrases || []).some((phrase) =>
-      /\b(leyes|laws)\b/u.test(phrase),
-    );
-  if (!asksLasCasas || !asksLawsOfIndies) return 0;
-  const hasLasCasas =
-    hasNormalizedSearchTerm(haystack, "bartolome") &&
-    hasNormalizedSearchTerm(haystack, "casas");
-  const hasLawsTopic =
-    haystack.includes("leyes nuevas") ||
-    haystack.includes("leyes de indias") ||
-    haystack.includes("leyes nuevas de indias") ||
-    (hasNormalizedSearchTerm(haystack, "leyes") &&
-      hasNormalizedSearchTerm(haystack, "indias")) ||
-    (hasNormalizedSearchTerm(haystack, "1542") &&
-      (hasNormalizedSearchTerm(haystack, "carlos") ||
-        hasNormalizedSearchTerm(haystack, "emperador")));
-  return hasLasCasas && hasLawsTopic ? 0.55 : 0;
+}
+
+function candidateMatchesQuoteScope(candidate, plan = {}) {
+  if (!plan.hasQuotedScope) return true;
+  if (candidateHasSemanticRetrieval(candidate)) return true;
+  return resultMatchesQuoteScope(candidate?.result, plan);
 }
 
 function queryRequestsReferenceMaterial(query) {
   return /\b(introducci[oó]n|introduction|pr[oó]logo|prefacio|preface|nota|notas|notes|comentario|commentary|bibliograf[ií]a|bibliography|fuentes|sources)\b/iu.test(
     normalizeSearchText(query),
+  );
+}
+
+function countPatternMatches(text, pattern, limit = 20) {
+  const matches = String(text || "").match(pattern);
+  return Math.min(Array.isArray(matches) ? matches.length : 0, limit);
+}
+
+function looksLikeReferenceListing(result) {
+  const heading = normalizeSearchText(result?.heading || "");
+  const text = String(result?.text || "").slice(0, 2200);
+  const normalized = normalizeSearchText(text);
+  if (
+    /\b(bibliografia|bibliography|referencias|references|fuentes|sources)\b/u.test(
+      heading,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(bibliografia|bibliography|referencias|references|fuentes|sources)\b/u.test(
+      normalized.slice(0, 500),
+    )
+  ) {
+    return true;
+  }
+
+  const yearCount = countPatternMatches(
+    text,
+    /\b(?:1[5-9]\d{2}|20\d{2})\b/gu,
+  );
+  const publisherMarkers = countPatternMatches(
+    normalized,
+    /\b(?:madrid|barcelona|mexico|paris|london|press|universidad|university|editorial|ediciones|fce|siglo|iberoamericana|vol|vols|eds|ed)\b/gu,
+  );
+  const citationSeparators = countPatternMatches(
+    text,
+    /(?:<<|—,|--,|\bet al\.|\b[A-ZÁÉÍÓÚÑ]{3,}[,;])/gu,
+  );
+  return (
+    (yearCount >= 5 && publisherMarkers >= 3) ||
+    (yearCount >= 4 && citationSeparators >= 5)
   );
 }
 
@@ -3442,7 +3442,89 @@ function computePassagePenalty(result, query) {
   if (/\b(bibliografia|bibliography|fuentes|sources)\b/u.test(heading)) {
     penalty += 0.1;
   }
-  return Math.min(penalty, 0.3);
+  if (looksLikeReferenceListing(result)) {
+    penalty += 0.45;
+  }
+  return Math.min(penalty, 0.65);
+}
+
+function queryAsksForDateEvidence(query) {
+  return /\b(when|date|established|establish|founded|created|issued|published|approved|promulgated|cuando|fecha|establecio|establecieron|fundado|fundada|creado|creada|emitido|emitida|publicado|publicada|aprobado|aprobada|promulgado|promulgada|promulgaron)\b/u.test(
+    normalizeSearchText(query),
+  );
+}
+
+function queryAsksForOpinionEvidence(query) {
+  return /\b(opinion|opinaba|pensaba|think|thought|view|views|stance|position|postura|parecer|creia|defendia|proponia|argumentaba)\b/u.test(
+    normalizeSearchText(query),
+  );
+}
+
+function resultHasDateEvidence(result) {
+  const rawText = [result?.heading, result?.text].filter(Boolean).join(" ");
+  const normalized = normalizeSearchText(rawText);
+  const hasDate =
+    /\b\d{1,2}\s+de\s+[a-záéíóúñ]+\s+de\s+\d{3,4}\b/iu.test(rawText) ||
+    /\b(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\s+de\s+\d{3,4}\b/iu.test(
+      rawText,
+    ) ||
+    /\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{3,4}\b/iu.test(
+      rawText,
+    ) ||
+    /\b(?:1[0-9]{3}|20[0-9]{2})\b/u.test(normalized);
+  const hasDateAction =
+    /\b(promulgad\w*|establecid\w*|fundad\w*|cread\w*|emitid\w*|publicad\w*|aprobad\w*|decretad\w*|established|founded|created|issued|published|approved|promulgated|decreed)\b/u.test(
+      normalized,
+    );
+  return { hasDate, hasDateAction };
+}
+
+function resultHasOpinionEvidence(result) {
+  return /\b(opinion|opin\w*|pensab\w*|crei\w*|defend\w*|propon\w*|argument\w*|critic\w*|denunci\w*|conden\w*|rechaz\w*|abol\w*|suspend\w*|restituci\w*|thought|argued|defended|proposed|criticized|criticised|denounced|condemned|rejected|abolished|suspended|restitution)\b/u.test(
+    normalizeSearchText([result?.heading, result?.text].filter(Boolean).join(" ")),
+  );
+}
+
+function computeAnswerEvidenceBonus(result, query) {
+  let bonus = 0;
+  const asksDate = queryAsksForDateEvidence(query);
+  const asksOpinion = queryAsksForOpinionEvidence(query);
+  const dateEvidence = resultHasDateEvidence(result);
+  const opinionEvidence = resultHasOpinionEvidence(result);
+  if (asksDate && dateEvidence.hasDate && dateEvidence.hasDateAction) {
+    bonus += 0.55;
+  } else if (asksDate && dateEvidence.hasDate) {
+    bonus += 0.25;
+  }
+  if (asksOpinion && opinionEvidence) {
+    bonus += 0.3;
+  }
+  if (
+    asksDate &&
+    asksOpinion &&
+    dateEvidence.hasDate &&
+    opinionEvidence
+  ) {
+    bonus += 0.15;
+  }
+  return Math.min(bonus, 0.85);
+}
+
+function computeMissingAnswerEvidencePenalty(result, query) {
+  let penalty = 0;
+  const asksDate = queryAsksForDateEvidence(query);
+  const asksOpinion = queryAsksForOpinionEvidence(query);
+  const dateEvidence = resultHasDateEvidence(result);
+  const opinionEvidence = resultHasOpinionEvidence(result);
+  if (asksDate && !dateEvidence.hasDate) {
+    penalty += 0.45;
+  } else if (asksDate && !dateEvidence.hasDateAction) {
+    penalty += 0.2;
+  }
+  if (asksOpinion && !opinionEvidence) {
+    penalty += 0.15;
+  }
+  return Math.min(penalty, 0.55);
 }
 
 function fuseRankedResults(groups, options = {}) {
@@ -3468,7 +3550,14 @@ function fuseRankedResults(groups, options = {}) {
   return Array.from(candidates.values());
 }
 
-function applyHybridBonuses(candidates, query, sourceHints, plan = null, config = {}) {
+function applyHybridBonuses(
+  candidates,
+  query,
+  sourceHints,
+  plan = null,
+  config = {},
+  answerQuery = query,
+) {
   const queryPlan = plan || buildSearchPlan(query, sourceHints);
   const searchTerms = queryPlan.metadataTerms.length
     ? queryPlan.metadataTerms
@@ -3476,11 +3565,14 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
   const strongSourceHints =
     queryRefersToPreviousSource(query) && sourceHints.length > 0;
   const queryLang = detectLanguageHint(query);
+  const hasSemanticCandidates = candidates.some((candidate) =>
+    candidateHasSemanticRetrieval(candidate),
+  );
   return candidates.map((candidate) => {
     const metadataBonus = computeMetadataBonus(
       candidate.result,
       searchTerms,
-      [...(queryPlan.quotedPhrases || []), ...(queryPlan.aliasPhrases || [])],
+      queryPlan.quotedPhrases || [],
       sourceHints,
       strongSourceHints,
       config,
@@ -3514,11 +3606,25 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
       !resultHasExpansionContent(candidate.result, queryPlan)
         ? 0.35
         : 0;
-    const passagePenalty = computePassagePenalty(candidate.result, query);
-    const cooccurrenceBonus = computeHistoricalCooccurrenceBonus(
+    const passagePenalty = computePassagePenalty(candidate.result, answerQuery);
+    const answerEvidenceBonus = computeAnswerEvidenceBonus(
       candidate.result,
-      queryPlan,
+      answerQuery,
     );
+    const missingAnswerEvidencePenalty = computeMissingAnswerEvidencePenalty(
+      candidate.result,
+      answerQuery,
+    );
+    const semanticQuoteScopeBonus =
+      queryPlan.hasQuotedScope && candidateHasSemanticRetrieval(candidate)
+        ? 0.25
+        : 0;
+    const metadataOnlyPenalty =
+      hasSemanticCandidates &&
+      candidate.channels?.size === 1 &&
+      candidate.channels?.has?.("metadata")
+        ? 0.3
+        : 0;
     return {
       ...candidate,
       score:
@@ -3529,14 +3635,20 @@ function applyHybridBonuses(candidates, query, sourceHints, plan = null, config 
         primaryContentBonus -
         conceptPenalty -
         passagePenalty +
-        cooccurrenceBonus,
+        answerEvidenceBonus +
+        semanticQuoteScopeBonus -
+        missingAnswerEvidencePenalty -
+        metadataOnlyPenalty,
       metadataBonus,
       contentBonus,
       headingBonus,
       primaryContentBonus,
       conceptPenalty,
       passagePenalty,
-      cooccurrenceBonus,
+      answerEvidenceBonus,
+      missingAnswerEvidencePenalty,
+      semanticQuoteScopeBonus,
+      metadataOnlyPenalty,
     };
   });
 }
@@ -3651,26 +3763,62 @@ async function searchLibrary(query, options = {}) {
   const semanticQuery = split.hasQuotedScope ? query : lexicalQuery;
   const effectiveQuery = lexicalQuery || query;
   const sourceHints = mergeSourceHints(effectiveQuery, options.sourceHints);
-  const plan = buildSearchPlan(effectiveQuery, sourceHints, {
+  let plan = buildSearchPlan(effectiveQuery, sourceHints, {
     supportingQuery: split.userInstruction,
-    fullQuery: query,
     quotedPhrases: split.quotedPhrases,
+    hasQuotedScope: split.hasQuotedScope,
   });
   const groups = [];
+  let semanticResults = [];
 
-  if (isVectorSearchConfigured(config)) {
+  if (Array.isArray(options.semanticResults)) {
+    semanticResults = options.semanticResults;
+    groups.push({
+      name: "semantic",
+      weight: config.search?.semanticWeight ?? 1.0,
+      results: semanticResults,
+    });
+  } else if (isVectorSearchConfigured(config)) {
     try {
-      const vectorResults = await searchVector(
+      semanticResults = await searchVector(
         config,
         semanticQuery,
         candidateLimit,
         fileIds,
       );
-      groups.push({ name: "semantic", weight: config.search?.semanticWeight ?? 1.0, results: vectorResults });
+      groups.push({
+        name: "semantic",
+        weight: config.search?.semanticWeight ?? 1.0,
+        results: semanticResults,
+      });
     } catch (error) {
       console.warn(
         `Vector search failed; falling back to FTS5: ${error.message}`,
       );
+    }
+  }
+
+  const semanticBridgeTerms = buildSemanticBridgeTerms(semanticResults);
+  if (semanticBridgeTerms.length) {
+    plan = addSemanticBridgeTermsToPlan(plan, semanticBridgeTerms);
+    const bridgeQuery = semanticBridgeTerms.join(" ");
+    const bridgePlan = buildSearchPlan(bridgeQuery, sourceHints, {
+      supportingQuery: effectiveQuery,
+    });
+    const bridgeResults = await searchFts(
+      config,
+      bridgeQuery,
+      candidateLimit,
+      sourceHints,
+      bridgePlan,
+      fileIds,
+    );
+    if (bridgeResults.length) {
+      groups.push({
+        name: "semantic-bridge",
+        weight: config.search?.semanticBridgeWeight ?? 1.35,
+        results: bridgeResults,
+      });
     }
   }
 
@@ -3712,7 +3860,7 @@ async function searchLibrary(query, options = {}) {
     ]);
   }
 
-  const scored = applyHybridBonuses(candidates, effectiveQuery, sourceHints, plan, config).sort(
+  const scored = applyHybridBonuses(candidates, effectiveQuery, sourceHints, plan, config, query).sort(
     (a, b) => {
       if (a.score !== b.score) return b.score - a.score;
       return String(a.result.path || "").localeCompare(
@@ -3721,7 +3869,7 @@ async function searchLibrary(query, options = {}) {
     },
   );
   const quoteScoped = split.hasQuotedScope
-    ? scored.filter((item) => resultMatchesQuoteScope(item.result, plan))
+    ? scored.filter((item) => candidateMatchesQuoteScope(item, plan))
     : scored;
   const scopedScored = quoteScoped.length ? quoteScoped : scored;
   const conceptEvidence = plan.concepts.length
