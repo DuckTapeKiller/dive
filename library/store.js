@@ -4700,6 +4700,8 @@ function buildLibraryContext(results, options = {}) {
 
 async function buildChatLibraryContext(query, requestOptions = {}) {
   const config = loadLibraryConfig();
+  const modeName = String(requestOptions?.mode || "").toLowerCase();
+  const modeKey = SEARCH_MODE_KEYS.includes(modeName) ? modeName : "ollama";
   const chatSettings = normalizeChatIntegration(
     {
       ...config.chatIntegration,
@@ -4708,6 +4710,15 @@ async function buildChatLibraryContext(query, requestOptions = {}) {
     config.search,
   );
   chatSettings.strict = requestOptions?.strict === true;
+  const requestForcesEnable = requestOptions?.enabled === true;
+  if (!requestForcesEnable) {
+    const modeSettings = config.chatModes?.[modeKey];
+    const modeEnabled =
+      modeSettings && typeof modeSettings === "object" && "enabled" in modeSettings
+        ? modeSettings.enabled === true
+        : config.chatIntegration.enabled === true;
+    chatSettings.enabled = chatSettings.enabled && modeEnabled;
+  }
   if (!chatSettings.enabled) {
     return { enabled: false, results: [], contextMessage: null };
   }
@@ -4715,7 +4726,7 @@ async function buildChatLibraryContext(query, requestOptions = {}) {
     splitQueryForRetrieval(query);
   const results = await searchLibrary(query, {
     config,
-    mode: requestOptions?.mode,
+    mode: modeKey,
     limit: chatSettings.limit,
     sourceHints: requestOptions?.sourceHints,
     fileIds: requestOptions?.fileIds,

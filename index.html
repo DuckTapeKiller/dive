@@ -7313,6 +7313,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function setMode(m) {
         if (!modeSession[m]) m = "ollama";
+        if (typeof collectDatabaseConfigFromForm === "function") {
+          try {
+            databaseConfig = collectDatabaseConfigFromForm();
+            databaseChatModes = databaseConfig.chatModes;
+          } catch (_error) {
+            // ignore DOM read issues during early initialization
+          }
+        }
         // Save current mode session state before switching
         syncCurrentSessionState();
 
