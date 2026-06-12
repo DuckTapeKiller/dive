@@ -7,6 +7,8 @@ const {
   buildLibraryContext,
   collectSourceFiles,
   detectLanguageHint,
+  embeddingModelProfile,
+  expectedEmbeddingDimensions,
   indexLibrary,
   normalizeConfig,
   searchLibrary,
@@ -14,6 +16,39 @@ const {
   splitQueryForRetrieval,
 } = require("../library/store");
 const defaultConfig = require("../library/config.default.json");
+
+test("embedding model profiles guard context budget and dimensions", () => {
+  // bge-m3: 8192-token context fits whole chunks; not Matryoshka-trained,
+  // so the configured Vector Dims must never truncate its 1024-dim vectors.
+  const bge = embeddingModelProfile("bge-m3:latest");
+  assert.strictEqual(bge.documentMaxChars, 7000);
+  assert.strictEqual(bge.matryoshka, false);
+  assert.strictEqual(
+    expectedEmbeddingDimensions({
+      embedding: { model: "bge-m3:latest", dimensions: 256 },
+    }),
+    1024,
+  );
+
+  // nomic v2-moe: 512-token model keeps the conservative 1200-char excerpt
+  // and honours the configured Matryoshka dimensions.
+  const nomic = embeddingModelProfile("nomic-embed-text-v2-moe:latest");
+  assert.strictEqual(nomic.documentMaxChars, 1200);
+  assert.strictEqual(nomic.matryoshka, true);
+  assert.strictEqual(
+    expectedEmbeddingDimensions({
+      embedding: { model: "nomic-embed-text-v2-moe:latest", dimensions: 256 },
+    }),
+    256,
+  );
+  // Unset dims fall back to the model's native size.
+  assert.strictEqual(
+    expectedEmbeddingDimensions({
+      embedding: { model: "nomic-embed-text-v2-moe:latest", dimensions: 0 },
+    }),
+    768,
+  );
+});
 
 test("default Books source indexes EPUB files only", () => {
   const books = defaultConfig.sources.find((source) => source.name === "Books");
