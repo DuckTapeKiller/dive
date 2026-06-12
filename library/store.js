@@ -1722,6 +1722,16 @@ function normalizeOllamaBaseUrl(baseUrl) {
   return String(baseUrl || "http://127.0.0.1:11434").replace(/\/+$/, "");
 }
 
+// Per-model embedding behaviour:
+// - documentMaxChars: how much chunk text fits in the model's context
+//   window. nomic-embed-text-v2-moe and mxbai are 512-token models, so the
+//   safe budget is ~1200 chars (head+tail excerpt for longer chunks).
+//   bge-m3 takes 8192 tokens, so whole chunks (max ~6500 chars) fit in one
+//   vector with no excerpting.
+// - matryoshka: whether vectors may be truncated to the configured Vector
+//   Dims. bge-m3 and mxbai are NOT Matryoshka-trained — truncating them
+//   silently destroys retrieval quality, so their native dimensions are
+//   always used regardless of the Vector Dims setting.
 function embeddingModelProfile(model) {
   const normalized = String(model || "").toLowerCase();
   if (normalized.includes("nomic-embed-text")) {
@@ -1729,6 +1739,8 @@ function embeddingModelProfile(model) {
       queryPrefix: "search_query: ",
       documentPrefix: "search_document: ",
       nativeDimensions: 768,
+      matryoshka: true,
+      documentMaxChars: EMBEDDING_DOCUMENT_MAX_CHARS,
     };
   }
   if (normalized.includes("mxbai")) {
@@ -1736,19 +1748,58 @@ function embeddingModelProfile(model) {
       queryPrefix: "Represent this sentence for searching relevant passages: ",
       documentPrefix: "",
       nativeDimensions: 1024,
+      matryoshka: false,
+      documentMaxChars: EMBEDDING_DOCUMENT_MAX_CHARS,
     };
   }
   if (normalized.includes("bge-m3")) {
-    return { queryPrefix: "", documentPrefix: "", nativeDimensions: 1024 };
+    return {
+      queryPrefix: "",
+      documentPrefix: "",
+      nativeDimensions: 1024,
+      matryoshka: false,
+      documentMaxChars: 7000,
+    };
   }
-  return { queryPrefix: "", documentPrefix: "", nativeDimensions: 768 };
+  return {
+    queryPrefix: "",
+    documentPrefix: "",
+    nativeDimensions: 768,
+    matryoshka: false,
+    documentMaxChars: EMBEDDING_DOCUMENT_MAX_CHARS,
+  };
 }
 
-function compactDocumentEmbeddingText(text) {
+function embeddingDimensionsFor(config) {
+  const profile = embeddingModelProfile(config?.embedding?.model);
+  if (!profile.matryoshka) return 0;
+  return Math.max(0, Number(config?.embedding?.dimensions || 0));
+}
+
+// The dimensions actually stored for the active model: configured Vector
+// Dims for Matryoshka models, native dimensions otherwise. Used by missing-
+// embedding scans and status so a non-Matryoshka model with a stale Vector
+// Dims setting does not make every row look permanently missing.
+function expectedEmbeddingDimensions(config) {
+  const profile = embeddingModelProfile(config?.embedding?.model);
+  if (!profile.matryoshka) return profile.nativeDimensions || 0;
+  return (
+    Math.max(0, Number(config?.embedding?.dimensions || 0)) ||
+    profile.nativeDimensions ||
+    0
+  );
+}
+
+function compactDocumentEmbeddingText(config, text) {
   const cleanText = String(text || "");
-  if (cleanText.length <= EMBEDDING_DOCUMENT_MAX_CHARS) return cleanText;
+  const profile = embeddingModelProfile(config?.embedding?.model);
+  const maxChars = Math.max(
+    100,
+    Number(profile.documentMaxChars) || EMBEDDING_DOCUMENT_MAX_CHARS,
+  );
+  if (cleanText.length <= maxChars) return cleanText;
   const separator = "\n\n...\n\n";
-  const budget = Math.max(100, EMBEDDING_DOCUMENT_MAX_CHARS - separator.length);
+  const budget = Math.max(100, maxChars - separator.length);
   const headChars = Math.ceil(budget / 2);
   const tailChars = Math.floor(budget / 2);
   return `${cleanText.slice(0, headChars)}${separator}${cleanText.slice(-tailChars)}`;
@@ -1757,7 +1808,7 @@ function compactDocumentEmbeddingText(text) {
 function formatEmbeddingInput(config, text, purpose) {
   const cleanText =
     purpose === "document"
-      ? compactDocumentEmbeddingText(text)
+      ? compactDocumentEmbeddingText(config, text)
       : String(text || "");
   const profile = embeddingModelProfile(config.embedding.model);
   const prefix =
@@ -1821,10 +1872,9 @@ async function embedTexts(config, texts, purpose = "document") {
   const inputs = texts.map((text) =>
     formatEmbeddingInput(config, text, purpose),
   );
-  const requestedDimensions = Math.max(
-    0,
-    Number(config.embedding.dimensions || 0),
-  );
+  // 0 for non-Matryoshka models (bge-m3, mxbai): keep native dimensions and
+  // never truncate, regardless of the configured Vector Dims.
+  const requestedDimensions = embeddingDimensionsFor(config);
   const body = { model, input: inputs };
   if (requestedDimensions > 0) body.dimensions = requestedDimensions;
   const embedResponse = await fetchWithTimeout(`${baseUrl}/api/embed`, {
@@ -1836,7 +1886,7 @@ async function embedTexts(config, texts, purpose = "document") {
     const payload = await embedResponse.json();
     if (Array.isArray(payload.embeddings)) {
       return payload.embeddings.map((vector) =>
-        normalizeVector(vector, config.embedding.dimensions),
+        normalizeVector(vector, requestedDimensions),
       );
     }
   }
@@ -1862,9 +1912,7 @@ async function embedTexts(config, texts, purpose = "document") {
     if (!Array.isArray(payload.embedding)) {
       throw new Error("Ollama embedding response did not include a vector.");
     }
-    embeddings.push(
-      normalizeVector(payload.embedding, config.embedding.dimensions),
-    );
+    embeddings.push(normalizeVector(payload.embedding, requestedDimensions));
   }
   return embeddings;
 }
@@ -1959,7 +2007,7 @@ async function embedFileChunks(config, filePath, options = {}) {
   }
   const expectedDimensions = Math.max(
     0,
-    Number(options.dimensions || config.embedding.dimensions || 0),
+    Number(options.dimensions || expectedEmbeddingDimensions(config) || 0),
   );
   const vectorTableConfigured = isVectorSearchConfigured(config);
   const missingEmbeddingFilter =
@@ -2046,7 +2094,7 @@ async function getFileEmbeddingGaps(config, filePath, dimensions) {
   }
   const expectedDimensions = Math.max(
     0,
-    Number(dimensions || config.embedding.dimensions || 0),
+    Number(dimensions || expectedEmbeddingDimensions(config) || 0),
   );
   const vectorTableConfigured = isVectorSearchConfigured(config);
   const rows = await runSqliteJson(
@@ -2274,9 +2322,11 @@ function summarizeChunkStorage(chunks) {
 }
 
 function estimatedEmbeddingDimensions(config) {
-  const configured = Math.max(0, Number(config.embedding?.dimensions || 0));
-  if (configured > 0) return configured;
-  return embeddingModelProfile(config.embedding?.model).nativeDimensions || 768;
+  return (
+    expectedEmbeddingDimensions(config) ||
+    embeddingModelProfile(config.embedding?.model).nativeDimensions ||
+    768
+  );
 }
 
 function vectorBytesPerDimension(config) {
@@ -4843,7 +4893,7 @@ async function getLibraryStatus() {
     status.embedding.storedModel = vectorMeta.model || "";
     status.embedding.storedQuantization = vectorMeta.quantization || "";
     const expectedDimensions =
-      Number(config.embedding.dimensions || 0) ||
+      expectedEmbeddingDimensions(config) ||
       status.embedding.storedDimensions ||
       0;
     status.embedding.expectedDimensions = expectedDimensions;
@@ -4957,4 +5007,6 @@ module.exports = {
   searchLibraryFiles,
   splitQueryForRetrieval,
   detectLanguageHint,
+  embeddingModelProfile,
+  expectedEmbeddingDimensions,
 };
