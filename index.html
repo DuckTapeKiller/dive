@@ -3308,12 +3308,18 @@
                   <input id="databaseRrfKInput" type="range" min="1" max="100" step="1" />
                   <div class="setting-range-value"></div>
                 </div>
+                <div class="setting-help">
+                  Lower values trust the top of each search list more; higher values blend rankings evenly.
+                </div>
               </div>
               <div class="search-algorithm-control">
                 <label style="font-size: 10px">CONTENT KEYWORD BONUS (0-1) (Default: 0.16)</label>
                 <div class="setting-range">
                   <input id="databaseContentKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
                   <div class="setting-range-value"></div>
+                </div>
+                <div class="setting-help">
+                  Extra score for passages whose body actually contains your search words.
                 </div>
               </div>
               <div class="search-algorithm-control">
@@ -3322,12 +3328,18 @@
                   <input id="databaseMetadataKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
                   <div class="setting-range-value"></div>
                 </div>
+                <div class="setting-help">
+                  Extra score for passages whose title, author, or heading contains your search words.
+                </div>
               </div>
               <div class="search-algorithm-control">
                 <label style="font-size: 10px">SEMANTIC WEIGHT (0-3) (Default: 1.0)</label>
                 <div class="setting-range">
                   <input id="databaseSemanticWeightInput" type="range" min="0" max="3" step="0.1" />
                   <div class="setting-range-value"></div>
+                </div>
+                <div class="setting-help">
+                  How much to trust meaning-based (vector) search. Needs an embedding model.
                 </div>
               </div>
               <div class="search-algorithm-control">
@@ -3336,6 +3348,9 @@
                   <input id="databaseKeywordWeightInput" type="range" min="0" max="3" step="0.1" />
                   <div class="setting-range-value"></div>
                 </div>
+                <div class="setting-help">
+                  How much to trust exact-word search. Needs Keyword FTS Index turned on.
+                </div>
               </div>
               <div class="search-algorithm-control">
                 <label style="font-size: 10px">METADATA SEARCH WEIGHT (0-3) (Default: 0.8)</label>
@@ -3343,12 +3358,18 @@
                   <input id="databaseMetadataWeightInput" type="range" min="0" max="3" step="0.1" />
                   <div class="setting-range-value"></div>
                 </div>
+                <div class="setting-help">
+                  How much to trust matches in the title, author, or heading.
+                </div>
               </div>
               <div class="search-algorithm-control">
                 <label style="font-size: 10px">SOURCE PATH WEIGHT (0-3) (Default: 1.2)</label>
                 <div class="setting-range">
                   <input id="databaseSourceWeightInput" type="range" min="0" max="3" step="0.1" />
                   <div class="setting-range-value"></div>
+                </div>
+                <div class="setting-help">
+                  How much to trust hints like "according to..." that point at a specific book.
                 </div>
               </div>
               <div class="search-algorithm-control">
@@ -6597,6 +6618,43 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         return `Semantic ready: ${formatMetricNumber(summary.ready)} / ${formatMetricNumber(summary.chunks)} passages embedded; ${formatMetricNumber(summary.missing)} missing.`;
       }
 
+      // Index ETA (frontend-only). Estimates remaining time for the embedding
+      // phase using a rolling window of recent status-poll samples, so a
+      // pause/resume or a cold start never poisons the figure. No backend or
+      // indexer involvement; purely derived from progress already reported.
+      let embeddingEtaSamples = [];
+      function formatEtaSeconds(totalSeconds) {
+        const s = Math.max(0, Math.round(totalSeconds));
+        if (s < 60) return `~${s}s left`;
+        const m = Math.round(s / 60);
+        if (m < 60) return `~${m}m left`;
+        const h = Math.floor(m / 60);
+        const rem = m % 60;
+        return rem ? `~${h}h ${rem}m left` : `~${h}h left`;
+      }
+      function computeEmbeddingEtaText(job, phaseKey, embedded, embeddingPending) {
+        if (!job || job.status !== "running" || phaseKey !== "embedding") {
+          embeddingEtaSamples = [];
+          return "";
+        }
+        if (!(Number(embeddingPending) > 0)) return "";
+        const now = Date.now();
+        const last = embeddingEtaSamples[embeddingEtaSamples.length - 1];
+        // A fresh run resets the counter; drop stale samples if it went down.
+        if (last && Number(embedded) < last.embedded) embeddingEtaSamples = [];
+        embeddingEtaSamples.push({ t: now, embedded: Number(embedded) || 0 });
+        const cutoff = now - 90000; // rolling 90s window
+        embeddingEtaSamples = embeddingEtaSamples.filter((s) => s.t >= cutoff);
+        const first = embeddingEtaSamples[0];
+        const latest = embeddingEtaSamples[embeddingEtaSamples.length - 1];
+        const spanMs = latest.t - first.t;
+        const delta = latest.embedded - first.embedded;
+        if (spanMs < 20000 || delta <= 0) return " | estimating…";
+        const rate = delta / (spanMs / 1000); // passages per second
+        if (!(rate > 0)) return " | estimating…";
+        return ` | ${formatEtaSeconds(Number(embeddingPending) / rate)}`;
+      }
+
       function renderLibraryIndexJob(payload) {
         const statusEl = document.getElementById("libraryIndexStatusText");
         if (!statusEl) return;
@@ -6657,7 +6715,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const estimateText = estimatedFinalBytes
           ? ` | est ${formatByteSize(estimatedFinalBytes)}`
           : "";
-        const progressLine = `${Math.round(percent)}% | ${processed}/${scanned} files | ${chunks} passages touched | ${embedded} generated this run | ${embeddingPending} missing now${estimateText}`;
+        const etaText = computeEmbeddingEtaText(
+          job,
+          progress.phase,
+          embedded,
+          embeddingPending,
+        );
+        const progressLine = `${Math.round(percent)}% | ${processed}/${scanned} files | ${chunks} passages touched | ${embedded} generated this run | ${embeddingPending} missing now${estimateText}${etaText}`;
         setLibraryIndexProgress(percent, progressLine);
         setLibraryIndexButtons(job.status === "running");
         renderIndexJobGrid({
