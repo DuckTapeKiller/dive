@@ -3283,6 +3283,7 @@
             <div class="setting-row search-algorithm-settings">
               <div class="search-algorithm-header">
                 <label style="font-size: 10px; opacity: 0.8; letter-spacing: 0.5px;">SEARCH ALGORITHM SETTINGS</label>
+                <span id="searchAlgoSaveStatus" style="font-size: 9px; opacity: 0.7; margin-left: auto; margin-right: 8px;"></span>
                 <button
                   id="resetSearchAlgorithmSettingsBtn"
                   type="button"
@@ -5928,6 +5929,55 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
       }
 
+      // Search-algorithm settings autosave: persist immediately on change to
+      // ~/dive/library-config.json, scoped to the active mode. Sends ONLY the
+      // searchModes block as a partial config so the server merge never
+      // touches structural settings (model/dims/chunking/sources). These are
+      // query-time weights with no index side effects, so no reindex prompt.
+      const SEARCH_ALGO_SLIDER_IDS = new Set([
+        "databaseRrfKInput",
+        "databaseContentKeywordBonusInput",
+        "databaseMetadataKeywordBonusInput",
+        "databaseSemanticWeightInput",
+        "databaseKeywordWeightInput",
+        "databaseMetadataWeightInput",
+        "databaseSourceWeightInput",
+        "databaseMaxPassagesPerSourceInput",
+      ]);
+      let searchAlgoAutosaveTimer = null;
+      function flashSearchAlgoSaveStatus(text) {
+        const el = document.getElementById("searchAlgoSaveStatus");
+        if (!el) return;
+        el.textContent = text;
+        clearTimeout(el._clearTimer);
+        if (text === "Saved") {
+          el._clearTimer = setTimeout(() => {
+            el.textContent = "";
+          }, 1500);
+        }
+      }
+      async function persistSearchAlgorithmSettings() {
+        commitActiveSearchAlgorithmSliders();
+        if (!databaseConfig.searchModes) return;
+        flashSearchAlgoSaveStatus("Saving…");
+        try {
+          await postJson(
+            "/api/library/config",
+            { config: { searchModes: databaseConfig.searchModes } },
+            "Save search algorithm settings",
+          );
+          flashSearchAlgoSaveStatus("Saved");
+        } catch (error) {
+          console.error("Search algorithm autosave failed", error);
+          flashSearchAlgoSaveStatus("Save failed");
+        }
+      }
+      function scheduleSearchAlgorithmAutosave() {
+        if (!searchAlgorithmSlidersReady) return;
+        clearTimeout(searchAlgoAutosaveTimer);
+        searchAlgoAutosaveTimer = setTimeout(persistSearchAlgorithmSettings, 400);
+      }
+
       function populateSearchAlgorithmSliders() {
         const modeKey = activeSearchAlgorithmMode();
         const values = getSearchAlgorithmValuesForMode(modeKey);
@@ -6002,6 +6052,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           SEARCH_ALGORITHM_DEFAULTS.maxPassagesPerSource,
         );
         databaseConfig = collectDatabaseConfigFromForm();
+        scheduleSearchAlgorithmAutosave();
       }
 
       function collectLibrarySettingsFromForm() {
@@ -11047,6 +11098,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const display = e.target.nextElementSibling;
           if (display && display.classList.contains('setting-range-value')) {
             display.textContent = e.target.value;
+          }
+          if (SEARCH_ALGO_SLIDER_IDS.has(e.target.id)) {
+            scheduleSearchAlgorithmAutosave();
           }
         }
       });
