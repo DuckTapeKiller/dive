@@ -200,10 +200,29 @@ function parseOpf(opfXml, opfPath) {
     spine.sort((a, b) => a.path.localeCompare(b.path));
   }
 
+  // Locate the navigation documents so the extractor can map spine files to
+  // their section titles and drop back-matter (index, bibliography, TOC).
+  let navPath = "";
+  let ncxPath = "";
+  for (const item of manifest.values()) {
+    if (!navPath && item.properties.split(/\s+/).includes("nav")) {
+      navPath = item.path;
+    }
+    if (
+      !ncxPath &&
+      (item.mediaType === "application/x-dtbncx+xml" ||
+        path.posix.extname(item.path).toLowerCase() === ".ncx")
+    ) {
+      ncxPath = item.path;
+    }
+  }
+
   return {
     title,
     author,
     chapters: dedupeChapterItems(spine),
+    navPath,
+    ncxPath,
   };
 }
 
@@ -358,6 +377,145 @@ function extractHtmlText(html) {
   return blocks.join("\n\n");
 }
 
+// Section titles (normalized via foldText: accent-stripped, lowercased) that
+// mark non-content back/front matter. Matched EXACTLY — never as a substring —
+// so real titles like "The Content of the Psychoses" are never excluded.
+const BACK_MATTER_TITLES = new Set([
+  // English
+  "index",
+  "bibliography",
+  "references",
+  "abbreviations",
+  "linguistic abbreviations",
+  "list of abbreviations",
+  "contents",
+  "table of contents",
+  "detailed table of contents",
+  "series contents",
+  "copyright",
+  "copyright page",
+  "title page",
+  "half title page",
+  // Spanish (foldText removes accents: índice -> indice, etc.)
+  "indice",
+  "indice analitico",
+  "indice onomastico",
+  "indice de materias",
+  "indice de nombres",
+  "indice tematico",
+  "bibliografia",
+  "referencias",
+  "abreviaturas",
+  "sumario",
+  "contenido",
+  "creditos",
+  "derechos de autor",
+  "portada",
+  "pagina de titulo",
+]);
+
+function isBackMatterTitle(title) {
+  if (!title) return false;
+  return BACK_MATTER_TITLES.has(foldText(title));
+}
+
+// Content-based detector for alphabetical INDEX pages that carry no nav title
+// (e.g. the Jung "The Collected Works" set has ~130 such unlabeled index
+// files). Index pages are dominated by page/volume reference tokens
+// ("25&n,", "154n;", "764"), regardless of layout — a format-agnostic signal
+// that also handles the volume+page+semicolon style. Threshold chosen from
+// measured data on real books: prose sections top out around a 0.19 numeric-
+// token ratio, index sections sit at 0.40-0.75; 0.30 is the safe gap. Min
+// token count avoids flagging short number-y fragments. Deliberately
+// conservative so ordinary prose is never misclassified.
+function isIndexLikeSection(text) {
+  const tokens = String(text || "").match(/\S+/g) || [];
+  if (tokens.length < 150) return false;
+  let numericTokens = 0;
+  for (const token of tokens) {
+    if (/^[\d(]?\d[\d.,;:&nf()–-]*$/i.test(token)) numericTokens += 1;
+  }
+  return numericTokens / tokens.length >= 0.3;
+}
+
+// Map spine-file path -> section title, using only whole-file navigation
+// entries (hrefs/srcs WITHOUT a #fragment). Fragment entries are sub-sections
+// and would mislabel a shared file, so they are ignored. Handles both the
+// EPUB3 nav document (<a href>) and the EPUB2 NCX (<navPoint>).
+function parseNavTitleMap(xml, docPath) {
+  const map = new Map();
+  if (!xml) return map;
+  let $;
+  try {
+    $ = loadXml(xml);
+  } catch (_error) {
+    return map;
+  }
+  const baseDir = path.posix.dirname(docPath || "");
+  for (const anchor of findByLocalName($, "a")) {
+    const href = getAttr(anchor, ["href"]);
+    if (!href || href.includes("#")) continue;
+    const target = resolveZipPath(baseDir === "." ? "" : baseDir, href);
+    const title = normalizeInlineText($(anchor).text());
+    if (target && title && !map.has(target)) map.set(target, title);
+  }
+  return map;
+}
+
+function parseNcxTitleMap(xml, docPath) {
+  const map = new Map();
+  if (!xml) return map;
+  let $;
+  try {
+    $ = loadXml(xml);
+  } catch (_error) {
+    return map;
+  }
+  const baseDir = path.posix.dirname(docPath || "");
+  for (const navPoint of findByLocalName($, "navpoint")) {
+    let src = "";
+    let title = "";
+    $(navPoint)
+      .find("*")
+      .each((_index, element) => {
+        const ln = localName(element);
+        if (!src && ln === "content") src = getAttr(element, ["src"]);
+        if (!title && ln === "text") {
+          title = normalizeInlineText($(element).text());
+        }
+      });
+    if (!src || src.includes("#")) continue;
+    const target = resolveZipPath(baseDir === "." ? "" : baseDir, src);
+    if (target && title && !map.has(target)) map.set(target, title);
+  }
+  return map;
+}
+
+async function buildBackMatterPaths(zipfile, entries, opf) {
+  let titleMap = new Map();
+  if (opf.navPath) {
+    try {
+      const navXml = await readEntryText(zipfile, entries, opf.navPath);
+      titleMap = parseNavTitleMap(navXml, opf.navPath);
+    } catch (_error) {
+      titleMap = new Map();
+    }
+  }
+  if (!titleMap.size && opf.ncxPath) {
+    try {
+      const ncxXml = await readEntryText(zipfile, entries, opf.ncxPath);
+      titleMap = parseNcxTitleMap(ncxXml, opf.ncxPath);
+    } catch (_error) {
+      titleMap = new Map();
+    }
+  }
+  const paths = new Set();
+  for (const [filePath, title] of titleMap) {
+    if (isBackMatterTitle(title)) paths.add(filePath);
+  }
+  return paths;
+}
+
 async function extractEpub(filePath) {
   const zipfile = await openZip(filePath);
   try {
@@ -370,13 +528,23 @@ async function extractEpub(filePath) {
     const opfPath = parseContainerXml(containerXml);
     const opfXml = await readEntryText(zipfile, entries, opfPath);
     const opf = parseOpf(opfXml, opfPath);
+    const backMatterPaths = await buildBackMatterPaths(zipfile, entries, opf);
     const chapterTexts = [];
     const warnings = [];
+    const skippedSections = [];
 
     for (const chapter of opf.chapters) {
+      if (backMatterPaths.has(chapter.path)) {
+        skippedSections.push(chapter.path);
+        continue;
+      }
       try {
         const chapterHtml = await readEntryText(zipfile, entries, chapter.path);
         const chapterText = extractHtmlText(chapterHtml);
+        if (chapterText && isIndexLikeSection(chapterText)) {
+          skippedSections.push(chapter.path);
+          continue;
+        }
         if (chapterText) chapterTexts.push(chapterText);
       } catch (error) {
         warnings.push(`${chapter.path}: ${error.message}`);
@@ -395,6 +563,7 @@ async function extractEpub(filePath) {
         author: opf.author,
       }),
       chapterCount: chapterTexts.length,
+      skippedSections,
       warnings,
     };
   } finally {
@@ -409,4 +578,6 @@ module.exports = {
   parseContainerXml,
   parseOpf,
   parseOpfMetadata,
+  isBackMatterTitle,
+  isIndexLikeSection,
 };

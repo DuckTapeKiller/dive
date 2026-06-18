@@ -6,7 +6,60 @@ const {
   parseContainerXml,
   parseOpf,
   parseOpfMetadata,
+  isBackMatterTitle,
+  isIndexLikeSection,
 } = require("../library/epub");
+
+test("back-matter section titles are matched exactly, not by substring", () => {
+  // EN + ES back-matter titles excluded (foldText strips accents/case).
+  for (const t of [
+    "Index",
+    "INDEX",
+    "Bibliography",
+    "Bibliografía",
+    "Índice analítico",
+    "Table of Contents",
+    "Linguistic Abbreviations",
+    "Copyright Page",
+  ]) {
+    assert.strictEqual(isBackMatterTitle(t), true, t);
+  }
+  // Real content titles that merely contain a back-matter word must be kept.
+  for (const t of [
+    "The Content of the Psychoses",
+    "Index Librorum and the Inquisition", // essay, not an index
+    "A Bibliography of Dreams as Literature",
+    "",
+  ]) {
+    assert.strictEqual(isBackMatterTitle(t), false, t);
+  }
+});
+
+test("index-like sections detected by numeric-token density, prose kept", () => {
+  // Volume+page reference index (the unlabeled "The Collected Works" style).
+  const indexPage = Array.from(
+    { length: 80 },
+    (_v, i) => `term${i}, 11 ${i}n, 354n; 12 ${i + 9}, 209, 336n`,
+  ).join("\n\n");
+  assert.strictEqual(isIndexLikeSection(indexPage), true);
+
+  // Classic "name, 12, 34, 56" index.
+  const classicIndex = Array.from(
+    { length: 80 },
+    (_v, i) => `Author ${i}, ${i}&n, ${i + 100}, ${i + 205}`,
+  ).join("\n\n");
+  assert.strictEqual(isIndexLikeSection(classicIndex), true);
+
+  // Real prose with an occasional inline citation must NOT be flagged.
+  const prose =
+    "In his 1921 paper Jung argued that the unconscious compensates the " +
+    "conscious attitude. Depression, he held, is a lowering of psychic " +
+    "energy that withdraws libido from the outer world and turns it inward, " +
+    "where it activates the archetypal contents of the collective psyche. ".repeat(
+      12,
+    );
+  assert.strictEqual(isIndexLikeSection(prose), false);
+});
 
 test("EPUB container parser finds OPF rootfile", () => {
   const opfPath = parseContainerXml(`<?xml version="1.0"?>
