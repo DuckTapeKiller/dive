@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
+  buildChunks,
   buildLibraryContext,
   collectSourceFiles,
   detectLanguageHint,
@@ -16,6 +17,44 @@ const {
   splitQueryForRetrieval,
 } = require("../library/store");
 const defaultConfig = require("../library/config.default.json");
+
+test("buildChunks drops reference-dense back matter but keeps prose under a back-matter heading", () => {
+  const chunking = { targetChars: 2400, overlapChars: 0, minChars: 120, maxChars: 3200 };
+
+  // A real index page (each entry ends in page numbers) must be dropped.
+  const indexBody =
+    "# INDEX\n\n" +
+    Array.from({ length: 30 }, (_v, i) => `term ${i}, ${i + 10}, ${i + 200}, ${i + 405}n`).join("\n\n");
+  const indexDropped = [];
+  const indexChunks = buildChunks(indexBody, chunking, indexDropped);
+  assert.ok(indexDropped.length >= 1, "index page should be dropped");
+  assert.strictEqual(
+    indexChunks.some((c) => /term \d+, /.test(c.text)),
+    false,
+    "no index entries should survive as chunks",
+  );
+
+  // Regression (Gredos editions): a back-matter-sounding heading such as
+  // "SUMARIO" or "Contenido" can head the actual translated text, and the
+  // active heading persists across that prose. Dropping on heading alone
+  // deleted whole works, so prose under such a heading MUST be kept.
+  const proseUnderSumario =
+    "# SUMARIO\n\n" +
+    "Así, los indios, ocupados y cuidadosos de la tregua, abandonaron la guerra " +
+    "báquica a los vientos, y enterraron sin lágrimas en los ojos a sus muertos, " +
+    "en la creencia de que habían escapado de las cadenas terrenales de la vida " +
+    "mortal, y que sus almas habían vuelto allá de donde vinieron.\n\n" +
+    "Hubo entonces gran multitud de gente de diversas ciudades que acudió allá. " +
+    "En torno al cadáver cortaron un mechón fúnebre de su cabello, y todos en " +
+    "derredor acudían, uno tras otro en torrente, para llorarle.";
+  const proseDropped = [];
+  const proseChunks = buildChunks(proseUnderSumario, chunking, proseDropped);
+  assert.strictEqual(proseDropped.length, 0, "prose under SUMARIO must not be dropped");
+  assert.ok(
+    proseChunks.some((c) => c.text.includes("guerra báquica")),
+    "the translated text must survive",
+  );
+});
 
 test("embedding model profiles guard context budget and dimensions", () => {
   // bge-m3: 8192-token context fits whole chunks; not Matryoshka-trained,

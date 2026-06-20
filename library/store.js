@@ -4,7 +4,11 @@ const os = require("os");
 const crypto = require("crypto");
 const zlib = require("zlib");
 const { execFile, spawn, spawnSync } = require("child_process");
-const { extractEpub, parseOpfMetadata } = require("./epub");
+const {
+  extractEpub,
+  parseOpfMetadata,
+  isReferenceDenseChunk,
+} = require("./epub");
 
 const DATA_DIR = path.join(os.homedir(), "dive");
 const CONFIG_FILE = path.join(DATA_DIR, "library-config.json");
@@ -1196,10 +1200,18 @@ function vectorColumnType(config, dimensions) {
 
 function vectorSqlExpression(config, vectorJson) {
   const literal = sqlLiteral(vectorJson);
+  // L2-normalize before storing/matching. The vec0 column uses the default L2
+  // distance, and the int8 'unit' quantizer assumes components in [-1, 1].
+  // Some embedding models (e.g. bge-m3 via Ollama) return UN-normalized vectors
+  // (norm ~27, ~20% of components > 1); without normalization 'unit' clips
+  // those components to +-127, corrupting the ranking (cross-lingual matches,
+  // whose score margins are small, get scrambled). Normalizing fixes this and
+  // makes L2 order equal cosine order. It is a no-op for models that already
+  // return unit vectors (e.g. nomic-embed-text), so it is safe for every model.
   if (vectorStorageMode(config) === "int8") {
-    return `vec_quantize_int8(vec_f32(${literal}), 'unit')`;
+    return `vec_quantize_int8(vec_normalize(vec_f32(${literal})), 'unit')`;
   }
-  return literal;
+  return `vec_normalize(vec_f32(${literal}))`;
 }
 
 async function ensureVectorTable(config, dimensions) {
@@ -1389,7 +1401,7 @@ function estimateTokens(text) {
   return Math.ceil(String(text || "").length / 4);
 }
 
-function buildChunks(text, chunking) {
+function buildChunks(text, chunking, droppedSink) {
   const paragraphs = paragraphsWithLineNumbers(text);
   const chunks = [];
   let activeHeading = "";
@@ -1416,6 +1428,22 @@ function buildChunks(text, chunking) {
       .map((item) => item.text)
       .join("\n\n")
       .trim();
+    // Drop index / bibliography / case-list back matter, but ONLY on a
+    // content signal: the chunk body must itself be dominated by page-reference
+    // entries (isReferenceDenseChunk). We deliberately do NOT drop on the
+    // section heading alone — in many editions a back-matter-sounding heading
+    // (e.g. "SUMARIO", "Contenido") actually heads real translated text, and
+    // the active heading persists across that prose, so a heading-only rule
+    // would delete whole works. The content test validates against the text.
+    if (isReferenceDenseChunk(joined)) {
+      if (droppedSink) {
+        droppedSink.push({ heading: activeHeading, text: joined, reason: "page-refs" });
+      }
+      // Do not carry these paragraphs into the next chunk's overlap window.
+      current = [];
+      currentChars = 0;
+      return;
+    }
     if (joined.length >= chunking.minChars || !chunks.length) {
       chunks.push({
         chunkIndex: chunks.length,
