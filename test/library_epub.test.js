@@ -8,6 +8,7 @@ const {
   parseOpfMetadata,
   isBackMatterTitle,
   isIndexLikeSection,
+  isReferenceDenseChunk,
 } = require("../library/epub");
 
 test("back-matter section titles are matched exactly, not by substring", () => {
@@ -59,6 +60,87 @@ test("index-like sections detected by numeric-token density, prose kept", () => 
       12,
     );
   assert.strictEqual(isIndexLikeSection(prose), false);
+});
+
+test("reference-dense chunks (index/bibliography/cases) dropped, prose kept", () => {
+  // Alphabetical name/subject index: each entry ends in page numbers. This is
+  // the real Jung "Collected Works" chunk style whose whole-document numeric
+  // density was diluted below the chapter-level 0.30 threshold.
+  const nameIndex = [
+    'on "idées fixes," 477',
+    "on obsessions, 477",
+    "Java, 145, 178",
+    "Jena, 287",
+    "Jerusalem, 107",
+    "Jews, 162, 246, 665",
+    "Joachim of Flora, 678, 688&n",
+    "Job, 680, 741",
+    "Jones, Ernest, 399n, 485",
+    "Josephus, Flavius, 107, 777",
+  ].join("\n\n");
+  assert.strictEqual(isReferenceDenseChunk(nameIndex), true);
+
+  // "Cases in summary" list — page refs glued with dashes/ranges; the
+  // numeric-token detector misses these, the page-ref-ending signal catches it.
+  const cases = [
+    "[1] Young woman whose dream illustrates sexual symbolism. — 9f",
+    "[2] Schizophrenic with hallucination of the sun phallus. — 101, 157",
+    "[3] Girl of 10 with mythological dreams who died a year later. —96, 229–34",
+    "[4] Schizophrenic woman who painted pictures. —100–101",
+    "[5] Young Frenchman whose depression began after a journey. —112–23, 166",
+    "[6] Young man with compulsion neurosis. —128–30",
+    "[7] Woman doctor aged 58 with a previous analyst. —139",
+    "[8] Man who bought an Egyptian sculpture of a cat. —141–42",
+  ].join("\n\n");
+  assert.strictEqual(isReferenceDenseChunk(cases), true);
+
+  // Bibliography entries (heading was "BIBLIOGRAFÍA CONJUNTA", an inexact title
+  // the back-matter list misses) — each ends in a year/page.
+  const bibliography = [
+    "Alfonso X, El ajedrez de don Alfonso, Madrid, La Franco Española, 1929",
+    "——, El fuero real de España, Medina del Campo, 1544.",
+    "Domínguez Ortiz, Antonio, El antiguo régimen, Madrid, Alianza, 1973.",
+    "Dostoyevski, Fedor M., The Diary of a Writer, Vol. II, Nueva York, 1949.",
+    "Eisenberg, Daniel, Romances of Chivalry, Newark, Juan de la Cuesta, 1982.",
+    "Foucault, Michel, Les mots et les choses, París, Gallimard, 1966.",
+    "Spitzer, Leo, Lingüística e historia literaria, Madrid, Gredos, 1955.",
+  ].join("\n\n");
+  assert.strictEqual(isReferenceDenseChunk(bibliography), true);
+
+  // Real prose — short poetic paragraphs (the El libro rojo style) and ordinary
+  // narrative must NOT be flagged, even with the occasional trailing number.
+  const verseProse = [
+    "La fuerza originaria es el resplandor del sol que sus hijos llevan en sí.",
+    "Mas, cuando el alma se sumerge en el resplandor, se vuelve inexorable.",
+    "El niño divino que has comido estará en ti como una brasa ardiente.",
+    "Así habló el espíritu de las profundidades, y yo escuché y temblé.",
+    "En el año 1916 escribí estas palabras sin comprender del todo su sentido.",
+    "El camino de lo que ha de venir se abre solo ante quien lo recorre.",
+    "Y la oscuridad me envolvió como un manto, y en ella encontré la luz.",
+  ].join("\n\n");
+  assert.strictEqual(isReferenceDenseChunk(verseProse), false);
+
+  // Too few paragraphs: never flag.
+  assert.strictEqual(isReferenceDenseChunk("Java, 145\n\nJena, 287"), false);
+
+  // Regression: roman-numeral chapter/section labels must NOT count as page
+  // references, or novel boundary chunks and tables of contents that mix a
+  // chapter list with real dialogue get wrongly dropped (Fred M. White,
+  // Tocqueville, Drayton in the real library). A chunk of chapter labels plus
+  // prose dialogue must be kept.
+  const fictionBoundary = [
+    "‘Perhaps it is selfish,’ he replied, with a great heave of his chest.",
+    "‘Dear old fellow!’ Edgar said, pressing his hand warmly.",
+    "The American regarded them for a moment with something like tears.",
+    "And he promised.",
+    "CHAPTER I",
+    "CHAPTER II",
+    "CHAPTER III",
+    "CHAPTER IV",
+    "CHAPTER V",
+    "BOOK II.",
+  ].join("\n\n");
+  assert.strictEqual(isReferenceDenseChunk(fictionBoundary), false);
 });
 
 test("EPUB container parser finds OPF rootfile", () => {
