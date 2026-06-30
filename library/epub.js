@@ -355,10 +355,10 @@ function escapeRegExp(text) {
   return String(text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function extractHtmlText(html) {
-  const $ = cheerio.load(String(html || ""), {
+function extractHtmlTextWithMode(html, xmlMode) {
+  const $ = cheerio.load(html, {
     decodeEntities: true,
-    xmlMode: false,
+    xmlMode,
   });
   $(
     "script, style, nav, head, svg, img, audio, video, object, iframe",
@@ -382,6 +382,17 @@ function extractHtmlText(html) {
   }
 
   return blocks.join("\n\n");
+}
+
+function extractHtmlText(html) {
+  const source = String(html || "");
+  // Parse as HTML first. If that yields nothing, retry in XML mode: many EPUBs
+  // ship well-formed XHTML with self-closing tags like <title/> or <a id=".."/>,
+  // which the HTML parser mishandles (a self-closing <title/> is treated as
+  // rcdata and swallows the rest of the document), producing empty text.
+  const htmlText = extractHtmlTextWithMode(source, false);
+  if (htmlText) return htmlText;
+  return extractHtmlTextWithMode(source, true);
 }
 
 // Section titles (normalized via foldText: accent-stripped, lowercased) that

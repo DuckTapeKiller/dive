@@ -219,6 +219,26 @@ test("EPUB HTML extraction preserves headings and paragraphs", () => {
   );
 });
 
+test("EPUB XHTML with self-closing tags is extracted (XML-mode fallback)", () => {
+  // Real publisher EPUBs (e.g. Houghton Mifflin) ship well-formed XHTML with
+  // self-closing <title/> and <a id=".."/>. In HTML mode a self-closing
+  // <title/> is rcdata and swallows the whole document, yielding no text; the
+  // extractor must retry in XML mode and recover the chapter text.
+  const text = extractHtmlText(`<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title/><link href="css/x.css" rel="stylesheet" type="text/css"/></head>
+  <body>
+    <h1 class="chaptertitle"><a id="p1"/>Preface and Prelude</h1>
+    <p class="left">This book studies twenty-six writers.</p>
+  </body>
+</html>`);
+
+  assert.strictEqual(
+    text,
+    "# Preface and Prelude\n\nThis book studies twenty-six writers.",
+  );
+});
+
 test("EPUB cleanup removes title-page boilerplate", () => {
   const cleaned = cleanEpubText(
     [
