@@ -6,7 +6,10 @@ const {
 } = require("./store");
 
 function readQueryFromArgs() {
-  return process.argv.slice(2).filter((arg) => !arg.startsWith("--")).join(" ");
+  return process.argv
+    .slice(2)
+    .filter((arg) => !arg.startsWith("--"))
+    .join(" ");
 }
 
 function readLimitFromArgs() {
@@ -18,12 +21,16 @@ function readLimitFromArgs() {
 
 async function main() {
   if (process.argv.includes("--status")) {
-    process.stdout.write(`${JSON.stringify(await getLibraryStatus(), null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(await getLibraryStatus(), null, 2)}\n`,
+    );
     return;
   }
   const query = readQueryFromArgs();
   if (!query) {
-    throw new Error('Usage: node library/search.js "your question" [--limit 5]');
+    throw new Error(
+      'Usage: node library/search.js "your question" [--limit 5]',
+    );
   }
   const results = await searchLibrary(query, { limit: readLimitFromArgs() });
   if (process.argv.includes("--context")) {

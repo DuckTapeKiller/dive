@@ -251,9 +251,7 @@ function getFileHealth(filePath) {
 }
 
 if (typeof process.getuid === "function" && process.getuid() === 0) {
-  console.error(
-    "Refusing to run Dive as root. Run as an unprivileged user.",
-  );
+  console.error("Refusing to run Dive as root. Run as an unprivileged user.");
   process.exit(1);
 }
 
@@ -1108,7 +1106,7 @@ function getSharedAssistantPolicyPrompt() {
     "Always respond in the language the user speaks to you in.",
     "If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not use outside knowledge unless the passages are insufficient, and clearly say when the local library does not provide enough evidence.",
     "When the passages contain multiple accounts, causes, origins, definitions, or scholarly distinctions, explain the relevant variants instead of reducing the answer to a thin single sentence.",
-    "When retrieved passages are available, name the source inside the body of the answer for every factual claim. Prefer prose attribution such as \"According to Apolodoro's Biblioteca...\" or \"In Colin Wilson's The Outsider...\". Do not rely only on hyperlinks, source boxes, bracket numbers, or vague phrases such as \"some accounts say\".",
+    'When retrieved passages are available, name the source inside the body of the answer for every factual claim. Prefer prose attribution such as "According to Apolodoro\'s Biblioteca..." or "In Colin Wilson\'s The Outsider...". Do not rely only on hyperlinks, source boxes, bracket numbers, or vague phrases such as "some accounts say".',
   ].join("\n\n");
 }
 
@@ -1329,7 +1327,11 @@ function sanitizeTraceEventForStorage(event) {
   if (Array.isArray(event.results)) {
     clean.results = serializeLibraryResults(event.results).slice(0, 50);
   }
-  if (event.meta && typeof event.meta === "object" && !Array.isArray(event.meta)) {
+  if (
+    event.meta &&
+    typeof event.meta === "object" &&
+    !Array.isArray(event.meta)
+  ) {
     clean.meta = {};
     for (const [key, value] of Object.entries(event.meta)) {
       if (
@@ -1337,7 +1339,8 @@ function sanitizeTraceEventForStorage(event) {
         typeof value === "number" ||
         typeof value === "boolean"
       ) {
-        clean.meta[key] = typeof value === "string" ? value.slice(0, 1000) : value;
+        clean.meta[key] =
+          typeof value === "string" ? value.slice(0, 1000) : value;
       }
     }
   }
@@ -1404,7 +1407,12 @@ function getCommandMessage(command, fallbackMessage) {
   return command.input || fallbackMessage;
 }
 
-function getLibraryRequestForCommand(library, command, history = [], mode = "") {
+function getLibraryRequestForCommand(
+  library,
+  command,
+  history = [],
+  mode = "",
+) {
   const base = library && typeof library === "object" ? library : {};
   const sourceHints = extractRecentLibrarySourceHints(history);
   if (!isDatabaseSlashCommand(command)) {
@@ -3878,7 +3886,8 @@ const server = http.createServer(async (req, res) => {
 
       const databasePriorityForLibraryTurn =
         !slashCommand && librarySourceResults.length > 0;
-      const cloudSkillsEnabled = !slashCommand && !databasePriorityForLibraryTurn;
+      const cloudSkillsEnabled =
+        !slashCommand && !databasePriorityForLibraryTurn;
       if (cloudSkillsEnabled) {
         const skillsPrompt = getCloudSkillsPolicyPrompt();
         if (skillsPrompt) {
@@ -4628,7 +4637,12 @@ const server = http.createServer(async (req, res) => {
       try {
         const libraryContext = await buildChatLibraryContext(
           promptQuestion,
-          getLibraryRequestForCommand(body.library, slashCommand, history, "pi"),
+          getLibraryRequestForCommand(
+            body.library,
+            slashCommand,
+            history,
+            "pi",
+          ),
         );
         if (libraryContext.enabled) {
           promptMessage = buildPiPromptWithLibraryContext(
@@ -4871,7 +4885,17 @@ const server = http.createServer(async (req, res) => {
           execFile(
             "pdftotext",
             [tmp, "-"],
-            { timeout: PDFTOTEXT_TIMEOUT_MS, maxBuffer: PDFTOTEXT_MAX_BUFFER },
+            {
+              timeout: PDFTOTEXT_TIMEOUT_MS,
+              maxBuffer: PDFTOTEXT_MAX_BUFFER,
+              // GUI-launched apps get a minimal PATH that omits Homebrew
+              // (/opt/homebrew/bin), so resolve pdftotext the same way the
+              // sqlite3 / pi calls do, or the upload fails with "not found".
+              env: {
+                ...process.env,
+                PATH: buildExecutablePath(process.env.PATH || ""),
+              },
+            },
             (err, stdout) => {
               try {
                 if (fs.existsSync(tmp)) fs.unlinkSync(tmp);

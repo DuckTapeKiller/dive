@@ -1,6 +1,6 @@
 {
   "name": "dive-desktop",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -25,6 +25,8 @@
     "library:status": "node library/indexer.js --status",
     "library:watch": "node library/indexer.js --watch",
     "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "node --test test/*.test.js"
   },
   "devDependencies": {
@@ -32,8 +34,10 @@
     "electron-builder": "^26.8.1",
     "esbuild": "^0.28.0",
     "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
     "jsdom": "^29.1.1",
-    "postject": "^1.0.0-alpha.6"
+    "postject": "^1.0.0-alpha.6",
+    "prettier": "^3.9.4"
   },
   "build": {
     "publish": null,

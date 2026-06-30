@@ -262,7 +262,9 @@ const CROSS_LINGUAL_EQUIVALENT_GROUPS = [
 const CROSS_LINGUAL_EQUIVALENTS = new Map();
 for (const group of CROSS_LINGUAL_EQUIVALENT_GROUPS) {
   const normalizedGroup = Array.from(
-    new Set(group.map((term) => normalizeEarlySearchTerm(term)).filter(Boolean)),
+    new Set(
+      group.map((term) => normalizeEarlySearchTerm(term)).filter(Boolean),
+    ),
   );
   for (const term of normalizedGroup) {
     CROSS_LINGUAL_EQUIVALENTS.set(
@@ -705,7 +707,10 @@ function normalizeConfig(rawConfig) {
       60000,
     ),
   };
-  const chatIntegration = normalizeChatIntegration(merged.chatIntegration, search);
+  const chatIntegration = normalizeChatIntegration(
+    merged.chatIntegration,
+    search,
+  );
 
   return {
     version: 1,
@@ -716,9 +721,12 @@ function normalizeConfig(rawConfig) {
     searchModes,
     embedding,
     chatIntegration,
-    chatModes: normalizeChatModes(hasExplicitChatModes ? merged.chatModes : null, {
-      enabled: chatIntegration.enabled,
-    }),
+    chatModes: normalizeChatModes(
+      hasExplicitChatModes ? merged.chatModes : null,
+      {
+        enabled: chatIntegration.enabled,
+      },
+    ),
     watch,
   };
 }
@@ -1437,7 +1445,11 @@ function buildChunks(text, chunking, droppedSink) {
     // would delete whole works. The content test validates against the text.
     if (isReferenceDenseChunk(joined)) {
       if (droppedSink) {
-        droppedSink.push({ heading: activeHeading, text: joined, reason: "page-refs" });
+        droppedSink.push({
+          heading: activeHeading,
+          text: joined,
+          reason: "page-refs",
+        });
       }
       // Do not carry these paragraphs into the next chunk's overlap window.
       current = [];
@@ -1493,7 +1505,9 @@ function collectSourceFiles(config) {
       try {
         entries = fs.readdirSync(current, { withFileTypes: true });
       } catch (error) {
-        console.warn(`[Library] Could not read directory ${current}: ${error.message}`);
+        console.warn(
+          `[Library] Could not read directory ${current}: ${error.message}`,
+        );
         continue;
       }
       for (const entry of entries) {
@@ -2063,13 +2077,13 @@ async function embedFileChunks(config, filePath, options = {}) {
     AND e.dimensions = ${sqlInteger(expectedDimensions)}
 )`
       : "";
-  const rows = await runSqliteJson(
+  // Page the fetch: pull only the lightweight chunk-id list first, then load
+  // text per batch below. Selecting every chunk's text + hex(text_compressed)
+  // in one query overflows the 64MB sqlite output buffer on very large books
+  // (e.g. "Delphi Complete Works" volumes with tens of thousands of chunks).
+  const idRows = await runSqliteJson(
     config.databasePath,
-    `SELECT
-  c.id,
-  c.text,
-  hex(c.text_compressed) AS textCompressedHex,
-  c.text_encoding AS textEncoding
+    `SELECT c.id
 FROM library_chunks c
 JOIN library_files f ON f.id = c.file_id
 WHERE f.path = ${sqlLiteral(filePath)}
@@ -2079,24 +2093,41 @@ ORDER BY c.chunk_index;`,
       ? { loadExtensionPath: config.embedding.sqliteVecExtensionPath }
       : {},
   );
+  const pendingIds = idRows.map((row) => row.id);
   let embedded = 0;
   let errors = 0;
-  
-  const skippedCount = Math.max(0, (options.totalChunks || 0) - rows.length);
+
+  const skippedCount = Math.max(
+    0,
+    (options.totalChunks || 0) - pendingIds.length,
+  );
   if (skippedCount > 0 && typeof options.onBatch === "function") {
     options.onBatch({
       embeddedDelta: 0,
       errorsDelta: 0,
-      skippedDelta: skippedCount
+      skippedDelta: skippedCount,
     });
   }
   for (
     let index = 0;
-    index < rows.length;
+    index < pendingIds.length;
     index += config.embedding.batchSize
   ) {
     assertNotCancelled(options);
-    const batch = rows.slice(index, index + config.embedding.batchSize);
+    const idBatch = pendingIds.slice(index, index + config.embedding.batchSize);
+    // Load text only for this batch's ids, so no single query can exceed the
+    // sqlite output buffer no matter how large the book is.
+    const batch = await runSqliteJson(
+      config.databasePath,
+      `SELECT
+  c.id,
+  c.text,
+  hex(c.text_compressed) AS textCompressedHex,
+  c.text_encoding AS textEncoding
+FROM library_chunks c
+WHERE c.id IN (${idBatch.map((id) => sqlInteger(id)).join(", ")})
+ORDER BY c.chunk_index;`,
+    );
     const result = await embedBatchWithRetries(config, batch, options, {
       filePath,
       batchStart: index,
@@ -2771,26 +2802,117 @@ function normalizeRetrievalQuoteMarks(text) {
 // The goal is "is the chunk language probably the same as the query?",
 // not perfect language ID. Unknown is treated as a match.
 const SPANISH_STOPWORDS = new Set([
-  "el","la","los","las","un","una","unos","unas","de","del","y","o","u","que",
-  "porque","como","pero","si","no","es","son","fue","fueron","ser","estar",
-  "se","su","sus","lo","les","me","te","nos","con","sin","por","para","entre",
-  "más","muy","ya","sobre","cuando","donde","quien","quién","cuál","cómo",
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "de",
+  "del",
+  "y",
+  "o",
+  "u",
+  "que",
+  "porque",
+  "como",
+  "pero",
+  "si",
+  "no",
+  "es",
+  "son",
+  "fue",
+  "fueron",
+  "ser",
+  "estar",
+  "se",
+  "su",
+  "sus",
+  "lo",
+  "les",
+  "me",
+  "te",
+  "nos",
+  "con",
+  "sin",
+  "por",
+  "para",
+  "entre",
+  "más",
+  "muy",
+  "ya",
+  "sobre",
+  "cuando",
+  "donde",
+  "quien",
+  "quién",
+  "cuál",
+  "cómo",
 ]);
 const ENGLISH_STOPWORDS = new Set([
-  "the","a","an","and","or","but","if","of","to","in","on","at","by","for",
-  "from","as","is","are","was","were","be","been","being","that","this",
-  "these","those","with","without","into","about","over","under","than",
-  "then","there","here","what","when","where","why","how","who","whose",
-  "which","not","no","yes","do","does","did","have","has","had",
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "but",
+  "if",
+  "of",
+  "to",
+  "in",
+  "on",
+  "at",
+  "by",
+  "for",
+  "from",
+  "as",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "that",
+  "this",
+  "these",
+  "those",
+  "with",
+  "without",
+  "into",
+  "about",
+  "over",
+  "under",
+  "than",
+  "then",
+  "there",
+  "here",
+  "what",
+  "when",
+  "where",
+  "why",
+  "how",
+  "who",
+  "whose",
+  "which",
+  "not",
+  "no",
+  "yes",
+  "do",
+  "does",
+  "did",
+  "have",
+  "has",
+  "had",
 ]);
 const SPANISH_DIACRITICS = /[áéíóúüñ¿¡]/i;
 function detectLanguageHint(text) {
   const raw = String(text || "");
   if (!raw) return "";
   if (SPANISH_DIACRITICS.test(raw)) return "es";
-  const tokens = raw
-    .toLowerCase()
-    .match(/[\p{L}]{2,}/gu);
+  const tokens = raw.toLowerCase().match(/[\p{L}]{2,}/gu);
   if (!tokens || tokens.length < 3) return "";
   let es = 0;
   let en = 0;
@@ -2846,7 +2968,11 @@ function extractQuotedSpansRaw(query) {
   for (const pattern of patterns) {
     let match = null;
     while ((match = pattern.exec(raw)) !== null) {
-      spans.push({ start: match.index, end: match.index + match[0].length, text: match[1] });
+      spans.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[1],
+      });
     }
   }
   return spans.sort((a, b) => a.start - b.start);
@@ -3097,7 +3223,10 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
     concepts: conceptPlan.concepts,
     primaryTerms: effectivePrimaryTerms,
     supportingTerms,
-    expansionTerms: uniqueTerms([...expansionTerms, ...lexicalExpansionTerms], 96),
+    expansionTerms: uniqueTerms(
+      [...expansionTerms, ...lexicalExpansionTerms],
+      96,
+    ),
     lexicalExpansionTerms,
     metadataTerms: uniqueTerms(
       [
@@ -3107,7 +3236,10 @@ function buildSearchPlan(query, sourceHints = [], options = {}) {
       ],
       24,
     ),
-    ftsTerms: uniqueTerms([...ftsTerms, ...lexicalExpansionTerms.slice(0, 12)], 24),
+    ftsTerms: uniqueTerms(
+      [...ftsTerms, ...lexicalExpansionTerms.slice(0, 12)],
+      24,
+    ),
     scoringTerms: uniqueTerms(
       [
         ...effectivePrimaryTerms,
@@ -3333,11 +3465,7 @@ function levenshteinDistance(a, b) {
     curr[0] = i;
     for (let j = 1; j <= right.length; j += 1) {
       const cost = left[i - 1] === right[j - 1] ? 0 : 1;
-      curr[j] = Math.min(
-        curr[j - 1] + 1,
-        prev[j] + 1,
-        prev[j - 1] + cost,
-      );
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
     }
     for (let j = 0; j <= right.length; j += 1) prev[j] = curr[j];
   }
@@ -3350,7 +3478,9 @@ function normalizedSimilarity(a, b) {
   if (!left || !right) return 0;
   if (left === right) return 1;
   if (right.includes(left) || left.includes(right)) {
-    return Math.min(left.length, right.length) / Math.max(left.length, right.length);
+    return (
+      Math.min(left.length, right.length) / Math.max(left.length, right.length)
+    );
   }
   const maxLength = Math.max(left.length, right.length);
   if (!maxLength) return 0;
@@ -3436,7 +3566,10 @@ ORDER BY lower(path);`,
       .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
       .slice(0, 40);
     const resolvedTerms = expandEquivalentTerms(
-      [...(hint.terms || []), ...splitSearchTerms(hint.label || hint.author || "")],
+      [
+        ...(hint.terms || []),
+        ...splitSearchTerms(hint.label || hint.author || ""),
+      ],
       48,
     );
     return {
@@ -3846,7 +3979,10 @@ function computeSourceHintBoost(result, sourceHints = [], strong = false) {
     if (hint.path && hint.path === result.path) {
       boost += strong ? 0.55 : 0.35;
     }
-    if (Array.isArray(hint.resolvedPaths) && hint.resolvedPaths.includes(result.path)) {
+    if (
+      Array.isArray(hint.resolvedPaths) &&
+      hint.resolvedPaths.includes(result.path)
+    ) {
       boost += strong ? 0.5 : 0.3;
     }
     const exact = normalizeSearchText(
@@ -3901,7 +4037,12 @@ function computeMetadataBonus(
   return Math.min(bonus, DEFAULT_METADATA_CAP + DEFAULT_SOURCE_HINT_CAP);
 }
 
-function computePlannedContentBonus(text, plan = {}, config = {}, queryLang = "") {
+function computePlannedContentBonus(
+  text,
+  plan = {},
+  config = {},
+  queryLang = "",
+) {
   const haystack = normalizeSearchText(text);
   if (!haystack) return 0;
   const chunkLang = detectLanguageHint(text);
@@ -3917,13 +4058,16 @@ function computePlannedContentBonus(text, plan = {}, config = {}, queryLang = ""
     if (phrase && haystack.includes(phrase)) bonus += exactPhraseBonus;
   }
   for (const term of plan.quotedTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += quotedTermBonus;
+    if (term && hasNormalizedSearchTerm(haystack, term))
+      bonus += quotedTermBonus;
   }
   for (const term of plan.primaryTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += contentKeywordBonus;
+    if (term && hasNormalizedSearchTerm(haystack, term))
+      bonus += contentKeywordBonus;
   }
   for (const term of plan.expansionTerms || []) {
-    if (term && hasNormalizedSearchTerm(haystack, term)) bonus += expansionTermBonus;
+    if (term && hasNormalizedSearchTerm(haystack, term))
+      bonus += expansionTermBonus;
   }
   for (const term of plan.supportingTerms || []) {
     if (term && hasNormalizedSearchTerm(haystack, term)) {
@@ -4032,10 +4176,7 @@ function looksLikeReferenceListing(result) {
     return true;
   }
 
-  const yearCount = countPatternMatches(
-    text,
-    /\b(?:1[5-9]\d{2}|20\d{2})\b/gu,
-  );
+  const yearCount = countPatternMatches(text, /\b(?:1[5-9]\d{2}|20\d{2})\b/gu);
   const publisherMarkers = countPatternMatches(
     normalized,
     /\b(?:madrid|barcelona|mexico|paris|london|press|universidad|university|editorial|ediciones|fce|siglo|iberoamericana|vol|vols|eds|ed)\b/gu,
@@ -4107,7 +4248,9 @@ function resultHasDateEvidence(result) {
 
 function resultHasOpinionEvidence(result) {
   return /\b(opinion|opin\w*|pensab\w*|crei\w*|defend\w*|propon\w*|argument\w*|critic\w*|denunci\w*|conden\w*|rechaz\w*|abol\w*|suspend\w*|restituci\w*|thought|argued|defended|proposed|criticized|criticised|denounced|condemned|rejected|abolished|suspended|restitution)\b/u.test(
-    normalizeSearchText([result?.heading, result?.text].filter(Boolean).join(" ")),
+    normalizeSearchText(
+      [result?.heading, result?.text].filter(Boolean).join(" "),
+    ),
   );
 }
 
@@ -4125,12 +4268,7 @@ function computeAnswerEvidenceBonus(result, query) {
   if (asksOpinion && opinionEvidence) {
     bonus += 0.3;
   }
-  if (
-    asksDate &&
-    asksOpinion &&
-    dateEvidence.hasDate &&
-    opinionEvidence
-  ) {
+  if (asksDate && asksOpinion && dateEvidence.hasDate && opinionEvidence) {
     bonus += 0.15;
   }
   return Math.min(bonus, 0.85);
@@ -4312,14 +4450,12 @@ function applyHybridBonuses(
       : candidate.channels?.has?.("source-heading")
         ? 1.8
         : candidate.channels?.has?.("source-strict")
-        ? 1.65
-        : candidate.channels?.has?.("strict")
-          ? 1.35
-          : 0;
+          ? 1.65
+          : candidate.channels?.has?.("strict")
+            ? 1.35
+            : 0;
     const semanticDominantBonus =
-      candidate.channels?.has?.("semantic") && semanticDominantMode
-        ? 1.6
-        : 0;
+      candidate.channels?.has?.("semantic") && semanticDominantMode ? 1.6 : 0;
     const semanticQuoteScopeBonus =
       queryPlan.hasQuotedScope && candidateHasSemanticRetrieval(candidate)
         ? 0.25
@@ -4397,10 +4533,7 @@ function diversifyResults(
   const fingerprints = new Set();
   const maxPerSource = Math.max(
     1,
-    Math.min(
-      limit,
-      Number(config.search?.maxPassagesPerSource || 5),
-    ),
+    Math.min(limit, Number(config.search?.maxPassagesPerSource || 5)),
   );
   const takeUpTo = (maxPerPath, target = limit, predicate = null) => {
     const effectiveMaxPerPath = Math.max(
@@ -4626,7 +4759,11 @@ async function searchLibrary(query, options = {}) {
     plan,
     fileIds,
   );
-  groups.push({ name: "keyword", weight: config.search?.keywordWeight ?? 1.1, results: ftsResults });
+  groups.push({
+    name: "keyword",
+    weight: config.search?.keywordWeight ?? 1.1,
+    results: ftsResults,
+  });
 
   const metadataResults = await searchMetadata(
     config,
@@ -4636,7 +4773,11 @@ async function searchLibrary(query, options = {}) {
     plan,
     fileIds,
   );
-  groups.push({ name: "metadata", weight: config.search?.metadataWeight ?? 0.8, results: metadataResults });
+  groups.push({
+    name: "metadata",
+    weight: config.search?.metadataWeight ?? 0.8,
+    results: metadataResults,
+  });
 
   const sourceResults = await searchSourceDeepScan(
     config,
@@ -4646,24 +4787,37 @@ async function searchLibrary(query, options = {}) {
     plan,
     fileIds,
   );
-  groups.push({ name: "source", weight: config.search?.sourceWeight ?? 1.2, results: sourceResults });
+  groups.push({
+    name: "source",
+    weight: config.search?.sourceWeight ?? 1.2,
+    results: sourceResults,
+  });
 
   options.rrfK = config.search?.rrfK ?? 60;
   let candidates = fuseRankedResults(groups, options);
   if (!candidates.length && sourceHints.length) {
     candidates = fuseRankedResults([
-      { name: "source", weight: config.search?.sourceWeight ?? 1.2, results: sourceResults },
+      {
+        name: "source",
+        weight: config.search?.sourceWeight ?? 1.2,
+        results: sourceResults,
+      },
     ]);
   }
 
-  const scored = applyHybridBonuses(candidates, effectiveQuery, sourceHints, plan, config, query).sort(
-    (a, b) => {
-      if (a.score !== b.score) return b.score - a.score;
-      return String(a.result.path || "").localeCompare(
-        String(b.result.path || ""),
-      );
-    },
-  );
+  const scored = applyHybridBonuses(
+    candidates,
+    effectiveQuery,
+    sourceHints,
+    plan,
+    config,
+    query,
+  ).sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return String(a.result.path || "").localeCompare(
+      String(b.result.path || ""),
+    );
+  });
   const quoteScoped = split.hasQuotedScope
     ? scored.filter((item) => candidateMatchesQuoteScope(item, plan))
     : scored;
@@ -4676,7 +4830,9 @@ async function searchLibrary(query, options = {}) {
       )
     : [];
   const finalScored =
-    conceptEvidence.length >= Math.min(3, limit) ? conceptEvidence : scopedScored;
+    conceptEvidence.length >= Math.min(3, limit)
+      ? conceptEvidence
+      : scopedScored;
   return diversifyResults(finalScored, limit, sourceHints, plan, config);
 }
 
@@ -4792,7 +4948,9 @@ async function buildChatLibraryContext(query, requestOptions = {}) {
   if (!requestForcesEnable) {
     const modeSettings = config.chatModes?.[modeKey];
     const modeEnabled =
-      modeSettings && typeof modeSettings === "object" && "enabled" in modeSettings
+      modeSettings &&
+      typeof modeSettings === "object" &&
+      "enabled" in modeSettings
         ? modeSettings.enabled === true
         : config.chatIntegration.enabled === true;
     chatSettings.enabled = chatSettings.enabled && modeEnabled;
@@ -4962,7 +5120,8 @@ WHERE e.model = ${sqlLiteral(config.embedding.model)}${dimensionFilter};`,
       config.embedding.enabled === true
         ? Math.max(
             0,
-            status.chunks - (vectorConfigured ? status.embedding.readyCount : 0),
+            status.chunks -
+              (vectorConfigured ? status.embedding.readyCount : 0),
           )
         : 0;
     status.embedding.ready =

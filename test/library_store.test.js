@@ -19,12 +19,20 @@ const {
 const defaultConfig = require("../library/config.default.json");
 
 test("buildChunks drops reference-dense back matter but keeps prose under a back-matter heading", () => {
-  const chunking = { targetChars: 2400, overlapChars: 0, minChars: 120, maxChars: 3200 };
+  const chunking = {
+    targetChars: 2400,
+    overlapChars: 0,
+    minChars: 120,
+    maxChars: 3200,
+  };
 
   // A real index page (each entry ends in page numbers) must be dropped.
   const indexBody =
     "# INDEX\n\n" +
-    Array.from({ length: 30 }, (_v, i) => `term ${i}, ${i + 10}, ${i + 200}, ${i + 405}n`).join("\n\n");
+    Array.from(
+      { length: 30 },
+      (_v, i) => `term ${i}, ${i + 10}, ${i + 200}, ${i + 405}n`,
+    ).join("\n\n");
   const indexDropped = [];
   const indexChunks = buildChunks(indexBody, chunking, indexDropped);
   assert.ok(indexDropped.length >= 1, "index page should be dropped");
@@ -49,7 +57,11 @@ test("buildChunks drops reference-dense back matter but keeps prose under a back
     "derredor acudían, uno tras otro en torrente, para llorarle.";
   const proseDropped = [];
   const proseChunks = buildChunks(proseUnderSumario, chunking, proseDropped);
-  assert.strictEqual(proseDropped.length, 0, "prose under SUMARIO must not be dropped");
+  assert.strictEqual(
+    proseDropped.length,
+    0,
+    "prose under SUMARIO must not be dropped",
+  );
   assert.ok(
     proseChunks.some((c) => c.text.includes("guerra báquica")),
     "the translated text must survive",
@@ -267,7 +279,12 @@ test("searchLibrary applies per-mode search algorithm settings", async (t) => {
       sources: [
         { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
       ],
-      chunking: { targetChars: 500, overlapChars: 0, minChars: 40, maxChars: 700 },
+      chunking: {
+        targetChars: 500,
+        overlapChars: 0,
+        minChars: 40,
+        maxChars: 700,
+      },
       search: { ...defaultConfig.search, keywordEnabled: true },
       searchModes: {
         ollama: { maxPassagesPerSource: 1 },
@@ -501,7 +518,12 @@ test("quoted multilingual search preserves semantic hits without hardcoded alias
       sources: [
         { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
       ],
-      chunking: { targetChars: 900, overlapChars: 0, minChars: 80, maxChars: 1200 },
+      chunking: {
+        targetChars: 900,
+        overlapChars: 0,
+        minChars: 80,
+        maxChars: 1200,
+      },
       search: {
         ...defaultConfig.search,
         keywordEnabled: true,
@@ -585,7 +607,12 @@ test("semantic bridge promotes answer-bearing multilingual passages", async (t) 
       sources: [
         { name: "Notes", type: "note", path: sourceDir, extensions: [".txt"] },
       ],
-      chunking: { targetChars: 900, overlapChars: 0, minChars: 80, maxChars: 1200 },
+      chunking: {
+        targetChars: 900,
+        overlapChars: 0,
+        minChars: 80,
+        maxChars: 1200,
+      },
       search: {
         ...defaultConfig.search,
         keywordEnabled: true,
@@ -698,7 +725,12 @@ test("strict bilingual facets retrieve entity-topic evidence", async (t) => {
       sources: [
         { name: "Books", type: "book", path: sourceDir, extensions: [".txt"] },
       ],
-      chunking: { targetChars: 700, overlapChars: 0, minChars: 80, maxChars: 1000 },
+      chunking: {
+        targetChars: 700,
+        overlapChars: 0,
+        minChars: 80,
+        maxChars: 1000,
+      },
       search: {
         ...defaultConfig.search,
         keywordEnabled: true,
@@ -756,10 +788,7 @@ test("guillemets are treated as quote scope", () => {
   const scoped = splitQueryForRetrieval(
     "Que significa «the red illness» segun «María Zambrano»",
   );
-  assert.strictEqual(
-    scoped.retrievalQuery,
-    "the red illness María Zambrano",
-  );
+  assert.strictEqual(scoped.retrievalQuery, "the red illness María Zambrano");
   assert.strictEqual(scoped.hasQuotedScope, true);
 });
 

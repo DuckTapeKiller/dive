@@ -90,7 +90,9 @@ async function readEntryText(zipfile, entries, entryPath) {
 }
 
 function normalizeZipPath(value) {
-  const raw = String(value || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const raw = String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
   if (!raw) return "";
   const normalized = path.posix.normalize(raw);
   if (normalized === "." || normalized.startsWith("../")) return "";
@@ -274,7 +276,9 @@ function foldText(text) {
 }
 
 function normalizeMetadataComparable(text) {
-  return foldText(text).replace(/^#+\s*/, "").trim();
+  return foldText(text)
+    .replace(/^#+\s*/, "")
+    .trim();
 }
 
 function isLikelyNavigationText(text) {
@@ -303,7 +307,9 @@ function isBoilerplateText(text) {
   if (/^epub(?: base)?\s+r?\d+(?:\.\d+)*(?:\s+\S+)?$/.test(normalized)) {
     return true;
   }
-  if (/^(titivillus|armandathos)\s+\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(normalized)) {
+  if (
+    /^(titivillus|armandathos)\s+\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(normalized)
+  ) {
     return true;
   }
   if (/^indice de contenido\b/.test(normalized)) return true;
@@ -335,7 +341,8 @@ function cleanEpubText(text, metadata = {}) {
       comparable &&
       (comparable === title ||
         comparable === author ||
-        (author && new RegExp(`^${escapeRegExp(author)},?\\s+\\d{4}$`).test(comparable)))
+        (author &&
+          new RegExp(`^${escapeRegExp(author)},?\\s+\\d{4}$`).test(comparable)))
     ) {
       continue;
     }
