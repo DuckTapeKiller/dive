@@ -1,6 +1,6 @@
 {
   "name": "dive-desktop",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -27,7 +27,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "prepare": "husky"
   },
   "devDependencies": {
     "electron": "^42.3.0",
@@ -35,9 +36,15 @@
     "esbuild": "^0.28.0",
     "eslint": "^10.4.1",
     "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
     "jsdom": "^29.1.1",
+    "lint-staged": "^17.0.8",
     "postject": "^1.0.0-alpha.6",
     "prettier": "^3.9.4"
+  },
+  "lint-staged": {
+    "*.{js,json,css,md,html,yml,yaml}": "prettier --write",
+    "*.js": "eslint --fix"
   },
   "build": {
     "publish": null,

@@ -1100,22 +1100,54 @@ function normalizeCloudHistoryMessages(history, message) {
   return messages;
 }
 
-function getSharedAssistantPolicyPrompt() {
-  return [
-    "You are a concise, helpful, academically serious AI assistant. You get straight to the point, but you provide enough context, distinctions, and evidence to be useful to researchers, professors, and advanced students. Never use emojis.",
-    "Always respond in the language the user speaks to you in.",
-    "If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first. Do not use outside knowledge unless the passages are insufficient, and clearly say when the local library does not provide enough evidence.",
-    "When the passages contain multiple accounts, causes, origins, definitions, or scholarly distinctions, explain the relevant variants instead of reducing the answer to a thin single sentence.",
-    'When retrieved passages are available, name the source inside the body of the answer for every factual claim. Prefer prose attribution such as "According to Apolodoro\'s Biblioteca..." or "In Colin Wilson\'s The Outsider...". Do not rely only on hyperlinks, source boxes, bracket numbers, or vague phrases such as "some accounts say".',
-  ].join("\n\n");
+// Prompt used when Database Context is ON: answer strictly and only from the
+// retrieved local-library passages, no tools. Kept identical to the Ollama/Pi
+// DB-on prompt so every mode behaves the same when its database is enabled.
+const DB_ON_PROMPT = `You are a meticulous academic research assistant writing for scholars, professors, and advanced readers. You are precise, explanatory, and intellectually serious. Never use emojis.
+
+Always respond in the language the user speaks to you in. When you write in English, use British English spelling and conventions (e.g. "colour", "analyse", "recognise", "-ise" endings).
+
+### SOLE SOURCE: THE LOCAL LIBRARY PASSAGES
+The passages retrieved from the user's local library, included in this turn, are your only source of evidence. Answer strictly and exclusively from them.
+
+Grounding (non-negotiable):
+- Use ONLY the provided passages. Do not introduce outside knowledge, do not reason beyond what the text supports, do not call any tools, and never invent facts, quotations, titles, dates, or page references.
+- If the passages do not contain enough to answer, say so explicitly and state precisely what is and is not supported by the available text. Do not fill gaps with general knowledge or speculation.
+
+Scholarly method (how to write the answer):
+- Be explicative, not extractive. Explain the evidence, define key terms, and develop the reasoning — do not return a bare quotation or a one-line summary when the passages support a fuller account.
+- Synthesize across passages: connect related points, and where passages agree, diverge, or qualify one another, make those relationships explicit.
+- Distinguish the principal account from variants, exceptions, or marginal/editorial notes, and flag uncertainty, ambiguity, or gaps in the evidence.
+- Quote sparingly, only when the exact wording matters; otherwise paraphrase faithfully and accurately.
+
+Attribution (mandatory):
+- Name the source of every factual claim inside the sentence, in prose — e.g. "According to Oppenheim's La antigua Mesopotamia…", "As Apolodoro's Biblioteca records…".
+- Do not rely on source boxes, bracketed numbers, hyperlinks, or vague formulations such as "some accounts say" or "it is said". Tie each claim to the specific work or author it comes from.
+
+Be concise but substantive: academic, direct, and genuinely informative. Avoid padding, filler, and hedging.`;
+
+// Prompt used when Database Context is OFF: the academic assistant with tool
+// access. The cloud tool list itself is added separately as the skills prompt.
+const DB_OFF_POLICY_PROMPT = `You are an academic and concise assistant. You get straight to the point. Never use emojis.
+
+Always respond in the language the user speaks to you in. When you write in English, use British English spelling and conventions (e.g. "colour", "analyse", "recognise", "-ise" endings).
+
+If the user asks you to proofread or check grammar, return ONLY the corrected, polished text — no explanation, no commentary, no alternative versions.
+
+If the user asks you to translate a text, return ONLY the translation in the requested language — no explanation, no commentary, no notes.
+
+For any factual, encyclopedic, biographical, definitional, historical, or current-information question, use the available tools (Wikipedia, Britannica, Wiktionary, web search, etc.) rather than relying on your own training data, which is often outdated or inaccurate. Reserve your own knowledge for reasoning, explanation, writing, and language help. Never invent facts, citations, sources, dates, or page references; if no tool covers something and you cannot verify it, say so plainly.`;
+
+function getSharedAssistantPolicyPrompt(databaseEnabled = false) {
+  return databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT;
 }
 
-function withSharedSystemPrompt(messages) {
+function withSharedSystemPrompt(messages, databaseEnabled = false) {
   const sourceMessages = Array.isArray(messages) ? messages : [];
   return [
     {
       role: "system",
-      content: getSharedAssistantPolicyPrompt(),
+      content: getSharedAssistantPolicyPrompt(databaseEnabled),
     },
     ...sourceMessages,
   ];
@@ -3838,6 +3870,7 @@ const server = http.createServer(async (req, res) => {
       let requestMessages = withSharedSystemPrompt(messages);
       let librarySourceResults = [];
       let libraryPassages = [];
+      let databaseContextEnabled = false;
       let output = "";
       let usage = null;
 
@@ -3862,6 +3895,13 @@ const server = http.createServer(async (req, res) => {
           getLibraryRequestForCommand(library, slashCommand, history, "cloud"),
         );
         if (libraryContext.enabled) {
+          databaseContextEnabled = true;
+          // Database Context is on for this cloud turn: use the strict
+          // library-only prompt instead of the default tool-enabled one.
+          requestMessages[0] = {
+            role: "system",
+            content: getSharedAssistantPolicyPrompt(true),
+          };
           requestMessages = insertLibraryContextMessage(
             requestMessages,
             libraryContext.contextMessage,
@@ -3884,10 +3924,9 @@ const server = http.createServer(async (req, res) => {
         emit({ type: "library_error", error: e.message });
       }
 
-      const databasePriorityForLibraryTurn =
-        !slashCommand && librarySourceResults.length > 0;
-      const cloudSkillsEnabled =
-        !slashCommand && !databasePriorityForLibraryTurn;
+      // When this mode's Database Context is on, do not offer tools at all —
+      // the DB-on prompt answers strictly from the library passages.
+      const cloudSkillsEnabled = !slashCommand && !databaseContextEnabled;
       if (cloudSkillsEnabled) {
         const skillsPrompt = getCloudSkillsPolicyPrompt();
         if (skillsPrompt) {
@@ -4645,10 +4684,16 @@ const server = http.createServer(async (req, res) => {
           ),
         );
         if (libraryContext.enabled) {
-          promptMessage = buildPiPromptWithLibraryContext(
-            promptMessage,
-            libraryContext.contextMessage,
-          );
+          // Database Context on for Pi: prepend the strict library-only policy
+          // so Pi answers exclusively from the retrieved passages. When the
+          // database is off, Pi keeps its own native persona and tools.
+          promptMessage =
+            DB_ON_PROMPT +
+            "\n\n" +
+            buildPiPromptWithLibraryContext(
+              promptMessage,
+              libraryContext.contextMessage,
+            );
           librarySourceResults = serializeLibraryResults(
             getLibraryContextSourceResults(libraryContext),
             getLibraryRequestForCommand(body.library, slashCommand, history),
