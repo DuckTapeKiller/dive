@@ -4,3 +4,4 @@ release
 assets
 package-lock.json
 *.min.js
+.husky/_

@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # npm dependencies: one grouped PR per month, not a firehose.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions used by the workflows, also grouped + monthly.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
