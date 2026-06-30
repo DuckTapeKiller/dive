@@ -452,6 +452,25 @@
         flex-shrink: 0;
         display: none;
       }
+      #clearFileBtn {
+        display: none;
+        flex-shrink: 0;
+        border: none;
+        background: transparent;
+        color: var(--text-normal);
+        opacity: 0.6;
+        cursor: pointer;
+        font-size: 14px;
+        line-height: 1;
+        padding: 0 4px;
+      }
+      #clearFileBtn:hover {
+        opacity: 1;
+      }
+      /* Show the remove (×) button only while a file is pending. */
+      #fileLabel:not(:empty) + #clearFileBtn {
+        display: inline-flex;
+      }
 
       /* RESIZERS */
       #notesResizer,
@@ -2472,6 +2491,14 @@
             </svg>
           </button>
           <span id="fileLabel"></span>
+          <button
+            id="clearFileBtn"
+            aria-label="Remove uploaded file"
+            title="Remove uploaded file"
+            type="button"
+          >
+            ×
+          </button>
           <button
             id="send"
             aria-label="Send message"
@@ -7618,6 +7645,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         syncCurrentSessionState();
 
         mode = m;
+        // An uploaded file is a one-off attachment for the current mode's next
+        // message; drop it on a mode switch so it does not bleed across modes.
+        clearPendingFile();
         const isOllamaMode = m === "ollama";
         const isPiMode = m === "pi";
         const isCloudMode = m === "cloud";
@@ -8425,6 +8455,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
         await readJsonResponse(res, "Delete history");
         loadHistoryPanel();
+      }
+
+      function clearPendingFile() {
+        pendingFile = null;
+        fileLabel.textContent = "";
+        fileInput.value = "";
+      }
+
+      const clearFileBtn = document.getElementById("clearFileBtn");
+      if (clearFileBtn) {
+        clearFileBtn.addEventListener("click", clearPendingFile);
       }
 
       fileInput.addEventListener("change", async () => {
