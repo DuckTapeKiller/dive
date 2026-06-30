@@ -1,7 +1,10 @@
+const prettier = require("eslint-config-prettier/flat");
+
 module.exports = [
   {
     ignores: ["dist/**", "release/**", "node_modules/**"],
   },
+  prettier,
   {
     languageOptions: {
       ecmaVersion: "latest",

@@ -200,7 +200,6 @@ test("EPUB OPF metadata parser joins multiple authors", () => {
   });
 });
 
-
 test("EPUB HTML extraction preserves headings and paragraphs", () => {
   const text = extractHtmlText(`<!doctype html>
 <html>

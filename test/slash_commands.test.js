@@ -30,7 +30,9 @@ test("builds forced Wikipedia skill call with language prefix", () => {
 });
 
 test("builds calculator and notes commands", () => {
-  const calculator = buildForcedSkillToolCall(parseSlashCommand("/calc 12 * 44"));
+  const calculator = buildForcedSkillToolCall(
+    parseSlashCommand("/calc 12 * 44"),
+  );
   assert.deepStrictEqual(JSON.parse(calculator.function.arguments), {
     expression: "12 * 44",
   });

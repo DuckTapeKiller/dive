@@ -2437,7 +2437,23 @@
             title="Restrict database search to specific books"
             style="display: none"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-book-open-icon lucide-book-open"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="lucide lucide-book-open-icon lucide-book-open"
+            >
+              <path d="M12 7v14" />
+              <path
+                d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
+              />
+            </svg>
             <span id="bookFilterDot" style="display: none"></span>
           </button>
           <button id="uploadBtn" aria-label="Upload file" title="Upload file">
@@ -2479,8 +2495,8 @@
           </div>
           <div id="bookFilterHelp">
             Restrict database passages to up to 10 books for this chat mode.
-            Type a title and pick a suggestion. An empty list searches the
-            whole library.
+            Type a title and pick a suggestion. An empty list searches the whole
+            library.
           </div>
           <input
             id="bookFilterSearchInput"
@@ -3282,81 +3298,171 @@
             </div>
             <div class="setting-row search-algorithm-settings">
               <div class="search-algorithm-header">
-                <label style="font-size: 10px; opacity: 0.8; letter-spacing: 0.5px;">SEARCH ALGORITHM SETTINGS</label>
-                <span id="searchAlgoSaveStatus" style="font-size: 9px; opacity: 0.7; margin-left: auto; margin-right: 8px;"></span>
+                <label
+                  style="font-size: 10px; opacity: 0.8; letter-spacing: 0.5px"
+                  >SEARCH ALGORITHM SETTINGS</label
+                >
+                <span
+                  id="searchAlgoSaveStatus"
+                  style="
+                    font-size: 9px;
+                    opacity: 0.7;
+                    margin-left: auto;
+                    margin-right: 8px;
+                  "
+                ></span>
                 <button
                   id="resetSearchAlgorithmSettingsBtn"
                   type="button"
                   class="settings-action-btn"
-                  style="padding: 2px 6px; font-size: 9px; min-width: auto; height: auto;"
+                  style="
+                    padding: 2px 6px;
+                    font-size: 9px;
+                    min-width: auto;
+                    height: auto;
+                  "
                 >
                   RESET DEFAULTS
                 </button>
               </div>
-              <div id="searchAlgorithmModeTabs" class="search-algorithm-mode-tabs">
-                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="ollama">OLLAMA</button>
-                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="pi">PI</button>
-                <button type="button" class="search-algo-mode-btn" data-search-algo-mode="cloud">CLOUD</button>
+              <div
+                id="searchAlgorithmModeTabs"
+                class="search-algorithm-mode-tabs"
+              >
+                <button
+                  type="button"
+                  class="search-algo-mode-btn"
+                  data-search-algo-mode="ollama"
+                >
+                  OLLAMA
+                </button>
+                <button
+                  type="button"
+                  class="search-algo-mode-btn"
+                  data-search-algo-mode="pi"
+                >
+                  PI
+                </button>
+                <button
+                  type="button"
+                  class="search-algo-mode-btn"
+                  data-search-algo-mode="cloud"
+                >
+                  CLOUD
+                </button>
               </div>
               <div class="setting-help">
                 Each chat mode keeps its own copy of these weights. The sliders
-                below edit the selected mode only; Save Database Settings
-                stores all three. Reset Defaults resets the selected mode.
+                below edit the selected mode only; Save Database Settings stores
+                all three. Reset Defaults resets the selected mode.
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">RRF k (1-100) (Default: 60)</label>
+                <label style="font-size: 10px"
+                  >RRF k (1-100) (Default: 60)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseRrfKInput" type="range" min="1" max="100" step="1" />
+                  <input
+                    id="databaseRrfKInput"
+                    type="range"
+                    min="1"
+                    max="100"
+                    step="1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  Lower values trust the top of each search list more; higher values blend rankings evenly.
+                  Lower values trust the top of each search list more; higher
+                  values blend rankings evenly.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">CONTENT KEYWORD BONUS (0-1) (Default: 0.16)</label>
+                <label style="font-size: 10px"
+                  >CONTENT KEYWORD BONUS (0-1) (Default: 0.16)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseContentKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
+                  <input
+                    id="databaseContentKeywordBonusInput"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  Extra score for passages whose body actually contains your search words.
+                  Extra score for passages whose body actually contains your
+                  search words.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">METADATA KEYWORD BONUS (0-1) (Default: 0.06)</label>
+                <label style="font-size: 10px"
+                  >METADATA KEYWORD BONUS (0-1) (Default: 0.06)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseMetadataKeywordBonusInput" type="range" min="0" max="1" step="0.01" />
+                  <input
+                    id="databaseMetadataKeywordBonusInput"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  Extra score for passages whose title, author, or heading contains your search words.
+                  Extra score for passages whose title, author, or heading
+                  contains your search words.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">SEMANTIC WEIGHT (0-3) (Default: 1.0)</label>
+                <label style="font-size: 10px"
+                  >SEMANTIC WEIGHT (0-3) (Default: 1.0)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseSemanticWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <input
+                    id="databaseSemanticWeightInput"
+                    type="range"
+                    min="0"
+                    max="3"
+                    step="0.1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  How much to trust meaning-based (vector) search. Needs an embedding model.
+                  How much to trust meaning-based (vector) search. Needs an
+                  embedding model.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">KEYWORD (FTS) WEIGHT (0-3) (Default: 1.1)</label>
+                <label style="font-size: 10px"
+                  >KEYWORD (FTS) WEIGHT (0-3) (Default: 1.1)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseKeywordWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <input
+                    id="databaseKeywordWeightInput"
+                    type="range"
+                    min="0"
+                    max="3"
+                    step="0.1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  How much to trust exact-word search. Needs Keyword FTS Index turned on.
+                  How much to trust exact-word search. Needs Keyword FTS Index
+                  turned on.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">METADATA SEARCH WEIGHT (0-3) (Default: 0.8)</label>
+                <label style="font-size: 10px"
+                  >METADATA SEARCH WEIGHT (0-3) (Default: 0.8)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseMetadataWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <input
+                    id="databaseMetadataWeightInput"
+                    type="range"
+                    min="0"
+                    max="3"
+                    step="0.1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
@@ -3364,23 +3470,41 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">SOURCE PATH WEIGHT (0-3) (Default: 1.2)</label>
+                <label style="font-size: 10px"
+                  >SOURCE PATH WEIGHT (0-3) (Default: 1.2)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseSourceWeightInput" type="range" min="0" max="3" step="0.1" />
+                  <input
+                    id="databaseSourceWeightInput"
+                    type="range"
+                    min="0"
+                    max="3"
+                    step="0.1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  How much to trust hints like "according to..." that point at a specific book.
+                  How much to trust hints like "according to..." that point at a
+                  specific book.
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px">MAX PASSAGES PER SOURCE (1-20) (Default: 5)</label>
+                <label style="font-size: 10px"
+                  >MAX PASSAGES PER SOURCE (1-20) (Default: 5)</label
+                >
                 <div class="setting-range">
-                  <input id="databaseMaxPassagesPerSourceInput" type="range" min="1" max="20" step="1" />
+                  <input
+                    id="databaseMaxPassagesPerSourceInput"
+                    type="range"
+                    min="1"
+                    max="20"
+                    step="1"
+                  />
                   <div class="setting-range-value"></div>
                 </div>
                 <div class="setting-help">
-                  Allows several relevant chunks from the same book while still blocking duplicate repeated text.
+                  Allows several relevant chunks from the same book while still
+                  blocking duplicate repeated text.
                 </div>
               </div>
             </div>
@@ -4010,7 +4134,9 @@
               config from server.
             </div>
             <div id="piRuntimeSummary"></div>
-            <label style="font-size: 10px; margin-top: 2px">DIVE DATA FOLDER</label>
+            <label style="font-size: 10px; margin-top: 2px"
+              >DIVE DATA FOLDER</label
+            >
             <div id="ollamaPiChatFolderPath"></div>
             <div class="setting-row-inline">
               <button id="refactored_btn_6" class="settings-action-btn">
@@ -4311,11 +4437,7 @@
         </div>
       </div>
     </div>
-    <div
-      id="appDialogModal"
-      class="app-dialog-overlay"
-      aria-hidden="true"
-    >
+    <div id="appDialogModal" class="app-dialog-overlay" aria-hidden="true">
       <div
         class="app-dialog"
         role="dialog"
@@ -4947,10 +5069,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       const chat = document.getElementById("chat");
       let chatPinnedToBottom = true;
-      chat.addEventListener("scroll", () => {
-        const distanceFromBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight;
-        chatPinnedToBottom = distanceFromBottom < 60;
-      }, { passive: true });
+      chat.addEventListener(
+        "scroll",
+        () => {
+          const distanceFromBottom =
+            chat.scrollHeight - chat.scrollTop - chat.clientHeight;
+          chatPinnedToBottom = distanceFromBottom < 60;
+        },
+        { passive: true },
+      );
       function scrollChatToBottom() {
         if (chatPinnedToBottom) chat.scrollTop = chat.scrollHeight;
       }
@@ -5848,9 +5975,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
         populateSearchAlgorithmSliders();
         updateBookFilterUi();
-        document.querySelectorAll('input[type="range"]').forEach(input => {
+        document.querySelectorAll('input[type="range"]').forEach((input) => {
           const display = input.nextElementSibling;
-          if (display && display.classList.contains('setting-range-value')) {
+          if (display && display.classList.contains("setting-range-value")) {
             display.textContent = input.value;
           }
         });
@@ -5924,9 +6051,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ) {
           databaseConfig.searchModes = {};
         }
-        databaseConfig.searchModes[modeKey] = readSearchAlgorithmSlidersFromForm(
-          getSearchAlgorithmValuesForMode(modeKey),
-        );
+        databaseConfig.searchModes[modeKey] =
+          readSearchAlgorithmSlidersFromForm(
+            getSearchAlgorithmValuesForMode(modeKey),
+          );
       }
 
       // Search-algorithm settings autosave: persist immediately on change to
@@ -5975,15 +6103,24 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function scheduleSearchAlgorithmAutosave() {
         if (!searchAlgorithmSlidersReady) return;
         clearTimeout(searchAlgoAutosaveTimer);
-        searchAlgoAutosaveTimer = setTimeout(persistSearchAlgorithmSettings, 400);
+        searchAlgoAutosaveTimer = setTimeout(
+          persistSearchAlgorithmSettings,
+          400,
+        );
       }
 
       function populateSearchAlgorithmSliders() {
         const modeKey = activeSearchAlgorithmMode();
         const values = getSearchAlgorithmValuesForMode(modeKey);
         setRangeValue("databaseRrfKInput", values.rrfK);
-        setRangeValue("databaseContentKeywordBonusInput", values.contentKeywordBonus);
-        setRangeValue("databaseMetadataKeywordBonusInput", values.metadataKeywordBonus);
+        setRangeValue(
+          "databaseContentKeywordBonusInput",
+          values.contentKeywordBonus,
+        );
+        setRangeValue(
+          "databaseMetadataKeywordBonusInput",
+          values.metadataKeywordBonus,
+        );
         setRangeValue("databaseSemanticWeightInput", values.semanticWeight);
         setRangeValue("databaseKeywordWeightInput", values.keywordWeight);
         setRangeValue("databaseMetadataWeightInput", values.metadataWeight);
@@ -6683,7 +6820,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const rem = m % 60;
         return rem ? `~${h}h ${rem}m left` : `~${h}h left`;
       }
-      function computeEmbeddingEtaText(job, phaseKey, embedded, embeddingPending) {
+      function computeEmbeddingEtaText(
+        job,
+        phaseKey,
+        embedded,
+        embeddingPending,
+      ) {
         if (!job || job.status !== "running" || phaseKey !== "embedding") {
           embeddingEtaSamples = [];
           return "";
@@ -6811,14 +6953,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const completedPending =
             savedStatus && !savedStatus.error
               ? readiness.missing
-              : stats.embeddingPending ??
+              : (stats.embeddingPending ??
                 Math.max(
                   0,
                   Number(stats.chunks || chunks || 0) -
                     Number(stats.embedded || embedded || 0) -
                     Number(embeddingErrors || 0) -
                     Number(stats.embeddingsSkipped || 0),
-                );
+                ));
           const preflightError = stats.embeddingPreflightError
             ? ` ${stats.embeddingPreflightError}`
             : "";
@@ -7137,7 +7279,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             body: JSON.stringify({ query: term }),
           });
           const data = await readJsonResponse(res, "Search library books");
-          renderBookFilterSuggestions(Array.isArray(data?.files) ? data.files : []);
+          renderBookFilterSuggestions(
+            Array.isArray(data?.files) ? data.files : [],
+          );
         } catch (error) {
           console.error("Book title search failed", error);
           renderBookFilterSuggestions([]);
@@ -8353,9 +8497,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function formatSourcePassagesForClipboard(source) {
-        const passages = Array.isArray(source?.passages)
-          ? source.passages
-          : [];
+        const passages = Array.isArray(source?.passages) ? source.passages : [];
         const lines = [
           "BOOK PATH:",
           source?.path || "(path unavailable)",
@@ -8391,10 +8533,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
           message.thinking = metadata.thinking;
         }
-        if (
-          Array.isArray(metadata.traceLines) &&
-          metadata.traceLines.length
-        ) {
+        if (Array.isArray(metadata.traceLines) && metadata.traceLines.length) {
           message.traceLines = metadata.traceLines;
         }
         if (
@@ -8403,10 +8542,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ) {
           message.traceEvents = metadata.traceEvents;
         }
-        if (
-          Array.isArray(metadata.passages) &&
-          metadata.passages.length
-        ) {
+        if (Array.isArray(metadata.passages) && metadata.passages.length) {
           message.passages = metadata.passages;
         }
         if (typeof metadata.status === "string" && metadata.status.trim()) {
@@ -8649,7 +8785,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         debugBody.style.fontSize = "11px";
         debugDetails.appendChild(debugSummary);
         debugDetails.appendChild(debugBody);
-        
+
         const passagesDetails = document.createElement("details");
         passagesDetails.className = "thinking-details";
         passagesDetails.style.display = "none";
@@ -8663,7 +8799,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         passagesBody.style.fontSize = "12px";
         passagesDetails.appendChild(passagesSummary);
         passagesDetails.appendChild(passagesBody);
-        
+
         wrap.appendChild(plain);
         wrap.appendChild(details);
         wrap.appendChild(debugDetails);
@@ -8704,7 +8840,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             scrollChatToBottom();
           },
           setPassages(passagesArray) {
-            if (!Array.isArray(passagesArray) || passagesArray.length === 0) return;
+            if (!Array.isArray(passagesArray) || passagesArray.length === 0)
+              return;
             currentPassages = [...passagesArray];
             passagesDetails.style.display = "block";
             passagesBody.innerHTML = "";
@@ -8713,7 +8850,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               entry.style.marginBottom = "12px";
               entry.style.paddingBottom = "12px";
               entry.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
-              
+
               const titleEl = document.createElement("div");
               titleEl.style.fontWeight = "bold";
               titleEl.style.marginBottom = "4px";
@@ -8747,7 +8884,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 textEl.textContent = passage.text || "";
               }
               entry.appendChild(textEl);
-              
+
               passagesBody.appendChild(entry);
             });
             scrollChatToBottom();
@@ -8826,14 +8963,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function assistantMetadataHasContent(metadata = {}) {
         return Boolean(
-          (typeof metadata.thinking === "string" &&
-            metadata.thinking.trim()) ||
-            (Array.isArray(metadata.traceLines) &&
-              metadata.traceLines.length) ||
-            (Array.isArray(metadata.traceEvents) &&
-              metadata.traceEvents.length) ||
-            (Array.isArray(metadata.passages) &&
-              metadata.passages.length),
+          (typeof metadata.thinking === "string" && metadata.thinking.trim()) ||
+          (Array.isArray(metadata.traceLines) && metadata.traceLines.length) ||
+          (Array.isArray(metadata.traceEvents) &&
+            metadata.traceEvents.length) ||
+          (Array.isArray(metadata.passages) && metadata.passages.length),
         );
       }
 
@@ -8892,7 +9026,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           }
           renderAssistantHistoryMessage(session.draftAssistant, session);
         } else if (session.activeAbortController) {
-          session.thinkingController = addThinking(activeThinkingSnapshot || {});
+          session.thinkingController = addThinking(
+            activeThinkingSnapshot || {},
+          );
         }
       }
 
@@ -8954,8 +9090,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           session.draftAssistant,
         );
         const metadata =
-          session.thinkingController?.getSnapshot?.() ||
-          existingMetadata;
+          session.thinkingController?.getSnapshot?.() || existingMetadata;
         if (
           (!Array.isArray(metadata.passages) ||
             metadata.passages.length === 0) &&
@@ -10151,7 +10286,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         updateSendButtonState();
         const activeLibrarySources = { results: [] };
         const recordRunTrace = (evt) => {
-          handleStreamEventTrace(evt, runSession.thinkingController || thinking);
+          handleStreamEventTrace(
+            evt,
+            runSession.thinkingController || thinking,
+          );
         };
 
         try {
@@ -10165,7 +10303,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+                if (
+                  thinking?.isConnected &&
+                  !thinking.hadReasoning &&
+                  !thinking.hadTrace &&
+                  !thinking.hadPassages
+                ) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -10270,7 +10413,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace &&
+              !thinking.hadPassages
+            ) {
               thinking.remove();
             }
             if (persistToHistory) {
@@ -10301,7 +10449,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               runConvId,
               lastUserMessage.slice(0, 40),
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+                if (
+                  thinking?.isConnected &&
+                  !thinking.hadReasoning &&
+                  !thinking.hadTrace &&
+                  !thinking.hadPassages
+                ) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -10338,7 +10491,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace &&
+              !thinking.hadPassages
+            ) {
               thinking.remove();
             }
             const assistantMessage = finalizeDraftAssistant(
@@ -10368,7 +10526,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
-                if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+                if (
+                  thinking?.isConnected &&
+                  !thinking.hadReasoning &&
+                  !thinking.hadTrace &&
+                  !thinking.hadPassages
+                ) {
                   thinking.remove();
                   if (runSession.thinkingController === thinking) {
                     runSession.thinkingController = null;
@@ -10399,7 +10562,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               response || "",
               activeLibrarySources.results,
             );
-            if (thinking?.isConnected && !thinking.hadReasoning && !thinking.hadTrace && !thinking.hadPassages) {
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace &&
+              !thinking.hadPassages
+            ) {
               thinking.remove();
             }
             const assistantMessage = finalizeDraftAssistant(
@@ -10505,7 +10673,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         updateSendButtonState();
         const activeLibrarySources = { results: [] };
         const recordRunTrace = (evt) => {
-          handleStreamEventTrace(evt, runSession.thinkingController || thinking);
+          handleStreamEventTrace(
+            evt,
+            runSession.thinkingController || thinking,
+          );
         };
         const handlePartial = (partialResponse) => {
           if (
@@ -11096,7 +11267,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       document.addEventListener("input", (e) => {
         if (e.target.matches('input[type="range"]')) {
           const display = e.target.nextElementSibling;
-          if (display && display.classList.contains('setting-range-value')) {
+          if (display && display.classList.contains("setting-range-value")) {
             display.textContent = e.target.value;
           }
           if (SEARCH_ALGO_SLIDER_IDS.has(e.target.id)) {
@@ -11662,32 +11833,28 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (bookFilterBtn) {
           bookFilterBtn.addEventListener("click", openBookFilterPanel);
         }
-        const bookFilterCloseBtn = document.getElementById(
-          "bookFilterCloseBtn",
-        );
+        const bookFilterCloseBtn =
+          document.getElementById("bookFilterCloseBtn");
         if (bookFilterCloseBtn) {
           bookFilterCloseBtn.addEventListener("click", closeBookFilterPanel);
         }
-        const bookFilterOverlayEl = document.getElementById(
-          "bookFilterOverlay",
-        );
+        const bookFilterOverlayEl =
+          document.getElementById("bookFilterOverlay");
         if (bookFilterOverlayEl) {
           bookFilterOverlayEl.addEventListener("click", function (event) {
             if (event.target === bookFilterOverlayEl) closeBookFilterPanel();
           });
         }
-        const bookFilterClearBtn = document.getElementById(
-          "bookFilterClearBtn",
-        );
+        const bookFilterClearBtn =
+          document.getElementById("bookFilterClearBtn");
         if (bookFilterClearBtn) {
           bookFilterClearBtn.addEventListener("click", function () {
             bookFilterDraft = [];
             renderBookFilterDraft();
           });
         }
-        const bookFilterApplyBtn = document.getElementById(
-          "bookFilterApplyBtn",
-        );
+        const bookFilterApplyBtn =
+          document.getElementById("bookFilterApplyBtn");
         if (bookFilterApplyBtn) {
           bookFilterApplyBtn.addEventListener("click", applyBookFilterDraft);
         }
@@ -11798,18 +11965,21 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "forceLibraryReindexBtn",
         );
         if (btn_forceLibraryReindexBtn) {
-          btn_forceLibraryReindexBtn.addEventListener("click", async function () {
-            if (
-              !(await appConfirm(
-                "Reindex all configured source files?",
-                "Database",
-                { confirmLabel: "Reindex", danger: true },
-              ))
-            ) {
-              return;
-            }
-            startLibraryIndex(true);
-          });
+          btn_forceLibraryReindexBtn.addEventListener(
+            "click",
+            async function () {
+              if (
+                !(await appConfirm(
+                  "Reindex all configured source files?",
+                  "Database",
+                  { confirmLabel: "Reindex", danger: true },
+                ))
+              ) {
+                return;
+              }
+              startLibraryIndex(true);
+            },
+          );
         }
 
         const btn_cancelLibraryIndexBtn = document.getElementById(

@@ -68,7 +68,11 @@ function startMockProvider() {
           "data: " +
             JSON.stringify({
               choices: [{ delta: {} }],
-              usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+              },
             }) +
             "\n\n",
         );

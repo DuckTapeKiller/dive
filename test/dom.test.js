@@ -298,8 +298,9 @@ test("frontend boots without network fetch crashes", async () => {
     dom.window.document.getElementById("resetSearchAlgorithmSettingsBtn"),
   );
   assert.ok(
-    dom.window.document.querySelectorAll("#builtinSkillsList .builtin-skill-toggle")
-      .length > 0,
+    dom.window.document.querySelectorAll(
+      "#builtinSkillsList .builtin-skill-toggle",
+    ).length > 0,
   );
   assert.strictEqual(
     dom.window.document.querySelector(

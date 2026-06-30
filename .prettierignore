@@ -1,0 +1,6 @@
+node_modules
+dist
+release
+assets
+package-lock.json
+*.min.js

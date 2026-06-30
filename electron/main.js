@@ -9,10 +9,7 @@ let mainWindow = null;
 let localPort = 8080;
 let localServerProcess = null;
 const SERVER_LABEL = "com.dive.server";
-const LEGACY_SERVER_LABELS = [
-  "com.antifaz.server",
-  "com.ollamapichat.server",
-];
+const LEGACY_SERVER_LABELS = ["com.antifaz.server", "com.ollamapichat.server"];
 const USER_ID = String(process.getuid ? process.getuid() : 501);
 const LAUNCH_AGENTS_DIR = path.join(os.homedir(), "Library", "LaunchAgents");
 const LAUNCH_PLIST_PATH = path.join(LAUNCH_AGENTS_DIR, `${SERVER_LABEL}.plist`);
@@ -124,9 +121,7 @@ function copyIfExists(srcPath, dstPath, options = {}) {
     fs.copyFileSync(srcPath, dstPath);
   } catch (error) {
     if (required) throw error;
-    console.warn(
-      `Dive runtime sync skipped for ${srcPath}: ${error.message}`,
-    );
+    console.warn(`Dive runtime sync skipped for ${srcPath}: ${error.message}`);
   }
 }
 
@@ -167,13 +162,9 @@ function syncRuntimeFiles(runtimeDir) {
       required: true,
     },
   );
-  copyIfExists(
-    path.join(appRoot, "mcp.js"),
-    path.join(runtimeDir, "mcp.js"),
-    {
-      required: true,
-    },
-  );
+  copyIfExists(path.join(appRoot, "mcp.js"), path.join(runtimeDir, "mcp.js"), {
+    required: true,
+  });
   copyIfExists(
     path.join(appRoot, "slash_commands.js"),
     path.join(runtimeDir, "slash_commands.js"),
@@ -219,10 +210,14 @@ function syncRuntimeFiles(runtimeDir) {
       recursive: true,
     },
   );
-  copyIfExists(path.join(appRoot, "library"), path.join(runtimeDir, "library"), {
-    recursive: true,
-    required: true,
-  });
+  copyIfExists(
+    path.join(appRoot, "library"),
+    path.join(runtimeDir, "library"),
+    {
+      recursive: true,
+      required: true,
+    },
+  );
 }
 
 function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
