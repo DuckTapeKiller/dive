@@ -1030,6 +1030,44 @@
         line-height: 1.4;
         opacity: 0.8;
       }
+      #modesToggleList {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 6px 0;
+      }
+      .mode-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-inverse);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .mode-toggle-row input[type="checkbox"] {
+        cursor: pointer;
+      }
+      .mode-toggle-row input[type="checkbox"]:disabled {
+        cursor: not-allowed;
+      }
+      .local-params {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 6px 0;
+      }
+      .local-param-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--text-inverse);
+        font-size: 11px;
+      }
+      .local-param-row input[type="number"] {
+        width: 96px;
+        flex-shrink: 0;
+      }
       .database-source-row {
         border: 1px dashed var(--text-inverse);
         padding: 8px;
@@ -2274,6 +2312,49 @@
             <path d="M12 16v1" />
           </svg>
         </button>
+        <button
+          id="btnLmStudio"
+          title="LM Studio"
+          aria-label="LM Studio mode"
+          style="display: none"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            fill-rule="evenodd"
+            class="mode-icon-lmstudio"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M2.84 2a1.273 1.273 0 100 2.547h14.107a1.273 1.273 0 100-2.547H2.84zM7.935 5.33a1.273 1.273 0 000 2.548H22.04a1.274 1.274 0 000-2.547H7.935zM3.624 9.935c0-.704.57-1.274 1.274-1.274h14.106a1.274 1.274 0 010 2.547H4.898c-.703 0-1.274-.57-1.274-1.273zM1.273 12.188a1.273 1.273 0 100 2.547H15.38a1.274 1.274 0 000-2.547H1.273zM3.624 16.792c0-.704.57-1.274 1.274-1.274h14.106a1.273 1.273 0 110 2.547H4.898c-.703 0-1.274-.57-1.274-1.273zM13.029 18.849a1.273 1.273 0 100 2.547h9.698a1.273 1.273 0 100-2.547h-9.698z"
+              fill-opacity=".3"
+            />
+            <path
+              d="M2.84 2a1.273 1.273 0 100 2.547h10.287a1.274 1.274 0 000-2.547H2.84zM7.935 5.33a1.273 1.273 0 000 2.548H18.22a1.274 1.274 0 000-2.547H7.935zM3.624 9.935c0-.704.57-1.274 1.274-1.274h10.286a1.273 1.273 0 010 2.547H4.898c-.703 0-1.274-.57-1.274-1.273zM1.273 12.188a1.273 1.273 0 100 2.547H11.56a1.274 1.274 0 000-2.547H1.273zM3.624 16.792c0-.704.57-1.274 1.274-1.274h10.286a1.273 1.273 0 110 2.547H4.898c-.703 0-1.274-.57-1.274-1.273zM13.029 18.849a1.273 1.273 0 100 2.547h5.78a1.273 1.273 0 100-2.547h-5.78z"
+            />
+          </svg>
+        </button>
+        <button
+          id="btnLlamaCpp"
+          title="llama.cpp"
+          aria-label="llama.cpp mode"
+          style="display: none"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 512 512"
+            fill="currentColor"
+            class="mode-icon-llamacpp"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="m356.4 201.3-32.8 58.3c-43.3-33.3-107.4-38.2-150.7-2.4-69.8 57.6-64.9 190.8 43.7 191.6 30.4 0 56.2-14.3 83.9-23.8l14.6 58.1c-24.6 11.4-49.6 23.1-76.6 26.7-246 33.5-231.9-321.6-9.5-340.1 46.7-3.9 87.8 8.3 127.6 31.6zm-169.9-55.9c-37.4 11.2-72.2 31.8-98.5 60.8-4.9-58.8 8.3-177.7 73.7-201 9.7-3.4 43-11.9 42.1 5.3-1 17.3-24.1 46.9-29.7 63-9.7 28.2-.7 47.6 12.6 72.2zm92.4 252.8h-36.5v-41.3h-41.3v-34h37.7l3.6-3.6v-40.1h36.5V323h38.9v34h-38.9zm133.7-41.3v41.3h-36.5v-41.3h-38.9v-34h38.9v-43.8h36.5v40.1l3.6 3.6h37.7v34h-41.3zM305.4 31.4c4.9 7.3-22.6 38.7-27 46.7-12.6 23.8-4.1 37.4 5.3 60-27.5-4.1-53-.7-80.2 2.4C209.6 88.3 239 12.2 305.4 31.4"
+            />
+          </svg>
+        </button>
       </div>
       <select id="modelSelect"></select>
       <select id="topbarPromptSelect" title="Active System Prompt"></select>
@@ -2659,6 +2740,16 @@
             <button
               type="button"
               class="settings-tab"
+              data-settings-tab="modes"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabModes"
+            >
+              MODES
+            </button>
+            <button
+              type="button"
+              class="settings-tab"
               data-settings-tab="database"
               role="tab"
               aria-selected="false"
@@ -2694,6 +2785,13 @@
             role="tabpanel"
           ></div>
           <div
+            id="settingsTabModes"
+            class="settings-tab-panel"
+            data-settings-panel="modes"
+            role="tabpanel"
+            hidden
+          ></div>
+          <div
             id="settingsTabDatabase"
             class="settings-tab-panel"
             data-settings-panel="database"
@@ -2711,6 +2809,163 @@
             data-settings-panel="skills"
             role="tabpanel"
           ></div>
+          <div id="modesSettingsGroup" class="setting-group">
+            <label>ENABLED MODES</label>
+            <div id="modesToggleList"></div>
+            <div class="setting-help">
+              Choose which chat modes appear in the top-left switcher. At least
+              one mode must stay enabled.
+            </div>
+          </div>
+          <div
+            id="lmStudioSettingsGroup"
+            class="setting-group"
+            style="display: none"
+          >
+            <label>LM STUDIO SERVER URL</label>
+            <input
+              id="lmStudioBaseUrl"
+              type="text"
+              placeholder="http://127.0.0.1:1234/v1"
+            />
+            <div class="setting-help">
+              Base URL of the LM Studio local server (OpenAI-compatible, usually
+              port 1234). Start it from LM Studio's "Developer" / "Local Server"
+              tab.
+            </div>
+            <label>MODEL</label>
+            <select id="lmStudioModelSelect"></select>
+            <button
+              id="lmStudioRefreshModels"
+              type="button"
+              class="settings-action-btn"
+            >
+              Refresh models
+            </button>
+            <div class="setting-help">
+              Pick a loaded model. Click refresh after loading a model in LM
+              Studio.
+            </div>
+            <label>COLOR PALETTE</label>
+            <select id="lmStudioPaletteSelect">
+              <option value="orange">Cyber Orange</option>
+              <option value="grey">Brutalist Slate</option>
+              <option value="solarised">Solarised Everforest</option>
+              <option value="forest">Forest Sage</option>
+              <option value="calmblue">Gentle Blue</option>
+              <option value="retro">Retro Amber</option>
+              <option value="nordic">Nordic Light</option>
+            </select>
+            <div class="setting-help">Theme used in LM Studio mode.</div>
+            <label>FONT FAMILY</label>
+            <select id="lmStudioFontPreset">
+              <option value="space-mono">Space Mono</option>
+              <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
+              <option value="montserrat">Montserrat</option>
+              <option value="sen">Sen</option>
+              <option value="ia-writer-duo-s">iA Writer Duo S</option>
+              <option value="ibm-plex-serif">IBM Plex Serif</option>
+              <option value="ibarra-real-nova">Ibarra Real Nova</option>
+              <option value="lora">Lora</option>
+              <option value="ia-writer-mono-s">iA Writer Mono S</option>
+              <option value="marcellus">Marcellus</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input
+              id="lmStudioFontCustom"
+              type="text"
+              placeholder="Sen, sans-serif"
+              style="display: none"
+            />
+            <div class="setting-help">Font used in LM Studio mode.</div>
+            <label>SAMPLING PARAMETERS</label>
+            <div id="lmStudioParams" class="local-params"></div>
+            <button
+              id="lmStudioParamsReset"
+              type="button"
+              class="settings-action-btn"
+            >
+              Reset to defaults
+            </button>
+            <div class="setting-help">
+              Passed to LM Studio on each request (temperature, top-p/k,
+              penalties, seed, max tokens).
+            </div>
+          </div>
+          <div
+            id="llamaCppSettingsGroup"
+            class="setting-group"
+            style="display: none"
+          >
+            <label>LLAMA.CPP SERVER URL</label>
+            <input
+              id="llamaCppBaseUrl"
+              type="text"
+              placeholder="http://127.0.0.1:8080/v1"
+            />
+            <div class="setting-help">
+              Base URL of the llama.cpp `llama-server` (OpenAI-compatible,
+              default port 8080).
+            </div>
+            <label>MODEL</label>
+            <select id="llamaCppModelSelect"></select>
+            <button
+              id="llamaCppRefreshModels"
+              type="button"
+              class="settings-action-btn"
+            >
+              Refresh models
+            </button>
+            <div class="setting-help">
+              llama.cpp serves the model it was launched with; refreshing lists
+              whatever `/v1/models` reports.
+            </div>
+            <label>COLOR PALETTE</label>
+            <select id="llamaCppPaletteSelect">
+              <option value="orange">Cyber Orange</option>
+              <option value="grey">Brutalist Slate</option>
+              <option value="solarised">Solarised Everforest</option>
+              <option value="forest">Forest Sage</option>
+              <option value="calmblue">Gentle Blue</option>
+              <option value="retro">Retro Amber</option>
+              <option value="nordic">Nordic Light</option>
+            </select>
+            <div class="setting-help">Theme used in llama.cpp mode.</div>
+            <label>FONT FAMILY</label>
+            <select id="llamaCppFontPreset">
+              <option value="space-mono">Space Mono</option>
+              <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
+              <option value="montserrat">Montserrat</option>
+              <option value="sen">Sen</option>
+              <option value="ia-writer-duo-s">iA Writer Duo S</option>
+              <option value="ibm-plex-serif">IBM Plex Serif</option>
+              <option value="ibarra-real-nova">Ibarra Real Nova</option>
+              <option value="lora">Lora</option>
+              <option value="ia-writer-mono-s">iA Writer Mono S</option>
+              <option value="marcellus">Marcellus</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <input
+              id="llamaCppFontCustom"
+              type="text"
+              placeholder="Montserrat, sans-serif"
+              style="display: none"
+            />
+            <div class="setting-help">Font used in llama.cpp mode.</div>
+            <label>SAMPLING PARAMETERS</label>
+            <div id="llamaCppParams" class="local-params"></div>
+            <button
+              id="llamaCppParamsReset"
+              type="button"
+              class="settings-action-btn"
+            >
+              Reset to defaults
+            </button>
+            <div class="setting-help">
+              Passed to llama.cpp on each request (temperature, top-p/k, min-p,
+              penalties, seed, max tokens).
+            </div>
+          </div>
           <div id="ollamaPaletteGroup" class="setting-group">
             <label>OLLAMA COLOR PALETTE</label>
             <select id="settingOllamaPalette">
@@ -4591,6 +4846,19 @@
     </div>
     <script>
       let mode = "ollama";
+      // Registry of selectable chat modes. Each entry drives the top-left mode
+      // switcher and the "Enabled Modes" settings checkboxes. New modes are
+      // added here (and given their button in the .toggle block).
+      const MODE_DEFS = [
+        { id: "ollama", label: "Ollama", btnId: "btnOllama" },
+        { id: "pi", label: "Pi", btnId: "btnPi" },
+        { id: "cloud", label: "Cloud", btnId: "btnCloud" },
+        { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
+        { id: "llamacpp", label: "llama.cpp", btnId: "btnLlamaCpp" },
+      ];
+      const DEFAULT_ENABLED_MODES = ["ollama", "pi", "cloud"];
+      const ENABLED_MODES_STORAGE_KEY = "ollama-pi-chat-enabled-modes";
+      let enabledModes = [...DEFAULT_ENABLED_MODES];
       let history = [];
       function createModeSession() {
         return {
@@ -4613,14 +4881,24 @@
         ollama: createModeSession(),
         pi: createModeSession(),
         cloud: createModeSession(),
+        lmstudio: createModeSession(),
+        llamacpp: createModeSession(),
       };
+      // Local OpenAI-compatible bespoke modes (server: /api/<id>/stream).
+      const LOCAL_MODE_IDS = ["lmstudio", "llamacpp"];
       // Attachments are per-mode and independent: each mode keeps its own list
       // of pending files, so switching away and back to a mode keeps them, and
       // a file never bleeds into another mode. Multiple files accumulate — each
       // upload appends, and each has its own removable pill.
       const MAX_ATTACHMENTS = 8;
       let pendingFiles = [];
-      const pendingFilesByMode = { ollama: [], pi: [], cloud: [] };
+      const pendingFilesByMode = {
+        ollama: [],
+        pi: [],
+        cloud: [],
+        lmstudio: [],
+        llamacpp: [],
+      };
       let lastUserMessage = null;
       let lastSentMessage = null;
       let currentConvId = null;
@@ -4639,9 +4917,116 @@
       let ollamaPalette = "solarised";
       let piPalette = "orange";
       let cloudPalette = "calmblue";
+      let lmstudioPalette = "calmblue";
+      let llamacppPalette = "forest";
       let ollamaTokenState = { used: null, total: null };
       let piTokenState = { used: null, total: null };
       let cloudTokenState = { used: null, total: null };
+      let lmstudioTokenState = { used: null, total: null };
+      let llamacppTokenState = { used: null, total: null };
+      // Sampling parameters exposed for local modes (both LM Studio and
+      // llama.cpp accept these on /v1/chat/completions).
+      const LOCAL_PARAM_DEFS = [
+        {
+          key: "temperature",
+          label: "Temperature",
+          min: 0,
+          max: 2,
+          step: 0.05,
+          def: 0.8,
+          help: "Controls randomness. Lower = more focused and deterministic, higher = more creative.",
+        },
+        {
+          key: "top_p",
+          label: "Top P",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          def: 0.95,
+          help: "Nucleus sampling: only consider tokens within this cumulative probability mass. Lower = narrower choices.",
+        },
+        {
+          key: "top_k",
+          label: "Top K",
+          min: 0,
+          max: 500,
+          step: 1,
+          def: 40,
+          help: "Limit sampling to the K most likely tokens. 0 disables it.",
+        },
+        {
+          key: "min_p",
+          label: "Min P",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          def: 0.05,
+          help: "Drop tokens whose probability is below this fraction of the top token's probability. 0 disables it.",
+        },
+        {
+          key: "repeat_penalty",
+          label: "Repeat Penalty",
+          min: 0.8,
+          max: 2,
+          step: 0.01,
+          def: 1.1,
+          help: "Penalises reusing recent tokens to reduce loops. 1.0 = off, higher = less repetition.",
+        },
+        {
+          key: "presence_penalty",
+          label: "Presence Penalty",
+          min: -2,
+          max: 2,
+          step: 0.01,
+          def: 0,
+          help: "Penalises tokens that have appeared at all, nudging toward new topics. 0 = off.",
+        },
+        {
+          key: "frequency_penalty",
+          label: "Frequency Penalty",
+          min: -2,
+          max: 2,
+          step: 0.01,
+          def: 0,
+          help: "Penalises tokens by how often they've appeared, reducing verbatim repetition. 0 = off.",
+        },
+        {
+          key: "max_tokens",
+          label: "Max Tokens (-1 = unlimited)",
+          min: -1,
+          max: 131072,
+          step: 1,
+          def: -1,
+          help: "Maximum tokens to generate in the reply. -1 lets the server decide (no cap).",
+        },
+        {
+          key: "seed",
+          label: "Seed (-1 = random)",
+          min: -1,
+          max: 2147483647,
+          step: 1,
+          def: -1,
+          help: "Fix the random seed for reproducible output. -1 = random each request.",
+        },
+      ];
+      function defaultLocalParams() {
+        const p = {};
+        for (const d of LOCAL_PARAM_DEFS) p[d.key] = d.def;
+        return p;
+      }
+      // Per-mode config for local OpenAI-compatible modes.
+      const localModelConfig = {
+        lmstudio: {
+          baseUrl: "http://127.0.0.1:1234/v1",
+          model: "",
+          params: defaultLocalParams(),
+        },
+        llamacpp: {
+          baseUrl: "http://127.0.0.1:8080/v1",
+          model: "",
+          params: defaultLocalParams(),
+        },
+      };
       const DEFAULT_UI_FONTS = Object.freeze({
         ollama: '"iA Writer Quattro S", serif',
         pi: "Montserrat, sans-serif",
@@ -4651,6 +5036,8 @@
       let ollamaFont = DEFAULT_UI_FONTS.ollama;
       let piFont = DEFAULT_UI_FONTS.pi;
       let cloudFont = DEFAULT_UI_FONTS.cloud;
+      let lmstudioFont = "Sen, sans-serif";
+      let llamacppFont = "Montserrat, sans-serif";
       let piStatusInfo = null;
       let cloudStreamState = "IDLE";
       const OLLAMA_DEFAULT_OPTIONS = Object.freeze({
@@ -4687,7 +5074,13 @@
         mistral: "https://api.mistral.ai/v1",
         google: "https://generativelanguage.googleapis.com/v1beta/openai",
       };
-      const SEARCH_ALGO_MODE_KEYS = ["ollama", "pi", "cloud"];
+      const SEARCH_ALGO_MODE_KEYS = [
+        "ollama",
+        "pi",
+        "cloud",
+        "lmstudio",
+        "llamacpp",
+      ];
       function normalizeSearchAlgorithmValues(raw, fallback) {
         return {
           rrfK: clampInteger(raw?.rrfK, fallback.rrfK, 1, 100),
@@ -4774,6 +5167,8 @@
         ollama: { enabled: false },
         pi: { enabled: false },
         cloud: { enabled: false },
+        lmstudio: { enabled: false },
+        llamacpp: { enabled: false },
       };
       let databaseConfig = {
         version: 1,
@@ -5340,13 +5735,96 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             ollama: ollamaPalette,
             pi: piPalette,
             cloud: cloudPalette,
+            lmstudio: lmstudioPalette,
+            llamacpp: llamacppPalette,
           },
           fonts: {
             ollama: ollamaFont,
             pi: piFont,
             cloud: cloudFont,
+            lmstudio: lmstudioFont,
+            llamacpp: llamacppFont,
           },
+          enabledModes: [...enabledModes],
         };
+      }
+
+      // Keep only known mode ids, in registry order, always leaving at least one
+      // enabled (falls back to the defaults if the list is empty/invalid).
+      function normalizeEnabledModes(list) {
+        const known = new Set(MODE_DEFS.map((d) => d.id));
+        const filtered = Array.isArray(list)
+          ? MODE_DEFS.map((d) => d.id).filter(
+              (id) => list.includes(id) && known.has(id),
+            )
+          : [];
+        return filtered.length ? filtered : [...DEFAULT_ENABLED_MODES];
+      }
+
+      function persistEnabledModes() {
+        localStorage.setItem(
+          ENABLED_MODES_STORAGE_KEY,
+          JSON.stringify(enabledModes),
+        );
+        saveUiSettingsSoon();
+      }
+
+      // Show only enabled modes in the switcher; if the active mode was just
+      // disabled, move to the first still-enabled mode.
+      function applyEnabledModes() {
+        MODE_DEFS.forEach((def) => {
+          const btn = document.getElementById(def.btnId);
+          if (btn) {
+            btn.style.display = enabledModes.includes(def.id) ? "" : "none";
+          }
+        });
+        if (!enabledModes.includes(mode)) {
+          setMode(enabledModes[0] || "ollama");
+        }
+      }
+
+      function setModeEnabled(modeId, enabled) {
+        if (enabled) {
+          if (!enabledModes.includes(modeId)) {
+            enabledModes = normalizeEnabledModes([...enabledModes, modeId]);
+          }
+        } else {
+          // Never allow disabling the last enabled mode.
+          if (enabledModes.length <= 1) return false;
+          enabledModes = enabledModes.filter((id) => id !== modeId);
+        }
+        persistEnabledModes();
+        applyEnabledModes();
+        renderModesSettings();
+        return true;
+      }
+
+      // Render one checkbox per registered mode in the settings panel.
+      function renderModesSettings() {
+        const list = document.getElementById("modesToggleList");
+        if (!list) return;
+        list.textContent = "";
+        MODE_DEFS.forEach((def) => {
+          const isOn = enabledModes.includes(def.id);
+          const lastOne = isOn && enabledModes.length <= 1;
+          const row = document.createElement("label");
+          row.className = "mode-toggle-row";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.className = "brutalist-toggle";
+          cb.checked = isOn;
+          // Can't uncheck the only remaining enabled mode.
+          cb.disabled = lastOne;
+          cb.addEventListener("change", () => {
+            const ok = setModeEnabled(def.id, cb.checked);
+            if (!ok) cb.checked = true;
+          });
+          const text = document.createElement("span");
+          text.textContent = def.label;
+          row.appendChild(cb);
+          row.appendChild(text);
+          list.appendChild(row);
+        });
       }
 
       function saveUiSettingsSoon() {
@@ -5387,6 +5865,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         cloudPalette = useServer
           ? palettes.cloud || "calmblue"
           : localStorage.getItem("ollama-pi-chat-cloud-palette") || "calmblue";
+        lmstudioPalette = useServer
+          ? palettes.lmstudio || "calmblue"
+          : localStorage.getItem("ollama-pi-chat-lmstudio-palette") ||
+            "calmblue";
+        llamacppPalette = useServer
+          ? palettes.llamacpp || "forest"
+          : localStorage.getItem("ollama-pi-chat-llamacpp-palette") || "forest";
         const legacyFontsUntouched =
           normalizeFontStack(fonts.ollama) === LEGACY_DEFAULT_UI_FONT &&
           normalizeFontStack(fonts.pi) === LEGACY_DEFAULT_UI_FONT &&
@@ -5415,6 +5900,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               localStorage.getItem("ollama-pi-chat-cloud-font") ||
                 DEFAULT_UI_FONTS.cloud,
             );
+        lmstudioFont = normalizeFontStack(
+          (useServer && fonts.lmstudio) ||
+            localStorage.getItem("ollama-pi-chat-lmstudio-font") ||
+            "Sen, sans-serif",
+        );
+        llamacppFont = normalizeFontStack(
+          (useServer && fonts.llamacpp) ||
+            localStorage.getItem("ollama-pi-chat-llamacpp-font") ||
+            "Montserrat, sans-serif",
+        );
 
         localStorage.setItem("ollama-pi-chat-ollama-palette", ollamaPalette);
         localStorage.setItem("ollama-pi-chat-pi-palette", piPalette);
@@ -5422,6 +5917,24 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         localStorage.setItem("ollama-pi-chat-ollama-font", ollamaFont);
         localStorage.setItem("ollama-pi-chat-pi-font", piFont);
         localStorage.setItem("ollama-pi-chat-cloud-font", cloudFont);
+
+        let storedEnabledModes = null;
+        if (useServer && Array.isArray(settings.enabledModes)) {
+          storedEnabledModes = settings.enabledModes;
+        } else {
+          try {
+            storedEnabledModes = JSON.parse(
+              localStorage.getItem(ENABLED_MODES_STORAGE_KEY) || "null",
+            );
+          } catch (_e) {
+            storedEnabledModes = null;
+          }
+        }
+        enabledModes = normalizeEnabledModes(storedEnabledModes);
+        localStorage.setItem(
+          ENABLED_MODES_STORAGE_KEY,
+          JSON.stringify(enabledModes),
+        );
 
         if (!useServer || legacyFontsUntouched) saveUiSettingsSoon();
       }
@@ -7440,6 +7953,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           ollama: ["settingOllamaFontPreset", "settingOllamaFontCustom"],
           pi: ["settingPiFontPreset", "settingPiFontCustom"],
           cloud: ["settingCloudFontPreset", "settingCloudFontCustom"],
+          lmstudio: ["lmStudioFontPreset", "lmStudioFontCustom"],
+          llamacpp: ["llamaCppFontPreset", "llamaCppFontCustom"],
         }[scope];
         if (!ids) return;
         const presetSelect = document.getElementById(ids[0]);
@@ -7528,6 +8043,37 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (presetStack) changeCloudFont(presetStack);
       }
 
+      function changeLmstudioFont(fontStack) {
+        lmstudioFont = normalizeFontStack(fontStack);
+        localStorage.setItem("ollama-pi-chat-lmstudio-font", lmstudioFont);
+        saveUiSettingsSoon();
+        syncFontControls("lmstudio", lmstudioFont);
+        if (mode === "lmstudio") applyFont(lmstudioFont);
+      }
+
+      function changeLlamacppFont(fontStack) {
+        llamacppFont = normalizeFontStack(fontStack);
+        localStorage.setItem("ollama-pi-chat-llamacpp-font", llamacppFont);
+        saveUiSettingsSoon();
+        syncFontControls("llamacpp", llamacppFont);
+        if (mode === "llamacpp") applyFont(llamacppFont);
+      }
+
+      function onLocalFontPresetChange(scope, presetId, customId, currentFont) {
+        if (presetId === "custom") {
+          const customInput = document.getElementById(customId);
+          customInput.style.display = "";
+          customInput.value = currentFont;
+          customInput.focus();
+          customInput.select();
+          return;
+        }
+        const presetStack = getPresetStackById(presetId);
+        if (!presetStack) return;
+        if (scope === "lmstudio") changeLmstudioFont(presetStack);
+        else changeLlamacppFont(presetStack);
+      }
+
       function applyPalette(p) {
         document.documentElement.setAttribute("data-palette", p);
       }
@@ -7596,6 +8142,14 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (mode === "ollama") {
           statusEl.textContent = "";
           statusEl.title = "";
+          return;
+        }
+        if (LOCAL_MODE_IDS.includes(mode)) {
+          const def = MODE_DEFS.find((d) => d.id === mode);
+          const conf = localModelConfig[mode] || {};
+          const modelName = conf.model || "auto";
+          statusEl.textContent = `${def ? def.label : mode}: ${modelName} | ${conf.baseUrl || ""}`;
+          statusEl.title = statusEl.textContent;
           return;
         }
         if (mode === "pi") {
@@ -7672,9 +8226,27 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const isPiMode = m === "pi";
         const isCloudMode = m === "cloud";
         applyPalette(
-          isOllamaMode ? ollamaPalette : isPiMode ? piPalette : cloudPalette,
+          isOllamaMode
+            ? ollamaPalette
+            : isPiMode
+              ? piPalette
+              : m === "lmstudio"
+                ? lmstudioPalette
+                : m === "llamacpp"
+                  ? llamacppPalette
+                  : cloudPalette,
         );
-        applyFont(isOllamaMode ? ollamaFont : isPiMode ? piFont : cloudFont);
+        applyFont(
+          isOllamaMode
+            ? ollamaFont
+            : isPiMode
+              ? piFont
+              : m === "lmstudio"
+                ? lmstudioFont
+                : m === "llamacpp"
+                  ? llamacppFont
+                  : cloudFont,
+        );
 
         document.documentElement.setAttribute("data-mode", m); // Switches the CSS colors
 
@@ -7698,9 +8270,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         document.getElementById("btnPi").className = m === "pi" ? "active" : "";
         document.getElementById("btnCloud").className =
           m === "cloud" ? "active" : "";
+        const isLocalMode = LOCAL_MODE_IDS.includes(m);
+        MODE_DEFS.forEach((def) => {
+          if (LOCAL_MODE_IDS.includes(def.id)) {
+            const b = document.getElementById(def.btnId);
+            if (b) b.className = m === def.id ? "active" : "";
+          }
+        });
         modelSelect.classList.toggle("mode-hidden", !isOllamaMode);
         topbarPromptSelect.classList.toggle("mode-hidden", !isOllamaMode);
-        updateSettingsTabAvailability({ isOllamaMode, isCloudMode });
+        updateSettingsTabAvailability({
+          isOllamaMode,
+          isCloudMode,
+          isLocalMode,
+        });
         ollamaPaletteGroup.style.display = isOllamaMode ? "" : "none";
         piPaletteGroup.style.display = isPiMode ? "" : "none";
         cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
@@ -7716,13 +8299,27 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const customSkillsGroup = document.getElementById("customSkillsGroup");
         if (builtinSkillsGroup) {
           builtinSkillsGroup.style.display =
-            isOllamaMode || isCloudMode ? "" : "none";
+            isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
         }
         if (customSkillsGroup) {
           customSkillsGroup.style.display = isOllamaMode ? "" : "none";
         }
         piSettingsGroup.style.display = isPiMode ? "" : "none";
         cloudSettingsGroup.style.display = isCloudMode ? "" : "none";
+        const lmStudioSettingsGroup = document.getElementById(
+          "lmStudioSettingsGroup",
+        );
+        const llamaCppSettingsGroup = document.getElementById(
+          "llamaCppSettingsGroup",
+        );
+        // Each local mode's config shows in MAIN only for its own mode, exactly
+        // like the Ollama/Pi/Cloud settings groups.
+        if (lmStudioSettingsGroup) {
+          lmStudioSettingsGroup.style.display = m === "lmstudio" ? "" : "none";
+        }
+        if (llamaCppSettingsGroup) {
+          llamaCppSettingsGroup.style.display = m === "llamacpp" ? "" : "none";
+        }
         if (!isPiMode) {
           piPermissionBtn.style.display = "none";
         } else if (
@@ -7767,6 +8364,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         } else if (mode === "pi") {
           piTokenState = { used: null, total: null };
           piStatusInfo = null;
+        } else if (mode === "lmstudio") {
+          lmstudioTokenState = { used: null, total: null };
+        } else if (mode === "llamacpp") {
+          llamacppTokenState = { used: null, total: null };
         } else {
           cloudTokenState = { used: null, total: null };
           cloudStreamState = "IDLE";
@@ -8348,6 +8949,350 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
 
         return finalResponse;
+      }
+
+      // Local OpenAI-compatible bespoke modes (LM Studio, llama.cpp). Same
+      // NDJSON stream contract as Cloud, but hits /api/<mode>/stream and sends
+      // the mode's configured model.
+      async function runLocalModeConversation(
+        modeId,
+        message,
+        historyForRequest,
+        saveConv,
+        convTitle,
+        signal,
+        onDelta,
+        onEvent,
+        images,
+      ) {
+        const conf = localModelConfig[modeId] || {};
+        const res = await fetch(apiUrl(`/api/${modeId}/stream`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message,
+            history: historyForRequest,
+            saveConv,
+            convTitle,
+            mode: modeId,
+            model: conf.model || undefined,
+            params: conf.params || undefined,
+            library: getLibraryRequestPayload(),
+            images: images || undefined,
+          }),
+          signal,
+        });
+
+        if (!res.ok) {
+          const raw = await res.text();
+          throw new Error(
+            `Start ${modeId} stream failed (${res.status}): ${(raw || "empty response body").slice(0, 500)}`,
+          );
+        }
+        if (!res.body) {
+          throw new Error(`${modeId} stream response body is unavailable.`);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResponse = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let evt;
+            try {
+              evt = JSON.parse(line);
+            } catch (_e) {
+              continue;
+            }
+
+            if (evt.type === "delta") {
+              finalResponse =
+                typeof evt.response === "string" ? evt.response : finalResponse;
+              if (typeof onDelta === "function") {
+                onDelta(finalResponse, evt.delta || "");
+              }
+              continue;
+            }
+
+            if (
+              evt.type === "thinking_start" ||
+              evt.type === "thinking_delta" ||
+              evt.type === "thinking_end" ||
+              evt.type === "tool_start" ||
+              evt.type === "tool_end" ||
+              evt.type === "skill_links" ||
+              evt.type === "library_results" ||
+              evt.type === "library_error" ||
+              evt.type === "slash_command"
+            ) {
+              if (typeof onEvent === "function") onEvent(evt);
+              continue;
+            }
+
+            if (evt.type === "needs_ui") {
+              if (typeof onEvent === "function") onEvent(evt);
+              const activeSessionId = evt.sessionId;
+              if (!activeSessionId)
+                throw new Error(
+                  `Missing sessionId for ${modeId} permission response.`,
+                );
+              const uiResponse = await askPiPermission(evt.request, signal);
+              await postJson(
+                "/api/ollama/tool-respond",
+                { sessionId: activeSessionId, uiResponse, streaming: true },
+                `Respond to ${modeId} permission request`,
+                signal,
+              );
+              continue;
+            }
+
+            if (evt.type === "done") {
+              finalResponse =
+                typeof evt.response === "string" ? evt.response : finalResponse;
+              if (evt.usage && typeof evt.usage.total === "number") {
+                updateTokenCounter(modeId, evt.usage.total, null);
+              }
+              if (typeof onDelta === "function") onDelta(finalResponse, "");
+              if (typeof onEvent === "function") onEvent(evt);
+              return finalResponse;
+            }
+
+            if (evt.type === "error") {
+              throw new Error(evt.error || `${modeId} streaming error.`);
+            }
+          }
+        }
+
+        return finalResponse;
+      }
+
+      // ---- Local mode (LM Studio / llama.cpp) settings + model picker ----
+      function localModeEls(modeId) {
+        if (modeId === "lmstudio") {
+          return {
+            base: document.getElementById("lmStudioBaseUrl"),
+            select: document.getElementById("lmStudioModelSelect"),
+            palette: document.getElementById("lmStudioPaletteSelect"),
+            params: document.getElementById("lmStudioParams"),
+            reset: document.getElementById("lmStudioParamsReset"),
+          };
+        }
+        return {
+          base: document.getElementById("llamaCppBaseUrl"),
+          select: document.getElementById("llamaCppModelSelect"),
+          palette: document.getElementById("llamaCppPaletteSelect"),
+          params: document.getElementById("llamaCppParams"),
+          reset: document.getElementById("llamaCppParamsReset"),
+        };
+      }
+
+      // Get/set the per-mode palette variable for a local mode.
+      function localPaletteVar(modeId, value) {
+        if (modeId === "lmstudio") {
+          if (value !== undefined) lmstudioPalette = value;
+          return lmstudioPalette;
+        }
+        if (value !== undefined) llamacppPalette = value;
+        return llamacppPalette;
+      }
+
+      // Render a mode's sampling parameters using the same stepper component as
+      // the Ollama generation settings (label + number input + +/- controls),
+      // laid out two per row.
+      function renderLocalParams(modeId) {
+        const els = localModeEls(modeId);
+        if (!els.params) return;
+        const conf = localModelConfig[modeId];
+        els.params.innerHTML = "";
+        let rowWrap = null;
+        LOCAL_PARAM_DEFS.forEach((def, i) => {
+          if (i % 2 === 0) {
+            rowWrap = document.createElement("div");
+            rowWrap.className = "setting-row-inline";
+            els.params.appendChild(rowWrap);
+          }
+          const cell = document.createElement("div");
+          cell.className = "setting-row";
+          cell.style.flex = "1";
+
+          const label = document.createElement("label");
+          label.style.fontSize = "10px";
+          label.textContent = def.label.toUpperCase();
+
+          const numWrap = document.createElement("div");
+          numWrap.className = "setting-number";
+          const input = document.createElement("input");
+          const inputId = `${modeId}-param-${def.key}`;
+          input.id = inputId;
+          input.type = "number";
+          input.min = def.min;
+          input.max = def.max;
+          input.step = def.step;
+          input.value = conf.params[def.key];
+          input.addEventListener("change", () => {
+            let v = parseFloat(input.value);
+            if (!Number.isFinite(v)) v = def.def;
+            v = Math.min(def.max, Math.max(def.min, v));
+            input.value = v;
+            conf.params[def.key] = v;
+            saveLocalModeSettings();
+          });
+          const controls = document.createElement("div");
+          controls.className = "setting-number-controls";
+          ["up", "down"].forEach((dir) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "setting-number-btn";
+            b.setAttribute("data-target", inputId);
+            b.setAttribute("data-dir", dir);
+            b.textContent = dir === "up" ? "+" : "−";
+            controls.appendChild(b);
+          });
+          numWrap.appendChild(input);
+          numWrap.appendChild(controls);
+
+          const desc = document.createElement("div");
+          desc.className = "setting-help";
+          desc.textContent = def.help || "";
+
+          const help = document.createElement("div");
+          help.className = "setting-help";
+          help.textContent = "Default: " + def.def;
+
+          cell.appendChild(label);
+          cell.appendChild(numWrap);
+          if (def.help) cell.appendChild(desc);
+          cell.appendChild(help);
+          rowWrap.appendChild(cell);
+        });
+      }
+
+      function renderLocalModelOptions(modeId, models) {
+        const els = localModeEls(modeId);
+        if (!els.select) return;
+        const current = localModelConfig[modeId].model || "";
+        const list = Array.isArray(models) ? models : current ? [current] : [];
+        els.select.innerHTML = "";
+        const optAuto = document.createElement("option");
+        optAuto.value = "";
+        optAuto.textContent = "(auto / server default)";
+        els.select.appendChild(optAuto);
+        for (const m of list) {
+          const o = document.createElement("option");
+          o.value = m;
+          o.textContent = m;
+          els.select.appendChild(o);
+        }
+        els.select.value = current;
+      }
+
+      async function loadLocalModeSettings() {
+        try {
+          const res = await fetch(apiUrl("/api/local-models/settings"));
+          const data = await readJsonResponse(res, "Load local model settings");
+          if (data && data.settings) {
+            for (const id of LOCAL_MODE_IDS) {
+              const s = data.settings[id];
+              if (s) {
+                localModelConfig[id] = {
+                  baseUrl: s.baseUrl || localModelConfig[id].baseUrl,
+                  model: typeof s.model === "string" ? s.model : "",
+                  params: {
+                    ...defaultLocalParams(),
+                    ...(s.params && typeof s.params === "object"
+                      ? s.params
+                      : {}),
+                  },
+                };
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Could not load local model settings", e);
+        }
+        for (const id of LOCAL_MODE_IDS) {
+          const els = localModeEls(id);
+          if (els.base) els.base.value = localModelConfig[id].baseUrl;
+          if (els.palette) els.palette.value = localPaletteVar(id);
+          renderLocalModelOptions(id);
+          renderLocalParams(id);
+        }
+      }
+
+      function saveLocalModeSettings() {
+        postJson(
+          "/api/local-models/settings",
+          {
+            settings: {
+              lmstudio: localModelConfig.lmstudio,
+              llamacpp: localModelConfig.llamacpp,
+            },
+          },
+          "Save local model settings",
+        ).catch((e) => console.error("Could not save local model settings", e));
+      }
+
+      async function refreshLocalModels(modeId) {
+        try {
+          const res = await fetch(apiUrl(`/api/${modeId}/models`));
+          const data = await readJsonResponse(res, "List local models");
+          renderLocalModelOptions(modeId, data.models || []);
+        } catch (e) {
+          alert(`Could not list models for ${modeId}: ${e.message}`);
+        }
+      }
+
+      function wireLocalModeSettings() {
+        for (const id of LOCAL_MODE_IDS) {
+          const els = localModeEls(id);
+          if (els.base) {
+            els.base.addEventListener("change", () => {
+              const v = els.base.value.trim();
+              if (v) localModelConfig[id].baseUrl = v;
+              saveLocalModeSettings();
+            });
+          }
+          if (els.select) {
+            els.select.addEventListener("change", () => {
+              localModelConfig[id].model = els.select.value;
+              saveLocalModeSettings();
+              if (mode === id) updateModeStatus();
+            });
+          }
+          if (els.palette) {
+            els.palette.addEventListener("change", () => {
+              const v = els.palette.value;
+              localPaletteVar(id, v);
+              localStorage.setItem(`ollama-pi-chat-${id}-palette`, v);
+              saveUiSettingsSoon();
+              if (mode === id) applyPalette(v);
+            });
+          }
+          if (els.reset) {
+            els.reset.addEventListener("click", () => {
+              localModelConfig[id].params = defaultLocalParams();
+              renderLocalParams(id);
+              saveLocalModeSettings();
+            });
+          }
+        }
+        const lmBtn = document.getElementById("lmStudioRefreshModels");
+        if (lmBtn) {
+          lmBtn.addEventListener("click", () => refreshLocalModels("lmstudio"));
+        }
+        const llBtn = document.getElementById("llamaCppRefreshModels");
+        if (llBtn) {
+          llBtn.addEventListener("click", () => refreshLocalModels("llamacpp"));
+        }
       }
 
       // HISTORY
@@ -10684,6 +11629,72 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (mode === runMode && currentConvId === runConvId) {
               lastExchangePersisted = true;
             }
+          } else if (runMode === "lmstudio" || runMode === "llamacpp") {
+            response = await runLocalModeConversation(
+              runMode,
+              messageToSend,
+              requestHistory,
+              runConvId,
+              lastUserMessage.slice(0, 40),
+              runAbortController.signal,
+              (partialResponse) => {
+                if (
+                  thinking?.isConnected &&
+                  !thinking.hadReasoning &&
+                  !thinking.hadTrace &&
+                  !thinking.hadPassages
+                ) {
+                  thinking.remove();
+                  if (runSession.thinkingController === thinking) {
+                    runSession.thinkingController = null;
+                  }
+                }
+                setDraftAssistant(
+                  runMode,
+                  partialResponse || "",
+                  activeLibrarySources.results,
+                );
+              },
+              (evt) => {
+                captureLibrarySources(
+                  evt,
+                  activeLibrarySources,
+                  runSession.streamingAssistantDiv,
+                );
+                recordRunTrace(evt);
+              },
+              outgoingImages,
+            );
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace &&
+              !thinking.hadPassages
+            ) {
+              thinking.remove();
+            }
+            const assistantMessageLocal = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
+            );
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessageLocal,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           } else {
             cloudStreamState = "STREAMING";
             if (mode === runMode) updateModeStatus();
@@ -10982,6 +11993,47 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (mode === runMode && currentConvId === runConvId) {
               lastExchangePersisted = true;
             }
+          } else if (runMode === "lmstudio" || runMode === "llamacpp") {
+            response = await runLocalModeConversation(
+              runMode,
+              messageToSend,
+              requestHistory,
+              runConvId,
+              lastUserMessage.slice(0, 40),
+              runAbortController.signal,
+              handlePartial,
+              handleEvent,
+            );
+            setDraftAssistant(
+              runMode,
+              response || "",
+              activeLibrarySources.results,
+            );
+            if (
+              thinking?.isConnected &&
+              !thinking.hadReasoning &&
+              !thinking.hadTrace &&
+              !thinking.hadPassages
+            ) {
+              thinking.remove();
+            }
+            const assistantMessageLocal = finalizeDraftAssistant(
+              runMode,
+              response,
+              activeLibrarySources.results,
+            );
+            runSession.history = [
+              ...requestHistory,
+              { role: "user", content: messageToSend },
+              assistantMessageLocal,
+            ];
+            if (mode === runMode && currentConvId === runConvId) {
+              history = [...runSession.history];
+            }
+            runSession.lastExchangePersisted = true;
+            if (mode === runMode && currentConvId === runConvId) {
+              lastExchangePersisted = true;
+            }
           } else {
             cloudStreamState = "STREAMING";
             if (mode === runMode) updateModeStatus();
@@ -11097,6 +12149,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               used,
               total: typeof total === "number" ? total : null,
             };
+          } else if (m === "lmstudio") {
+            lmstudioTokenState = {
+              used,
+              total: typeof total === "number" ? total : null,
+            };
+          } else if (m === "llamacpp") {
+            llamacppTokenState = {
+              used,
+              total: typeof total === "number" ? total : null,
+            };
           }
         }
 
@@ -11106,7 +12168,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             ? ollamaTokenState
             : mode === "pi"
               ? piTokenState
-              : cloudTokenState;
+              : mode === "lmstudio"
+                ? lmstudioTokenState
+                : mode === "llamacpp"
+                  ? llamacppTokenState
+                  : cloudTokenState;
 
         // Pi with no data yet: try fetching live from the process
         if (mode === "pi" && state.used == null && currentConvId) {
@@ -11277,6 +12343,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function organizeSettingsTabs() {
+        // MODES tab holds only the Enabled Modes checkboxes.
+        appendSettingsGroups("settingsTabModes", ["modesSettingsGroup"]);
+        // MAIN tab holds every mode's config, each shown only for its active
+        // mode (same pattern as Ollama/Pi/Cloud).
         appendSettingsGroups("settingsTabMain", [
           "ollamaPaletteGroup",
           "piPaletteGroup",
@@ -11287,6 +12357,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "ollamaGenGroup",
           "piSettingsGroup",
           "cloudSettingsGroup",
+          "lmStudioSettingsGroup",
+          "llamaCppSettingsGroup",
         ]);
         appendSettingsGroups("settingsTabDatabase", ["databaseSettingsGroup"]);
         appendSettingsGroups("settingsTabPrompts", [
@@ -11305,7 +12377,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function switchSettingsTab(tabName) {
-        const validTabs = ["main", "database", "prompts", "skills"];
+        const validTabs = ["main", "modes", "database", "prompts", "skills"];
         const nextTab = validTabs.includes(tabName) ? tabName : "main";
         activeSettingsTab = nextTab;
 
@@ -11327,8 +12399,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           typeof state === "boolean" ? state : state.isOllamaMode === true;
         const isCloudMode =
           typeof state === "object" && state.isCloudMode === true;
+        const isLocalMode =
+          typeof state === "object" && state.isLocalMode === true;
         const promptsVisible = isOllamaMode;
-        const skillsVisible = isOllamaMode || isCloudMode;
+        const skillsVisible = isOllamaMode || isCloudMode || isLocalMode;
         const promptsTab = document.querySelector(
           '.settings-tab[data-settings-tab="prompts"]',
         );
@@ -11535,6 +12609,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         syncFontControls("ollama", ollamaFont);
         syncFontControls("pi", piFont);
         syncFontControls("cloud", cloudFont);
+        syncFontControls("lmstudio", lmstudioFont);
+        syncFontControls("llamacpp", llamacppFont);
         renderOllamaOptionsForm();
         await loadLibrarySettings();
         await pollLibraryIndexJob();
@@ -11549,6 +12625,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           mode === "ollama" ? ollamaFont : mode === "pi" ? piFont : cloudFont,
         );
         setMode(mode);
+        renderModesSettings();
+        applyEnabledModes();
         renderPiSettingsForm();
 
         activePromptId =
@@ -11561,6 +12639,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         await loadCustomSkills();
         await loadPiSettings();
         await loadCloudSettings();
+        await loadLocalModeSettings();
+        wireLocalModeSettings();
         await loadOllamaSkillsConfig();
         const permissionPolicySelect = document.getElementById(
           "piPermissionPolicySelect",
@@ -11759,6 +12839,24 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             onCloudFontPresetChange(e.target.value);
           } else if (e.target.id === "settingCloudFontCustom") {
             changeCloudFont(e.target.value);
+          } else if (e.target.id === "lmStudioFontPreset") {
+            onLocalFontPresetChange(
+              "lmstudio",
+              e.target.value,
+              "lmStudioFontCustom",
+              lmstudioFont,
+            );
+          } else if (e.target.id === "lmStudioFontCustom") {
+            changeLmstudioFont(e.target.value);
+          } else if (e.target.id === "llamaCppFontPreset") {
+            onLocalFontPresetChange(
+              "llamacpp",
+              e.target.value,
+              "llamaCppFontCustom",
+              llamacppFont,
+            );
+          } else if (e.target.id === "llamaCppFontCustom") {
+            changeLlamacppFont(e.target.value);
           } else if (e.target.id === "cloudProviderSelect") {
             cloudSettings.provider = e.target.value;
             renderCloudSettingsForm();
@@ -11838,6 +12936,20 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (btn_btnCloud) {
           btn_btnCloud.addEventListener("click", function (event) {
             setMode("cloud");
+          });
+        }
+
+        const btn_btnLmStudio = document.getElementById("btnLmStudio");
+        if (btn_btnLmStudio) {
+          btn_btnLmStudio.addEventListener("click", function () {
+            setMode("lmstudio");
+          });
+        }
+
+        const btn_btnLlamaCpp = document.getElementById("btnLlamaCpp");
+        if (btn_btnLlamaCpp) {
+          btn_btnLlamaCpp.addEventListener("click", function () {
+            setMode("llamacpp");
           });
         }
 
