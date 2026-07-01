@@ -150,6 +150,42 @@ const VALID_UI_PALETTES = new Set([
 ]);
 const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral", "google"];
 const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
+// Image attachments: extensions we accept on upload and their MIME types.
+const IMAGE_MIME_BY_EXT = new Map([
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".png", "image/png"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+]);
+
+// Normalize an inbound image-attachment payload from the client into a clean
+// list of { dataBase64, mimeType, name }. Anything malformed is dropped so a
+// bad attachment can never corrupt a model request.
+function normalizeAttachmentImages(images) {
+  if (!Array.isArray(images)) return [];
+  const out = [];
+  for (const img of images) {
+    if (!img || typeof img !== "object") continue;
+    const dataBase64 = typeof img.dataBase64 === "string" ? img.dataBase64 : "";
+    const mimeType = typeof img.mimeType === "string" ? img.mimeType : "";
+    if (!dataBase64 || !mimeType) continue;
+    out.push({
+      dataBase64,
+      mimeType,
+      name: typeof img.name === "string" ? img.name : "",
+    });
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function extForImageMime(mimeType) {
+  for (const [ext, mime] of IMAGE_MIME_BY_EXT) {
+    if (mime === mimeType) return ext;
+  }
+  return ".img";
+}
 const CLOUD_DEFAULT_MODELS = {
   openai: "gpt-5",
   anthropic: "claude-opus-4-8",
@@ -1583,7 +1619,8 @@ function buildCloudEndpoint(baseUrl, pathSuffix) {
   return `${normalized}${pathSuffix}`;
 }
 
-function buildCloudRequest(provider, settings, messages) {
+function buildCloudRequest(provider, settings, messages, images) {
+  const imageList = normalizeAttachmentImages(images);
   const model = settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
   const baseUrl =
     settings.baseUrls?.[provider] || CLOUD_DEFAULT_BASE_URLS[provider];
@@ -1621,6 +1658,30 @@ function buildCloudRequest(provider, settings, messages) {
       }
       anthropicMessages.push({ role: item.role, content: item.content });
     }
+    if (imageList.length) {
+      // Attach images to the most recent user turn as content blocks.
+      for (let i = anthropicMessages.length - 1; i >= 0; i--) {
+        if (anthropicMessages[i].role !== "user") continue;
+        const textContent =
+          typeof anthropicMessages[i].content === "string"
+            ? anthropicMessages[i].content
+            : "";
+        const blocks = [];
+        if (textContent) blocks.push({ type: "text", text: textContent });
+        for (const img of imageList) {
+          blocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: img.mimeType,
+              data: img.dataBase64,
+            },
+          });
+        }
+        anthropicMessages[i].content = blocks;
+        break;
+      }
+    }
     return {
       url: buildCloudEndpoint(baseUrl, "/messages"),
       headers: {
@@ -1638,9 +1699,34 @@ function buildCloudRequest(provider, settings, messages) {
     };
   }
 
+  let outMessages = messages;
+  if (imageList.length) {
+    // OpenAI-compatible vision: the user turn's content becomes an array of
+    // text + image_url (data URL) parts on the most recent user message.
+    outMessages = (Array.isArray(messages) ? messages : []).map((m) => ({
+      ...m,
+    }));
+    for (let i = outMessages.length - 1; i >= 0; i--) {
+      if (outMessages[i].role !== "user") continue;
+      const textContent =
+        typeof outMessages[i].content === "string"
+          ? outMessages[i].content
+          : "";
+      const parts = [];
+      if (textContent) parts.push({ type: "text", text: textContent });
+      for (const img of imageList) {
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${img.mimeType};base64,${img.dataBase64}` },
+        });
+      }
+      outMessages[i].content = parts;
+      break;
+    }
+  }
   const body = {
     model,
-    messages,
+    messages: outMessages,
     max_tokens: maxTokens,
     stream: true,
   };
@@ -1738,11 +1824,12 @@ async function streamCloudCompletion({
   provider,
   settings,
   messages,
+  images,
   signal,
   onDelta,
   onUsage,
 }) {
-  const request = buildCloudRequest(provider, settings, messages);
+  const request = buildCloudRequest(provider, settings, messages, images);
   const upstreamRes = await fetch(request.url, {
     method: "POST",
     headers: request.headers,
@@ -3970,6 +4057,9 @@ const server = http.createServer(async (req, res) => {
           provider,
           settings,
           messages: requestMessages,
+          // Attach the image only on the first round (the user's turn); later
+          // skill-continuation rounds must not re-send it.
+          images: round === 0 ? body.images : undefined,
           signal: abortController.signal,
           onDelta: (delta) => {
             output += delta;
@@ -4123,7 +4213,14 @@ const server = http.createServer(async (req, res) => {
       const originalMessage = requestMessage;
       const slashCommand = parseSlashCommand(originalMessage);
       const message = getCommandMessage(slashCommand, originalMessage);
-      const messages = [...history, { role: "user", content: message }];
+      const attachmentImages = normalizeAttachmentImages(body.images);
+      const userMessage = { role: "user", content: message };
+      if (attachmentImages.length) {
+        // Ollama /api/chat takes base64 (no data: prefix) in images[]. Vision
+        // models (llava, gemma3, qwen2-vl…) use them; others ignore them.
+        userMessage.images = attachmentImages.map((img) => img.dataBase64);
+      }
+      const messages = [...history, userMessage];
       const storedMessages = [
         ...history,
         { role: "user", content: originalMessage },
@@ -4712,6 +4809,42 @@ const server = http.createServer(async (req, res) => {
         writeStreamEvent({ type: "library_error", error: e.message });
       }
 
+      // Pi is a text-only CLI, so an attached image is written to a temp file
+      // and its path is referenced in the prompt; Pi can open it if it has
+      // image/file-reading tools. Temp files self-delete after 10 minutes.
+      const piImages = normalizeAttachmentImages(body.images);
+      if (piImages.length) {
+        const refs = [];
+        for (const img of piImages) {
+          const tmp = path.join(
+            os.tmpdir(),
+            "pi_img_" +
+              randomBytes(8).toString("hex") +
+              extForImageMime(img.mimeType),
+          );
+          try {
+            fs.writeFileSync(tmp, Buffer.from(img.dataBase64, "base64"));
+            refs.push(tmp);
+            setTimeout(
+              () => {
+                try {
+                  fs.unlinkSync(tmp);
+                } catch (_e) {}
+              },
+              10 * 60 * 1000,
+            ).unref();
+          } catch (_e) {}
+        }
+        if (refs.length) {
+          promptMessage +=
+            "\n\n[Attached image file" +
+            (refs.length > 1 ? "s" : "") +
+            " saved locally — open with your image/file tools: " +
+            refs.join(", ") +
+            "]";
+        }
+      }
+
       const piSettings = loadPiSettings();
       const convId = body.saveConv || "default";
       const convProc = getOrCreatePiConvProcess(convId, piSettings);
@@ -4962,6 +5095,17 @@ const server = http.createServer(async (req, res) => {
           throw writeErr;
         }
       } else {
+        const ext = path.extname(file.filename || "").toLowerCase();
+        if (IMAGE_MIME_BY_EXT.has(ext)) {
+          // Images are sent to the model as base64, not extracted to text.
+          send(200, {
+            kind: "image",
+            dataBase64: file.body.toString("base64"),
+            mimeType: IMAGE_MIME_BY_EXT.get(ext),
+            filename: file.filename,
+          });
+          return;
+        }
         const ALLOWED_TEXT_EXTENSIONS = new Set([
           ".txt",
           ".md",
@@ -4972,14 +5116,14 @@ const server = http.createServer(async (req, res) => {
           ".css",
           ".json",
         ]);
-        const ext = path.extname(file.filename || "").toLowerCase();
         if (!ext || !ALLOWED_TEXT_EXTENSIONS.has(ext)) {
           send(415, {
-            error: `Unsupported file type${ext ? ": " + ext : ""}. Allowed: .txt, .md, .js, .ts, .py, .html, .css, .json, .pdf`,
+            error: `Unsupported file type${ext ? ": " + ext : ""}. Allowed: .txt, .md, .js, .ts, .py, .html, .css, .json, .pdf, .jpg, .jpeg, .png, .gif, .webp`,
           });
           return;
         }
         send(200, {
+          kind: "text",
           text: file.body.toString("utf8"),
           filename: file.filename,
         });
