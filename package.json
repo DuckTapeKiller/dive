@@ -31,10 +31,10 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "electron": "^42.3.0",
-    "electron-builder": "^26.8.1",
-    "esbuild": "^0.28.0",
-    "eslint": "^10.4.1",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
@@ -129,8 +129,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.2.0",
-    "dompurify": "^3.4.7",
-    "marked": "^18.0.4",
-    "yauzl": "^3.3.2"
+    "dompurify": "^3.4.11",
+    "marked": "^18.0.5",
+    "yauzl": "^3.4.0"
   }
 }
