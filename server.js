@@ -211,7 +211,11 @@ const DEFAULT_UI_FONTS = Object.freeze({
   ollama: '"iA Writer Quattro S", serif',
   pi: "Montserrat, sans-serif",
   cloud: "Sen, sans-serif",
+  lmstudio: "Sen, sans-serif",
+  llamacpp: "Montserrat, sans-serif",
 });
+// Every mode that has its own persisted palette/font.
+const UI_SETTINGS_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
 const LEGACY_DEFAULT_UI_FONT = '"Space Mono", monospace';
 
 function createHttpError(statusCode, message) {
@@ -711,10 +715,13 @@ function defaultUiSettings() {
       ollama: "solarised",
       pi: "orange",
       cloud: "calmblue",
+      lmstudio: "calmblue",
+      llamacpp: "forest",
     },
     fonts: {
       ...DEFAULT_UI_FONTS,
     },
+    enabledModes: ["ollama", "pi", "cloud"],
   };
 }
 
@@ -727,6 +734,7 @@ function sanitizeUiSettings(rawInput) {
   const next = {
     palettes: { ...defaults.palettes },
     fonts: { ...defaults.fonts },
+    enabledModes: [...defaults.enabledModes],
   };
 
   if (
@@ -734,7 +742,7 @@ function sanitizeUiSettings(rawInput) {
     typeof raw.palettes === "object" &&
     !Array.isArray(raw.palettes)
   ) {
-    for (const modeName of ["ollama", "pi", "cloud"]) {
+    for (const modeName of UI_SETTINGS_MODE_KEYS) {
       if (VALID_UI_PALETTES.has(raw.palettes[modeName])) {
         next.palettes[modeName] = raw.palettes[modeName];
       }
@@ -742,11 +750,20 @@ function sanitizeUiSettings(rawInput) {
   }
 
   if (raw.fonts && typeof raw.fonts === "object" && !Array.isArray(raw.fonts)) {
-    for (const modeName of ["ollama", "pi", "cloud"]) {
+    for (const modeName of UI_SETTINGS_MODE_KEYS) {
       if (typeof raw.fonts[modeName] === "string") {
         next.fonts[modeName] = normalizeFontStackValue(raw.fonts[modeName]);
       }
     }
+  }
+
+  // Persist the enabled-modes list (which modes appear in the switcher).
+  if (Array.isArray(raw.enabledModes)) {
+    const allowed = new Set(UI_SETTINGS_MODE_KEYS);
+    const filtered = raw.enabledModes.filter(
+      (id) => typeof id === "string" && allowed.has(id),
+    );
+    next.enabledModes = filtered.length ? filtered : [...defaults.enabledModes];
   }
 
   return next;
@@ -936,6 +953,537 @@ function loadCloudSettings() {
     }
   }
   return defaultCloudSettings();
+}
+
+// ---- Local OpenAI-compatible modes: LM Studio and llama.cpp ----
+// Both expose an OpenAI-style /v1/chat/completions (SSE) + /v1/models with no
+// auth. They are first-class bespoke modes with their own endpoints, but share
+// this OpenAI-format request/stream code internally.
+const LOCAL_MODE_DEFAULTS = {
+  lmstudio: { label: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1" },
+  llamacpp: { label: "llama.cpp", baseUrl: "http://127.0.0.1:8080/v1" },
+};
+const LOCAL_MODE_IDS = Object.keys(LOCAL_MODE_DEFAULTS);
+const LOCAL_MODEL_SETTINGS_FILE = path.join(
+  DATA_DIR,
+  "local-model-settings.json",
+);
+
+function normalizeLocalBaseUrl(url, fallback) {
+  let s = String(url || "").trim();
+  if (!s) return fallback;
+  s = s.replace(/\/+$/, "");
+  // Accept a bare host[:port] or a full URL; ensure it targets the /v1 base.
+  if (!/^https?:\/\//i.test(s)) s = "http://" + s;
+  if (!/\/v\d+$/.test(s)) s = s + "/v1";
+  return s;
+}
+
+// Sampling parameters accepted by both LM Studio and llama.cpp's
+// /v1/chat/completions (min/max/default), verified against their API docs.
+const LOCAL_PARAM_SPEC = {
+  temperature: { min: 0, max: 2, def: 0.8 },
+  top_p: { min: 0, max: 1, def: 0.95 },
+  top_k: { min: 0, max: 500, def: 40 },
+  min_p: { min: 0, max: 1, def: 0.05 },
+  repeat_penalty: { min: 0.8, max: 2, def: 1.1 },
+  presence_penalty: { min: -2, max: 2, def: 0 },
+  frequency_penalty: { min: -2, max: 2, def: 0 },
+  max_tokens: { min: -1, max: 131072, def: -1 },
+  seed: { min: -1, max: 2147483647, def: -1 },
+};
+const LOCAL_PARAM_KEYS = Object.keys(LOCAL_PARAM_SPEC);
+
+function defaultLocalParams() {
+  const p = {};
+  for (const k of LOCAL_PARAM_KEYS) p[k] = LOCAL_PARAM_SPEC[k].def;
+  return p;
+}
+
+function sanitizeLocalParams(raw) {
+  const out = defaultLocalParams();
+  if (raw && typeof raw === "object") {
+    for (const k of LOCAL_PARAM_KEYS) {
+      const v = raw[k];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        out[k] = Math.min(
+          LOCAL_PARAM_SPEC[k].max,
+          Math.max(LOCAL_PARAM_SPEC[k].min, v),
+        );
+      }
+    }
+  }
+  return out;
+}
+
+function defaultLocalModelSettings() {
+  const out = {};
+  for (const id of LOCAL_MODE_IDS) {
+    out[id] = {
+      baseUrl: LOCAL_MODE_DEFAULTS[id].baseUrl,
+      model: "",
+      params: defaultLocalParams(),
+    };
+  }
+  return out;
+}
+
+function sanitizeLocalModelSettings(raw) {
+  const defaults = defaultLocalModelSettings();
+  const out = defaultLocalModelSettings();
+  if (raw && typeof raw === "object") {
+    for (const id of LOCAL_MODE_IDS) {
+      const entry = raw[id];
+      if (entry && typeof entry === "object") {
+        if (typeof entry.baseUrl === "string" && entry.baseUrl.trim()) {
+          out[id].baseUrl = normalizeLocalBaseUrl(
+            entry.baseUrl,
+            defaults[id].baseUrl,
+          );
+        }
+        if (typeof entry.model === "string") out[id].model = entry.model.trim();
+        out[id].params = sanitizeLocalParams(entry.params);
+      }
+    }
+  }
+  return out;
+}
+
+function saveLocalModelSettings(settings) {
+  const sanitized = sanitizeLocalModelSettings(settings);
+  fs.writeFileSync(
+    LOCAL_MODEL_SETTINGS_FILE,
+    JSON.stringify(sanitized, null, 2),
+  );
+  return sanitized;
+}
+
+function loadLocalModelSettings() {
+  if (fs.existsSync(LOCAL_MODEL_SETTINGS_FILE)) {
+    try {
+      const raw = JSON.parse(
+        fs.readFileSync(LOCAL_MODEL_SETTINGS_FILE, "utf8"),
+      );
+      return sanitizeLocalModelSettings(raw);
+    } catch (e) {
+      console.warn("Failed to load local-model settings:", e.message || e);
+    }
+  }
+  return defaultLocalModelSettings();
+}
+
+// Build an OpenAI-compatible /chat/completions request (streaming) for a local
+// server. Images are attached to the latest user turn as image_url parts.
+function buildLocalOpenAiRequest(baseUrl, model, messages, images, params) {
+  const p = sanitizeLocalParams(params);
+  const imageList = normalizeAttachmentImages(images);
+  let outMessages = Array.isArray(messages) ? messages : [];
+  if (imageList.length) {
+    outMessages = outMessages.map((m) => ({ ...m }));
+    for (let i = outMessages.length - 1; i >= 0; i--) {
+      if (outMessages[i].role !== "user") continue;
+      const textContent =
+        typeof outMessages[i].content === "string"
+          ? outMessages[i].content
+          : "";
+      const parts = [];
+      if (textContent) parts.push({ type: "text", text: textContent });
+      for (const img of imageList) {
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${img.mimeType};base64,${img.dataBase64}` },
+        });
+      }
+      outMessages[i].content = parts;
+      break;
+    }
+  }
+  const body = {
+    messages: outMessages,
+    stream: true,
+    stream_options: { include_usage: true },
+    // Standard OpenAI-schema fields.
+    temperature: p.temperature,
+    top_p: p.top_p,
+  };
+  // max_tokens: -1 (or 0) means "no cap" — omit so the server decides.
+  if (p.max_tokens > 0) body.max_tokens = p.max_tokens;
+  // presence/frequency penalties are OpenAI-schema; only send when non-zero.
+  if (p.presence_penalty !== 0) body.presence_penalty = p.presence_penalty;
+  if (p.frequency_penalty !== 0) body.frequency_penalty = p.frequency_penalty;
+  if (p.seed >= 0) body.seed = p.seed;
+  // Extra samplers accepted by LM Studio and llama.cpp (not in the strict
+  // OpenAI schema, but both honour them).
+  if (p.top_k > 0) body.top_k = p.top_k;
+  if (p.min_p > 0) body.min_p = p.min_p;
+  body.repeat_penalty = p.repeat_penalty;
+  // llama.cpp serves whatever model is loaded and ignores this; LM Studio uses
+  // it to select among loaded models. Only send it when the user picked one.
+  if (model) body.model = model;
+  return {
+    url: buildCloudEndpoint(baseUrl, "/chat/completions"),
+    headers: { "Content-Type": "application/json" },
+    body,
+  };
+}
+
+async function streamLocalOpenAiCompletion({
+  baseUrl,
+  model,
+  messages,
+  images,
+  params,
+  signal,
+  onDelta,
+  onUsage,
+}) {
+  const request = buildLocalOpenAiRequest(
+    baseUrl,
+    model,
+    messages,
+    images,
+    params,
+  );
+  let upstreamRes;
+  try {
+    upstreamRes = await fetch(request.url, {
+      method: "POST",
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+      signal,
+    });
+  } catch (e) {
+    if (e?.name === "AbortError") throw e;
+    throw createHttpError(
+      502,
+      `Could not reach the local server at ${request.url}. Is it running? (${e.message})`,
+    );
+  }
+  if (!upstreamRes.ok) {
+    const raw = await upstreamRes.text().catch(() => "");
+    throw createHttpError(
+      upstreamRes.status,
+      `Local model request failed (${upstreamRes.status}): ${(raw || upstreamRes.statusText || "empty response body").slice(0, 700)}`,
+    );
+  }
+  if (!upstreamRes.body) {
+    throw createHttpError(502, "Local model returned no stream body.");
+  }
+
+  let latestUsage = null;
+  const parser = createSseParser((_eventName, data) => {
+    if (data === "[DONE]") return;
+    let parsed;
+    try {
+      parsed = JSON.parse(data);
+    } catch (e) {
+      return;
+    }
+    if (parsed?.error) {
+      throw createHttpError(
+        502,
+        parsed.error?.message || "Local model stream error.",
+      );
+    }
+    if (parsed.usage) {
+      latestUsage = normalizeUsage("openai", parsed.usage);
+      if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
+    }
+    const delta = parsed.choices?.[0]?.delta?.content;
+    if (typeof delta === "string" && delta && typeof onDelta === "function") {
+      onDelta(delta);
+    }
+  });
+  const reader = upstreamRes.body.getReader();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    parser.push(value);
+  }
+  parser.flush();
+  return latestUsage;
+}
+
+async function fetchLocalModels(modeId) {
+  const settings = loadLocalModelSettings();
+  const baseUrl = normalizeLocalBaseUrl(
+    settings[modeId]?.baseUrl,
+    LOCAL_MODE_DEFAULTS[modeId].baseUrl,
+  );
+  let res;
+  try {
+    res = await fetch(buildCloudEndpoint(baseUrl, "/models"), {
+      method: "GET",
+    });
+  } catch (e) {
+    throw createHttpError(
+      502,
+      `Could not reach the local server at ${baseUrl}. Is it running? (${e.message})`,
+    );
+  }
+  if (!res.ok) {
+    throw createHttpError(res.status, `Model list failed (${res.status}).`);
+  }
+  const data = await res.json().catch(() => null);
+  const models = Array.isArray(data?.data)
+    ? data.data.map((m) => m && m.id).filter(Boolean)
+    : [];
+  return models;
+}
+
+// Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
+async function handleLocalModeStream(modeId, req, res, send) {
+  let finished = false;
+  const abortController = new AbortController();
+  const traceEvents = [];
+  const emit = (event) => {
+    const stored = sanitizeTraceEventForStorage(event);
+    if (stored) traceEvents.push(stored);
+    if (!res.writableEnded) res.write(JSON.stringify(event) + "\n");
+  };
+  try {
+    const body = await parseJsonBody(req);
+    if (!body || typeof body.message !== "string" || !body.message.trim()) {
+      send(400, { error: "message is required" });
+      return;
+    }
+    const settings = loadLocalModelSettings();
+    const conf = settings[modeId] || {};
+    const baseUrl = normalizeLocalBaseUrl(
+      conf.baseUrl,
+      LOCAL_MODE_DEFAULTS[modeId].baseUrl,
+    );
+    const model =
+      typeof body.model === "string" && body.model.trim()
+        ? body.model.trim()
+        : conf.model || "";
+    // Prefer params from the request; fall back to the saved per-mode config.
+    const params = sanitizeLocalParams(body.params || conf.params);
+    const { history = [], saveConv, convTitle, library } = body;
+    const originalMessage = body.message;
+    const slashCommand = parseSlashCommand(originalMessage);
+    const message = getCommandMessage(slashCommand, originalMessage);
+    const messages = normalizeCloudHistoryMessages(history, message);
+    const storedMessages = normalizeStoredConversationMessages(
+      history,
+      originalMessage,
+    );
+    let requestMessages = withSharedSystemPrompt(messages);
+    let librarySourceResults = [];
+    let libraryPassages = [];
+    let databaseContextEnabled = false;
+    let output = "";
+    let usage = null;
+    let thinking = "";
+    let emittedThinkingStart = false;
+
+    res.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    req.on("close", () => {
+      if (!finished) abortController.abort();
+    });
+    emitSlashCommand(emit, slashCommand);
+
+    try {
+      const libraryContext = await buildChatLibraryContext(
+        message,
+        getLibraryRequestForCommand(library, slashCommand, history, modeId),
+      );
+      if (libraryContext.enabled) {
+        databaseContextEnabled = true;
+        requestMessages[0] = {
+          role: "system",
+          content: getSharedAssistantPolicyPrompt(true),
+        };
+        requestMessages = insertLibraryContextMessage(
+          requestMessages,
+          libraryContext.contextMessage,
+        );
+        librarySourceResults = serializeLibraryResults(
+          getLibraryContextSourceResults(libraryContext),
+          getLibraryRequestForCommand(library, slashCommand, history),
+        );
+        libraryPassages = Array.isArray(libraryContext.contextResults)
+          ? libraryContext.contextResults
+          : [];
+        emit({
+          type: "library_results",
+          results: librarySourceResults,
+          passages: libraryPassages,
+          meta: libraryContext.contextMeta,
+        });
+      }
+    } catch (e) {
+      emit({ type: "library_error", error: e.message });
+    }
+
+    // Skills work exactly like Cloud: offered only when Database Context is off
+    // (the DB-on prompt answers strictly from library passages) and not a slash
+    // command. The model drives them via the <call:...> mechanism.
+    const localSkillsEnabled = !slashCommand && !databaseContextEnabled;
+    if (localSkillsEnabled) {
+      const skillsPrompt = getCloudSkillsPolicyPrompt();
+      if (skillsPrompt) {
+        requestMessages = [
+          requestMessages[0],
+          { role: "system", content: skillsPrompt },
+          ...requestMessages.slice(1),
+        ];
+      }
+    }
+
+    if (isSkillSlashCommand(slashCommand)) {
+      try {
+        const toolCall = buildForcedSkillToolCall(slashCommand);
+        emit({
+          type: "tool_start",
+          toolName: slashCommand.skillName,
+          argsPreview: toolCall.function.arguments.slice(0, 300),
+        });
+        const result = await executeToolCallWithConfirmation(toolCall, emit);
+        appendForcedSkillResult(requestMessages, slashCommand, result);
+        emit({
+          type: "tool_end",
+          toolName: slashCommand.skillName,
+          outputPreview: String(result || "").slice(0, 300),
+          isError: /^Error:/i.test(String(result || "")),
+        });
+      } catch (e) {
+        emit({ type: "error", error: e.message });
+        if (!res.writableEnded) res.end();
+        return;
+      }
+    }
+
+    const MAX_LOCAL_SKILL_ROUNDS = 6;
+    for (let round = 0; ; round += 1) {
+      usage = await streamLocalOpenAiCompletion({
+        baseUrl,
+        model,
+        messages: requestMessages,
+        // Attach the image only on the first (user) round.
+        images: round === 0 ? body.images : undefined,
+        params,
+        signal: abortController.signal,
+        onDelta: (delta) => {
+          output += delta;
+          if (output.includes("<call:")) return;
+          emit({
+            type: "delta",
+            delta,
+            response: stripTrailingPartialSkillCall(output),
+          });
+        },
+        onUsage: (nextUsage) => {
+          usage = nextUsage;
+        },
+      });
+
+      const xmlMatch = localSkillsEnabled
+        ? output.match(/<call:([^>]+)>(.*?)<\/call>/is)
+        : null;
+      if (!xmlMatch) break;
+
+      output = output.replace(xmlMatch[0], "").trim();
+      if (round >= MAX_LOCAL_SKILL_ROUNDS) {
+        emit({
+          type: "error",
+          error: "Skill call limit exceeded for this request.",
+        });
+        break;
+      }
+
+      const toolCall = {
+        function: { name: xmlMatch[1].trim(), arguments: xmlMatch[2].trim() },
+      };
+      if (!emittedThinkingStart) {
+        emittedThinkingStart = true;
+        emit({ type: "thinking_start" });
+      }
+      const startMsg = `\n\n[Running tool: ${toolCall.function.name}...]\n`;
+      thinking += startMsg;
+      emit({ type: "thinking_delta", delta: startMsg, thinking });
+      emit({
+        type: "tool_start",
+        toolName: toolCall.function.name,
+        argsPreview: toolCall.function.arguments.slice(0, 300),
+      });
+
+      let result;
+      try {
+        result = await executeToolCallWithConfirmation(toolCall, emit);
+      } catch (toolError) {
+        result = `Error: ${toolError.message}`;
+      }
+
+      emit({
+        type: "tool_end",
+        toolName: toolCall.function.name,
+        outputPreview: String(result || "").slice(0, 300),
+        isError: /^Error:/i.test(String(result || "")),
+      });
+      const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
+      thinking += endMsg;
+      emit({ type: "thinking_delta", delta: endMsg, thinking });
+
+      if (output) {
+        requestMessages = [
+          ...requestMessages,
+          { role: "assistant", content: output },
+        ];
+      }
+      requestMessages = [
+        ...requestMessages,
+        {
+          role: "user",
+          content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nContinue your answer using this skill result. Do not repeat the same skill call with the same arguments.`,
+        },
+      ];
+      emit({ type: "delta", delta: "", response: output });
+    }
+
+    if (emittedThinkingStart) {
+      emit({ type: "thinking_end", thinking });
+    }
+
+    finished = true;
+    upsertConversation(
+      saveConv,
+      convTitle,
+      originalMessage,
+      storedMessages,
+      output,
+      modeId,
+      {
+        librarySources: librarySourceResults,
+        passages: libraryPassages,
+        thinking,
+        traceEvents,
+      },
+    );
+    emit({ type: "done", response: output, usage, model });
+    if (!res.writableEnded) res.end();
+  } catch (e) {
+    const isAbort = e?.name === "AbortError";
+    if (!finished) finished = true;
+    if (!res.writableEnded) {
+      if (!res.headersSent) {
+        send(isAbort ? 499 : e.statusCode || 500, {
+          error: isAbort ? "Request cancelled." : e.message,
+        });
+      } else {
+        emit({
+          type: "error",
+          error: isAbort ? "Request cancelled." : e.message,
+        });
+        res.end();
+      }
+    }
+  }
 }
 
 function getCloudApiKey(settings, provider) {
@@ -4190,6 +4738,41 @@ const server = http.createServer(async (req, res) => {
           res.end();
         }
       }
+    }
+    return;
+  }
+
+  // ---- Local OpenAI-compatible bespoke modes (LM Studio, llama.cpp) ----
+  if (req.method === "POST" && urlPath === "/api/lmstudio/stream") {
+    await handleLocalModeStream("lmstudio", req, res, send);
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/api/llamacpp/stream") {
+    await handleLocalModeStream("llamacpp", req, res, send);
+    return;
+  }
+  if (
+    req.method === "GET" &&
+    (urlPath === "/api/lmstudio/models" || urlPath === "/api/llamacpp/models")
+  ) {
+    const modeId = urlPath.includes("lmstudio") ? "lmstudio" : "llamacpp";
+    try {
+      send(200, { models: await fetchLocalModels(modeId) });
+    } catch (e) {
+      send(e.statusCode || 502, { error: e.message });
+    }
+    return;
+  }
+  if (req.method === "GET" && urlPath === "/api/local-models/settings") {
+    send(200, { settings: loadLocalModelSettings() });
+    return;
+  }
+  if (req.method === "POST" && urlPath === "/api/local-models/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      send(200, { settings: saveLocalModelSettings(body && body.settings) });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
     }
     return;
   }

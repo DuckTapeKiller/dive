@@ -191,6 +191,17 @@ function createFetchStub() {
       });
     }
     if (path === "/api/ollama/skills/settings") return jsonResponse({});
+    if (path === "/api/local-models/settings") {
+      return jsonResponse({
+        settings: {
+          lmstudio: { baseUrl: "http://127.0.0.1:1234/v1", model: "" },
+          llamacpp: { baseUrl: "http://127.0.0.1:8080/v1", model: "" },
+        },
+      });
+    }
+    if (path === "/api/lmstudio/models" || path === "/api/llamacpp/models") {
+      return jsonResponse({ models: [] });
+    }
     if (path === "/api/version") return jsonResponse({ version: "1.0.5" });
     if (
       path === "/api/security-event" ||
@@ -315,7 +326,7 @@ test("frontend boots without network fetch crashes", async () => {
   );
   assert.strictEqual(
     dom.window.document.querySelectorAll(".settings-tab").length,
-    4,
+    5,
   );
   assert.strictEqual(
     dom.window.document.getElementById("ollamaPaletteGroup").parentElement.id,
