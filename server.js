@@ -1321,6 +1321,21 @@ async function handleLocalModeStream(modeId, req, res, send) {
       emit({ type: "library_error", error: e.message });
     }
 
+    // Optional user-selected system prompt overlay (topbar prompt dropdown),
+    // applied only when Database Context is off, right after the base policy.
+    const promptOverlay =
+      typeof body.promptOverlay === "string" ? body.promptOverlay.trim() : "";
+    if (promptOverlay && !databaseContextEnabled) {
+      requestMessages = [
+        requestMessages[0],
+        {
+          role: "system",
+          content: `Additional user-selected overlay instructions (secondary to the built-in default policy):\n\n${promptOverlay}`,
+        },
+        ...requestMessages.slice(1),
+      ];
+    }
+
     // Skills work exactly like Cloud: offered only when Database Context is off
     // (the DB-on prompt answers strictly from library passages) and not a slash
     // command. The model drives them via the <call:...> mechanism.

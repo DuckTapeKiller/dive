@@ -3643,11 +3643,25 @@
                 >
                   CLOUD
                 </button>
+                <button
+                  type="button"
+                  class="search-algo-mode-btn"
+                  data-search-algo-mode="lmstudio"
+                >
+                  LM STUDIO
+                </button>
+                <button
+                  type="button"
+                  class="search-algo-mode-btn"
+                  data-search-algo-mode="llamacpp"
+                >
+                  LLAMA.CPP
+                </button>
               </div>
               <div class="setting-help">
                 Each chat mode keeps its own copy of these weights. The sliders
                 below edit the selected mode only; Save Database Settings stores
-                all three. Reset Defaults resets the selected mode.
+                every mode. Reset Defaults resets the selected mode.
               </div>
               <div class="search-algorithm-control">
                 <label style="font-size: 10px"
@@ -5223,6 +5237,19 @@
       let libraryIndexPollTimer = null;
       let promptsList = [];
       let activePromptId = "";
+      // Prompts are per-mode and independent: each prompt belongs to the mode it
+      // was created in, and each mode has its own active prompt. Prompts apply to
+      // the modes that use a system-prompt overlay (Ollama + the local modes).
+      const PROMPT_MODE_KEYS = ["ollama", "lmstudio", "llamacpp"];
+      function promptModeOf(p) {
+        return PROMPT_MODE_KEYS.includes(p && p.mode) ? p.mode : "ollama";
+      }
+      function promptsForMode(m) {
+        return promptsList.filter((p) => promptModeOf(p) === m);
+      }
+      function activePromptStorageKey(m) {
+        return "ollama-pi-chat-active-prompt-" + m;
+      }
       let lastExchangePersisted = true;
       let activePiPermissionRequest = null;
       let activePiPermissionResolver = null;
@@ -5778,8 +5805,30 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             btn.style.display = enabledModes.includes(def.id) ? "" : "none";
           }
         });
+        updateSearchAlgorithmModeTabs();
         if (!enabledModes.includes(mode)) {
           setMode(enabledModes[0] || "ollama");
+        }
+      }
+
+      // The Search Algorithm sub-panel mirrors the enabled modes: only tabs for
+      // currently-enabled modes are shown. If the selected tab's mode gets
+      // disabled, fall back to the first enabled one.
+      function updateSearchAlgorithmModeTabs() {
+        const tabs = document.querySelectorAll(
+          "#searchAlgorithmModeTabs .search-algo-mode-btn",
+        );
+        tabs.forEach((btn) => {
+          btn.style.display = enabledModes.includes(btn.dataset.searchAlgoMode)
+            ? ""
+            : "none";
+        });
+        if (
+          searchAlgorithmSlidersReady &&
+          typeof activeSearchAlgorithmMode === "function" &&
+          !enabledModes.includes(activeSearchAlgorithmMode())
+        ) {
+          selectSearchAlgorithmMode(enabledModes[0] || "ollama");
         }
       }
 
@@ -8116,12 +8165,64 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
       }
 
-      modelSelect.addEventListener("change", async () => {
-        if (modelSelect.value) {
-          localStorage.setItem(MODEL_STORAGE_KEY, modelSelect.value);
+      // The topbar model dropdown is shared across modes that pick a model
+      // (Ollama, LM Studio, llama.cpp, Cloud). It is repopulated per mode.
+      function populateTopbarModelSelect() {
+        if (!modelSelect) return;
+        modelSelect.innerHTML = "";
+        const addOpt = (value, label) => {
+          const o = document.createElement("option");
+          o.value = value;
+          o.textContent = label;
+          modelSelect.appendChild(o);
+        };
+        if (mode === "ollama") {
+          const saved = localStorage.getItem(MODEL_STORAGE_KEY) || "";
+          availableOllamaModels.forEach((m) => addOpt(m, m));
+          if (saved && availableOllamaModels.includes(saved)) {
+            modelSelect.value = saved;
+          } else if (availableOllamaModels.length) {
+            modelSelect.value = availableOllamaModels[0];
+          }
+        } else if (LOCAL_MODE_IDS.includes(mode)) {
+          const list = localModelsCache[mode] || [];
+          addOpt(
+            "",
+            list.length ? "(auto / server default)" : "(no models — Refresh)",
+          );
+          list.forEach((m) => addOpt(m, m));
+          modelSelect.value = localModelConfig[mode].model || "";
+        } else if (mode === "cloud") {
+          for (const p of Object.keys(CLOUD_DEFAULT_MODELS)) {
+            const m = cloudSettings.models?.[p] || CLOUD_DEFAULT_MODELS[p];
+            if (m) addOpt(p, `${getCloudProviderLabel(p)} · ${m}`);
+          }
+          modelSelect.value = cloudSettings.provider || "openai";
         }
-        await refreshOllamaModelContext();
+        if (typeof syncCustomSelect === "function")
+          syncCustomSelect(modelSelect);
+      }
+
+      async function onTopbarModelChange() {
+        const val = modelSelect.value;
+        if (mode === "ollama") {
+          if (val) localStorage.setItem(MODEL_STORAGE_KEY, val);
+          await refreshOllamaModelContext();
+        } else if (LOCAL_MODE_IDS.includes(mode)) {
+          localModelConfig[mode].model = val;
+          const els = localModeEls(mode);
+          if (els.select) els.select.value = val;
+          saveLocalModeSettings();
+        } else if (mode === "cloud") {
+          cloudSettings.provider = val;
+          renderCloudSettingsForm();
+          await saveCloudSettingsUi();
+        }
         updateModeStatus();
+      }
+
+      modelSelect.addEventListener("change", () => {
+        onTopbarModelChange();
       });
 
       function getCloudProviderLabel(provider) {
@@ -8145,11 +8246,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           return;
         }
         if (LOCAL_MODE_IDS.includes(mode)) {
-          const def = MODE_DEFS.find((d) => d.id === mode);
-          const conf = localModelConfig[mode] || {};
-          const modelName = conf.model || "auto";
-          statusEl.textContent = `${def ? def.label : mode}: ${modelName} | ${conf.baseUrl || ""}`;
-          statusEl.title = statusEl.textContent;
+          // The topbar model + prompt dropdowns convey the state; no status text.
+          statusEl.textContent = "";
+          statusEl.title = "";
           return;
         }
         if (mode === "pi") {
@@ -8277,8 +8376,17 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             if (b) b.className = m === def.id ? "active" : "";
           }
         });
-        modelSelect.classList.toggle("mode-hidden", !isOllamaMode);
-        topbarPromptSelect.classList.toggle("mode-hidden", !isOllamaMode);
+        // Topbar model dropdown: Ollama, LM Studio, llama.cpp, and Cloud all
+        // pick a model here (Pi has none). Prompt dropdown: Ollama + local modes.
+        modelSelect.classList.toggle("mode-hidden", isPiMode);
+        topbarPromptSelect.classList.toggle(
+          "mode-hidden",
+          !(isOllamaMode || isLocalMode),
+        );
+        if (!isPiMode) populateTopbarModelSelect();
+        if (isLocalMode && (localModelsCache[m] || []).length === 0) {
+          fetchLocalModelList(m).catch(() => {});
+        }
         updateSettingsTabAvailability({
           isOllamaMode,
           isCloudMode,
@@ -8292,8 +8400,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ollamaFontGroup.style.display = isOllamaMode ? "" : "none";
         piFontGroup.style.display = isPiMode ? "" : "none";
         cloudFontGroup.style.display = isCloudMode ? "" : "none";
-        promptSettingsGroup.style.display = isOllamaMode ? "" : "none";
-        promptManageGroup.style.display = isOllamaMode ? "" : "none";
+        const isPromptMode = PROMPT_MODE_KEYS.includes(m);
+        promptSettingsGroup.style.display = isPromptMode ? "" : "none";
+        promptManageGroup.style.display = isPromptMode ? "" : "none";
+        // Load this mode's own active prompt, then refresh the lists/dropdowns.
+        activePromptId = isPromptMode
+          ? localStorage.getItem(activePromptStorageKey(m)) || ""
+          : "";
+        if (typeof renderPromptsList === "function") renderPromptsList();
+        if (typeof populatePromptSelect === "function") populatePromptSelect();
         const builtinSkillsGroup =
           document.getElementById("builtinSkillsGroup");
         const customSkillsGroup = document.getElementById("customSkillsGroup");
@@ -8977,6 +9092,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             mode: modeId,
             model: conf.model || undefined,
             params: conf.params || undefined,
+            promptOverlay: getActivePromptContent() || undefined,
             library: getLibraryRequestPayload(),
             images: images || undefined,
           }),
@@ -9241,14 +9357,33 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         ).catch((e) => console.error("Could not save local model settings", e));
       }
 
-      async function refreshLocalModels(modeId) {
+      // Cache of the model ids each local server reports, so the topbar
+      // dropdown can populate without re-fetching on every mode switch.
+      const localModelsCache = { lmstudio: [], llamacpp: [] };
+
+      async function fetchLocalModelList(
+        modeId,
+        { alertOnError = false } = {},
+      ) {
         try {
           const res = await fetch(apiUrl(`/api/${modeId}/models`));
           const data = await readJsonResponse(res, "List local models");
-          renderLocalModelOptions(modeId, data.models || []);
+          localModelsCache[modeId] = Array.isArray(data.models)
+            ? data.models
+            : [];
         } catch (e) {
-          alert(`Could not list models for ${modeId}: ${e.message}`);
+          if (alertOnError) {
+            alert(`Could not list models for ${modeId}: ${e.message}`);
+          }
         }
+        renderLocalModelOptions(modeId, localModelsCache[modeId]);
+        if (mode === modeId) populateTopbarModelSelect();
+        return localModelsCache[modeId];
+      }
+
+      // "Refresh models" button in settings: fetch and surface errors.
+      async function refreshLocalModels(modeId) {
+        await fetchLocalModelList(modeId, { alertOnError: true });
       }
 
       function wireLocalModeSettings() {
@@ -10720,12 +10855,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const topSelect = document.getElementById("topbarPromptSelect");
 
         if (!select) return;
+        const modePrompts = promptsForMode(mode);
         if (
           activePromptId &&
-          !promptsList.some((p) => p.id === activePromptId)
+          !modePrompts.some((p) => p.id === activePromptId)
         ) {
           activePromptId = "";
-          localStorage.setItem("ollama-pi-chat-active-prompt", "");
+          localStorage.setItem(activePromptStorageKey(mode), "");
         }
 
         select.textContent = "";
@@ -10742,7 +10878,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           topSelect.appendChild(topDefault);
         }
 
-        promptsList.forEach((p) => {
+        modePrompts.forEach((p) => {
           const option = document.createElement("option");
           option.value = String(p.id ?? "");
           option.textContent = String(p.name ?? "");
@@ -10762,6 +10898,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           syncCustomSelect(select);
           if (topSelect) syncCustomSelect(topSelect);
         }
+      }
+
+      // Content of the currently selected system prompt overlay, or "" if none.
+      // Used by both Ollama and the local modes so the topbar prompt dropdown
+      // applies everywhere.
+      function getActivePromptContent() {
+        const selected = activePromptId
+          ? promptsList.find((p) => p.id === activePromptId)
+          : null;
+        return selected?.content || "";
       }
 
       function buildOllamaRequestContext(baseHistory, rawMessage) {
@@ -10851,12 +10997,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       function renderPromptsList() {
         const list = document.getElementById("customPromptsList");
         list.innerHTML = "";
-        if (!promptsList.length) {
+        const modePrompts = promptsForMode(mode);
+        if (!modePrompts.length) {
           list.innerHTML =
             '<div style="font-size:10px; opacity:0.5; text-align:center;">No prompts saved</div>';
           return;
         }
-        promptsList.forEach((p) => {
+        modePrompts.forEach((p) => {
           const item = document.createElement("div");
           item.className = "prompt-item";
 
@@ -11142,7 +11289,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function selectActivePrompt(id) {
         activePromptId = id;
-        localStorage.setItem("ollama-pi-chat-active-prompt", id);
+        localStorage.setItem(activePromptStorageKey(mode), id);
 
         const settingSelect = document.getElementById("settingActivePrompt");
         const topSelect = document.getElementById("topbarPromptSelect");
@@ -11275,6 +11422,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           id: "prompt_" + Date.now(),
           name: name,
           content: content,
+          // Belongs to the mode it was created in (Ollama / LM Studio / llama.cpp).
+          mode: PROMPT_MODE_KEYS.includes(mode) ? mode : "ollama",
         };
 
         promptsList.push(newPrompt);
@@ -11308,7 +11457,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         promptsList = promptsList.filter((p) => p.id !== id);
         if (activePromptId === id) {
           activePromptId = "";
-          localStorage.setItem("ollama-pi-chat-active-prompt", "");
+          localStorage.setItem(activePromptStorageKey(mode), "");
         }
         try {
           const res = await fetch(apiUrl("/api/prompts"), {
@@ -12401,7 +12550,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           typeof state === "object" && state.isCloudMode === true;
         const isLocalMode =
           typeof state === "object" && state.isLocalMode === true;
-        const promptsVisible = isOllamaMode;
+        const promptsVisible = isOllamaMode || isLocalMode;
         const skillsVisible = isOllamaMode || isCloudMode || isLocalMode;
         const promptsTab = document.querySelector(
           '.settings-tab[data-settings-tab="prompts"]',
@@ -12629,8 +12778,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         applyEnabledModes();
         renderPiSettingsForm();
 
-        activePromptId =
-          localStorage.getItem("ollama-pi-chat-active-prompt") || "";
+        // Migrate the legacy global active-prompt into Ollama's per-mode slot,
+        // then load the current mode's own active prompt.
+        const legacyActivePrompt = localStorage.getItem(
+          "ollama-pi-chat-active-prompt",
+        );
+        if (
+          legacyActivePrompt &&
+          !localStorage.getItem(activePromptStorageKey("ollama"))
+        ) {
+          localStorage.setItem(
+            activePromptStorageKey("ollama"),
+            legacyActivePrompt,
+          );
+        }
+        activePromptId = PROMPT_MODE_KEYS.includes(mode)
+          ? localStorage.getItem(activePromptStorageKey(mode)) || ""
+          : "";
         updateSendButtonState();
 
         // 2. Load models & Prompts
