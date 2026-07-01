@@ -253,12 +253,35 @@
       #topbar::-webkit-scrollbar {
         display: none;
       }
-      /* File label wraps below the main topbar row only when it has content */
-      #fileLabel:not(:empty) {
-        display: block;
+      /* The uploaded-file chip (filename + remove button) wraps below the main
+         topbar row only while a file is attached. */
+      #fileChip {
+        display: none;
+      }
+      #fileChip.show {
+        /* A wrapping row of attachment pills below the main toolbar row. */
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
         flex-basis: 100%;
         order: 4;
         margin-top: -4px;
+        min-width: 0;
+      }
+      /* Each attachment is a bordered pill, matching the source pills. */
+      .file-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        /* Let the pill shrink below the filename's intrinsic width so the
+           label can ellipsize (flex items default to min-width:auto). */
+        min-width: 0;
+        padding: 4px 8px;
+        font-size: 11px;
+        color: var(--text-normal);
+        background-color: var(--bg-secondary);
+        border: var(--border-width) solid var(--border-color);
       }
       /* MCP tools are Ollama-only in this app. */
       [data-mode="pi"] #mcpBtn,
@@ -441,7 +464,7 @@
       #fileInput {
         display: none;
       }
-      #fileLabel {
+      .file-pill-label {
         color: var(--text-normal);
         font-size: 10px;
         opacity: 0.8;
@@ -449,11 +472,9 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         transition: color 0.2s;
-        flex-shrink: 0;
-        display: none;
+        min-width: 0;
       }
-      #clearFileBtn {
-        display: none;
+      .file-pill-x {
         flex-shrink: 0;
         border: none;
         background: transparent;
@@ -462,14 +483,10 @@
         cursor: pointer;
         font-size: 14px;
         line-height: 1;
-        padding: 0 4px;
+        padding: 0 2px;
       }
-      #clearFileBtn:hover {
+      .file-pill-x:hover {
         opacity: 1;
-      }
-      /* Show the remove (×) button only while a file is pending. */
-      #fileLabel:not(:empty) + #clearFileBtn {
-        display: inline-flex;
       }
 
       /* RESIZERS */
@@ -2272,7 +2289,8 @@
       <input
         type="file"
         id="fileInput"
-        accept=".txt,.md,.pdf,.js,.ts,.py,.html,.css,.json"
+        multiple
+        accept=".txt,.md,.pdf,.js,.ts,.py,.html,.css,.json,.jpg,.jpeg,.png,.gif,.webp,image/*"
       />
       <button
         id="clearBtn"
@@ -2490,15 +2508,8 @@
               />
             </svg>
           </button>
-          <span id="fileLabel"></span>
-          <button
-            id="clearFileBtn"
-            aria-label="Remove uploaded file"
-            title="Remove uploaded file"
-            type="button"
-          >
-            ×
-          </button>
+          <!-- Attachment pills are rendered here dynamically, one per file. -->
+          <div id="fileChip"></div>
           <button
             id="send"
             aria-label="Send message"
@@ -4585,6 +4596,7 @@
         return {
           convId: null,
           history: [],
+          draft: "",
           lastUserMessage: null,
           lastSentMessage: null,
           lastExchangePersisted: true,
@@ -4602,7 +4614,13 @@
         pi: createModeSession(),
         cloud: createModeSession(),
       };
-      let pendingFile = null;
+      // Attachments are per-mode and independent: each mode keeps its own list
+      // of pending files, so switching away and back to a mode keeps them, and
+      // a file never bleeds into another mode. Multiple files accumulate — each
+      // upload appends, and each has its own removable pill.
+      const MAX_ATTACHMENTS = 8;
+      let pendingFiles = [];
+      const pendingFilesByMode = { ollama: [], pi: [], cloud: [] };
       let lastUserMessage = null;
       let lastSentMessage = null;
       let currentConvId = null;
@@ -5163,7 +5181,6 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       const cloudSettingsGroup = document.getElementById("cloudSettingsGroup");
       const piPermissionBtn = document.getElementById("piPermissionBtn");
       const fileInput = document.getElementById("fileInput");
-      const fileLabel = document.getElementById("fileLabel");
       const API_BASE =
         window.location.protocol === "moz-extension:"
           ? "http://127.0.0.1:8080"
@@ -7644,10 +7661,13 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         // Save current mode session state before switching
         syncCurrentSessionState();
 
+        // Attachments are per-mode and independent: stash the current mode's
+        // files, then restore the target mode's own files (if any). Files never
+        // bleed across modes, but leaving and returning to a mode keeps them.
+        pendingFilesByMode[mode] = pendingFiles;
         mode = m;
-        // An uploaded file is a one-off attachment for the current mode's next
-        // message; drop it on a mode switch so it does not bleed across modes.
-        clearPendingFile();
+        pendingFiles = pendingFilesByMode[m] || [];
+        renderPendingFileChips();
         const isOllamaMode = m === "ollama";
         const isPiMode = m === "pi";
         const isCloudMode = m === "cloud";
@@ -7662,6 +7682,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const saved = modeSession[m];
         history = saved.convId ? [...saved.history] : [];
         currentConvId = saved.convId || null;
+        // The composer draft is per-mode too, so an unsent message in one mode
+        // does not appear when switching to another. Setting value directly does
+        // not fire the input event, so resize the textarea to match.
+        input.value = saved.draft || "";
+        if (typeof autoResizeInput === "function") autoResizeInput();
         lastUserMessage = saved.lastUserMessage || null;
         lastSentMessage = saved.lastSentMessage || null;
         lastExchangePersisted =
@@ -7754,9 +7779,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         lastUserMessage = null;
         lastSentMessage = null;
         lastExchangePersisted = true;
-        pendingFile = null;
-        fileLabel.textContent = "";
-        fileInput.value = "";
+        clearPendingFiles();
         if (typeof updateTokenCounter === "function") updateTokenCounter();
       }
 
@@ -7942,6 +7965,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         convTitle = "",
         onDelta,
         onEvent,
+        images,
       ) {
         const res = await fetch(apiUrl("/api/pi/stream"), {
           method: "POST",
@@ -7954,6 +7978,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             convTitle,
             mode: "pi",
             library: getLibraryRequestPayload(),
+            images: images || undefined,
           }),
           signal,
         });
@@ -8095,6 +8120,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         signal,
         onDelta,
         onEvent,
+        images,
       ) {
         const res = await fetch(apiUrl("/api/chat/stream"), {
           method: "POST",
@@ -8108,6 +8134,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             mode: "ollama",
             options: getOllamaOptionsRequestPayload(),
             library: getLibraryRequestPayload(),
+            images: images || undefined,
           }),
           signal,
         });
@@ -8210,6 +8237,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         signal,
         onDelta,
         onEvent,
+        images,
       ) {
         const res = await fetch(apiUrl("/api/cloud/chat/stream"), {
           method: "POST",
@@ -8221,6 +8249,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             convTitle,
             mode: "cloud",
             library: getLibraryRequestPayload(),
+            images: images || undefined,
           }),
           signal,
         });
@@ -8457,32 +8486,81 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         loadHistoryPanel();
       }
 
-      function clearPendingFile() {
-        pendingFile = null;
-        fileLabel.textContent = "";
+      // Remove every attachment for the current mode.
+      function clearPendingFiles() {
+        pendingFiles = [];
+        pendingFilesByMode[mode] = pendingFiles;
+        renderPendingFileChips();
+      }
+
+      // Remove a single attachment (by index) for the current mode.
+      function removePendingFile(idx) {
+        pendingFiles.splice(idx, 1);
+        pendingFilesByMode[mode] = pendingFiles;
+        renderPendingFileChips();
+      }
+
+      // Rebuild the attachment pills from the current mode's `pendingFiles`.
+      // One bordered pill per file, each with its own remove (x).
+      function renderPendingFileChips() {
+        const fileChip = document.getElementById("fileChip");
+        if (!fileChip) return;
+        fileChip.textContent = "";
+        pendingFiles.forEach((att, idx) => {
+          const pill = document.createElement("span");
+          pill.className = "file-pill";
+          const label = document.createElement("span");
+          label.className = "file-pill-label";
+          label.textContent = "↑ " + att.name;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "file-pill-x";
+          remove.setAttribute("aria-label", "Remove " + att.name);
+          remove.title = "Remove " + att.name;
+          remove.textContent = "×";
+          remove.addEventListener("click", () => removePendingFile(idx));
+          pill.appendChild(label);
+          pill.appendChild(remove);
+          fileChip.appendChild(pill);
+        });
+        fileChip.classList.toggle("show", pendingFiles.length > 0);
         fileInput.value = "";
       }
 
-      const clearFileBtn = document.getElementById("clearFileBtn");
-      if (clearFileBtn) {
-        clearFileBtn.addEventListener("click", clearPendingFile);
-      }
-
       fileInput.addEventListener("change", async () => {
-        const file = fileInput.files[0];
-        if (!file) return;
-        fileLabel.textContent = "↑ " + file.name;
-        const form = new FormData();
-        form.append("file", file);
-        try {
-          const res = await fetch(apiUrl("/api/upload"), {
-            method: "POST",
-            body: form,
-          });
-          const data = await readJsonResponse(res, "Upload file");
-          pendingFile = { name: file.name, text: data.text };
-        } catch (e) {
-          fileLabel.textContent = "Upload failed";
+        const files = Array.from(fileInput.files || []);
+        // Clear the native input up front so re-selecting the same file (or
+        // clicking attach again) still fires change, and files accumulate.
+        fileInput.value = "";
+        if (!files.length) return;
+        for (const file of files) {
+          if (pendingFiles.length >= MAX_ATTACHMENTS) {
+            alert(`You can attach at most ${MAX_ATTACHMENTS} files.`);
+            break;
+          }
+          const form = new FormData();
+          form.append("file", file);
+          try {
+            const res = await fetch(apiUrl("/api/upload"), {
+              method: "POST",
+              body: form,
+            });
+            const data = await readJsonResponse(res, "Upload file");
+            const att =
+              data.kind === "image"
+                ? {
+                    name: file.name,
+                    kind: "image",
+                    imageBase64: data.dataBase64,
+                    mimeType: data.mimeType,
+                  }
+                : { name: file.name, kind: "text", text: data.text };
+            pendingFiles.push(att);
+            pendingFilesByMode[mode] = pendingFiles;
+            renderPendingFileChips();
+          } catch (e) {
+            alert(`Upload failed for ${file.name}: ${e.message}`);
+          }
         }
       });
 
@@ -9112,6 +9190,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const session = getActiveModeSession(mode);
         session.convId = currentConvId;
         session.history = [...history];
+        session.draft = input.value;
         session.lastUserMessage = lastUserMessage;
         session.lastSentMessage = lastSentMessage;
         session.lastExchangePersisted = lastExchangePersisted;
@@ -10306,7 +10385,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         if (runSession.activeAbortController) return;
         let text = input.value.trim();
         if (!text) return;
-        const messageSource = pendingFile ? "uploaded_file" : "manual";
+        const messageSource = pendingFiles.length ? "uploaded_file" : "manual";
         logSecurityEvent("user_message_submitted", {
           mode: runMode,
           source: messageSource,
@@ -10319,18 +10398,30 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const runConvId = currentConvId;
 
         let displayText = text;
-        if (pendingFile) {
-          text =
-            "[File: " +
-            pendingFile.name +
-            "]\n" +
-            pendingFile.text +
-            "\n\n" +
-            text;
-          displayText = "[File: " + pendingFile.name + "] " + lastUserMessage;
-          pendingFile = null;
-          fileLabel.textContent = "";
-          fileInput.value = "";
+        let outgoingImages = null;
+        if (pendingFiles.length) {
+          const imageAtts = pendingFiles.filter((f) => f.kind === "image");
+          const textAtts = pendingFiles.filter((f) => f.kind !== "image");
+          // Text/PDF files are injected into the prompt (each labelled);
+          // images are sent as data, not text.
+          if (textAtts.length) {
+            const fileBlocks = textAtts
+              .map((f) => "[File: " + f.name + "]\n" + f.text)
+              .join("\n\n");
+            text = fileBlocks + "\n\n" + text;
+          }
+          if (imageAtts.length) {
+            outgoingImages = imageAtts.map((f) => ({
+              name: f.name,
+              dataBase64: f.imageBase64,
+              mimeType: f.mimeType,
+            }));
+          }
+          const names = pendingFiles
+            .map((f) => (f.kind === "image" ? "Image: " : "File: ") + f.name)
+            .join(", ");
+          displayText = "[" + names + "] " + lastUserMessage;
+          clearPendingFiles();
         }
 
         addMessage(displayText, "user");
@@ -10482,6 +10573,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
                 recordRunTrace(evt);
               },
+              outgoingImages,
             );
             setDraftAssistant(
               runMode,
@@ -10560,6 +10652,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
                 recordRunTrace(evt);
               },
+              outgoingImages,
             );
             setDraftAssistant(
               runMode,
@@ -10631,6 +10724,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                 }
                 recordRunTrace(evt);
               },
+              outgoingImages,
             );
             setDraftAssistant(
               runMode,
