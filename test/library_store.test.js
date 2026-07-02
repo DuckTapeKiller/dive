@@ -235,7 +235,13 @@ test("database chat enable setting is independent per mode", () => {
         value.enabled,
       ]),
     ),
-    { ollama: true, pi: true, cloud: true },
+    {
+      ollama: true,
+      pi: true,
+      cloud: true,
+      lmstudio: true,
+      llamacpp: true,
+    },
   );
 });
 

@@ -28,7 +28,7 @@ const SEMANTIC_BRIDGE_TERM_LIMIT = 14;
 const SEMANTIC_DOMINANT_WEIGHT = 2.75;
 const STRICT_FTS_DEFAULT_WEIGHT = 3.0;
 const SOURCE_STRICT_FTS_DEFAULT_WEIGHT = 3.25;
-const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud"];
+const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
   ".obsidian",

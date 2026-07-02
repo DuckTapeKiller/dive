@@ -342,10 +342,14 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      [data-mode="ollama"] #modeStatus {
+      [data-mode="ollama"] #modeStatus,
+      [data-mode="lmstudio"] #modeStatus,
+      [data-mode="llamacpp"] #modeStatus {
         display: none;
       }
-      [data-mode="ollama"] #tokenCounter {
+      [data-mode="ollama"] #tokenCounter,
+      [data-mode="lmstudio"] #tokenCounter,
+      [data-mode="llamacpp"] #tokenCounter {
         margin-left: auto;
       }
       .mode-hidden {
@@ -1565,6 +1569,10 @@
       .msg.assistant {
         background: var(--bg-primary);
         color: var(--text-normal);
+        /* Assistant content is rendered HTML (marked); use normal whitespace so
+           the newlines between block tags don't add gaps on top of paragraph
+           margins. The .msg base pre-wrap is only needed for raw user text. */
+        white-space: normal;
       }
 
       /* MARKDOWN STYLES */
@@ -8301,11 +8309,23 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           list.forEach((m) => addOpt(m, m));
           modelSelect.value = localModelConfig[mode].model || "";
         } else if (mode === "cloud") {
-          for (const p of Object.keys(CLOUD_DEFAULT_MODELS)) {
-            const m = cloudSettings.models?.[p] || CLOUD_DEFAULT_MODELS[p];
-            if (m) addOpt(p, `${getCloudProviderLabel(p)} · ${m}`);
+          // Only list providers that actually have an API key saved (or set via
+          // env) — you can't use a model without a key.
+          const withKeys = Object.keys(CLOUD_DEFAULT_MODELS).filter(
+            (p) => cloudSettings.hasApiKey?.[p],
+          );
+          if (!withKeys.length) {
+            addOpt("", "No API key — add one in Settings");
+            modelSelect.value = "";
+          } else {
+            for (const p of withKeys) {
+              const m = cloudSettings.models?.[p] || CLOUD_DEFAULT_MODELS[p];
+              addOpt(p, `${getCloudProviderLabel(p)} · ${m}`);
+            }
+            modelSelect.value = withKeys.includes(cloudSettings.provider)
+              ? cloudSettings.provider
+              : withKeys[0];
           }
-          modelSelect.value = cloudSettings.provider || "openai";
         }
         if (typeof syncCustomSelect === "function")
           syncCustomSelect(modelSelect);
@@ -8322,9 +8342,12 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           if (els.select) els.select.value = val;
           saveLocalModeSettings();
         } else if (mode === "cloud") {
-          cloudSettings.provider = val;
-          renderCloudSettingsForm();
-          await saveCloudSettingsUi();
+          // Ignore the "No API key" placeholder; only switch to a real provider.
+          if (val) {
+            cloudSettings.provider = val;
+            renderCloudSettingsForm();
+            await saveCloudSettingsUi();
+          }
         }
         updateModeStatus();
       }
@@ -9283,7 +9306,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               finalResponse =
                 typeof evt.response === "string" ? evt.response : finalResponse;
               if (evt.usage && typeof evt.usage.total === "number") {
-                updateTokenCounter(modeId, evt.usage.total, null);
+                updateTokenCounter(
+                  modeId,
+                  evt.usage.total,
+                  localContextCache[modeId] || null,
+                );
               }
               if (typeof onDelta === "function") onDelta(finalResponse, "");
               if (typeof onEvent === "function") onEvent(evt);
@@ -9468,6 +9495,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       // Cache of the model ids each local server reports, so the topbar
       // dropdown can populate without re-fetching on every mode switch.
       const localModelsCache = { lmstudio: [], llamacpp: [] };
+      // The loaded context window each local server reports (LM Studio
+      // /api/v0/models, llama.cpp /props) — shown as the token-counter limit.
+      const localContextCache = { lmstudio: null, llamacpp: null };
 
       async function fetchLocalModelList(
         modeId,
@@ -9479,13 +9509,26 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           localModelsCache[modeId] = Array.isArray(data.models)
             ? data.models
             : [];
+          localContextCache[modeId] =
+            typeof data.contextLength === "number" ? data.contextLength : null;
         } catch (e) {
           if (alertOnError) {
             alert(`Could not list models for ${modeId}: ${e.message}`);
           }
         }
         renderLocalModelOptions(modeId, localModelsCache[modeId]);
-        if (mode === modeId) populateTopbarModelSelect();
+        if (mode === modeId) {
+          populateTopbarModelSelect();
+          // Surface the loaded context window as the token-counter limit even
+          // before the first message (so you can see e.g. 9169 vs what you set).
+          const st =
+            modeId === "lmstudio" ? lmstudioTokenState : llamacppTokenState;
+          updateTokenCounter(
+            modeId,
+            typeof st.used === "number" ? st.used : 0,
+            localContextCache[modeId] || null,
+          );
+        }
         return localModelsCache[modeId];
       }
 
@@ -10386,6 +10429,16 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function setDraftAssistant(modeName, content, librarySources, metadata) {
         const session = getActiveModeSession(modeName);
+        // Hide a trailing (possibly partial) skill call from the visible bubble
+        // and surface the animated drum icon instead. Applied here so every mode
+        // (ollama, pi, cloud, lmstudio, llamacpp) behaves identically.
+        let text = content || "";
+        let showDrumIcon = false;
+        const partialCallMatch = text.match(/<c(?:a(?:l(?:l(?:[^>]*))?)?)?$/i);
+        if (partialCallMatch) {
+          text = text.substring(0, partialCallMatch.index);
+          showDrumIcon = true;
+        }
         const existingMetadata = getAssistantMetadataFromMessage(
           session.draftAssistant,
         );
@@ -10402,7 +10455,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           nextMetadata.passages = existingMetadata.passages;
         }
         session.draftAssistant = buildAssistantHistoryMessage(
-          content || "",
+          text,
           librarySources || [],
           nextMetadata,
         );
@@ -10412,16 +10465,22 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           !session.streamingAssistantDiv ||
           !session.streamingAssistantDiv.isConnected
         ) {
-          if ((content || "").trim() || (librarySources || []).length) {
+          if (text.trim() || showDrumIcon || (librarySources || []).length) {
             session.streamingAssistantDiv = addMessage("", "assistant");
           }
         }
         if (session.streamingAssistantDiv) {
           renderAssistantMessage(
             session.streamingAssistantDiv,
-            content || "",
+            text,
             librarySources || [],
           );
+          if (showDrumIcon) {
+            session.streamingAssistantDiv.insertAdjacentHTML(
+              "beforeend",
+              `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`,
+            );
+          }
           scrollChatToBottom();
         }
       }
@@ -11682,50 +11741,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
                     runSession.thinkingController = null;
                   }
                 }
-                let nextText = partialResponse || "";
-                let showDrumIcon = false;
-                const partialCallMatch = nextText.match(
-                  /<c(?:a(?:l(?:l(?:[^>]*))?)?)?$/i,
-                );
-                if (partialCallMatch) {
-                  nextText = nextText.substring(0, partialCallMatch.index);
-                  showDrumIcon = true;
-                }
-
-                if (
-                  !runSession.streamingAssistantDiv &&
-                  (nextText.trim() || showDrumIcon)
-                ) {
-                  if (mode === runMode && currentConvId === runConvId) {
-                    runSession.streamingAssistantDiv = addMessage(
-                      "",
-                      "assistant",
-                    );
-                  }
-                }
                 setDraftAssistant(
                   runMode,
-                  nextText,
+                  partialResponse || "",
                   activeLibrarySources.results,
                 );
-                if (
-                  runSession.streamingAssistantDiv &&
-                  mode === runMode &&
-                  currentConvId === runConvId
-                ) {
-                  renderAssistantMessage(
-                    runSession.streamingAssistantDiv,
-                    nextText,
-                    activeLibrarySources.results,
-                  );
-                  if (showDrumIcon) {
-                    runSession.streamingAssistantDiv.insertAdjacentHTML(
-                      "beforeend",
-                      `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`,
-                    );
-                  }
-                  scrollChatToBottom();
-                }
               },
               (evt) => {
                 captureLibrarySources(
@@ -12708,7 +12728,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
 
       function organizeSettingsTabs() {
         // MODES tab holds only the Enabled Modes checkboxes.
-        appendSettingsGroups("settingsTabModes", ["modesSettingsGroup"]);
+        appendSettingsGroups("settingsTabModes", [
+          "modesSettingsGroup",
+          "diagnosticsGroup",
+        ]);
         // MAIN tab holds every mode's config, each shown only for its active
         // mode (same pattern as Ollama/Pi/Cloud).
         appendSettingsGroups("settingsTabMain", [
@@ -12977,7 +13000,9 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         syncFontControls("llamacpp", llamacppFont);
         renderOllamaOptionsForm();
         await __timed("loadLibrarySettings", loadLibrarySettings);
-        await __timed("pollLibraryIndexJob", pollLibraryIndexJob);
+        // Library status runs SQLite counts that can take many seconds on a big
+        // library — run it in the background so it never blocks startup.
+        __timed("pollLibraryIndexJob", pollLibraryIndexJob).catch(() => {});
         applyPalette(
           mode === "ollama"
             ? ollamaPalette

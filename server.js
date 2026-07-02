@@ -1137,6 +1137,7 @@ async function streamLocalOpenAiCompletion({
   signal,
   onDelta,
   onUsage,
+  onReasoning,
 }) {
   const request = buildLocalOpenAiRequest(
     baseUrl,
@@ -1190,7 +1191,18 @@ async function streamLocalOpenAiCompletion({
       latestUsage = normalizeUsage("openai", parsed.usage);
       if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
     }
-    const delta = parsed.choices?.[0]?.delta?.content;
+    // Reasoning models (e.g. Gemma "thinking") emit chain-of-thought in a
+    // separate field — surface it as thinking, like Ollama/Cloud do.
+    const d = parsed.choices?.[0]?.delta || {};
+    const reasoning = d.reasoning_content ?? d.reasoning;
+    if (
+      typeof reasoning === "string" &&
+      reasoning &&
+      typeof onReasoning === "function"
+    ) {
+      onReasoning(reasoning);
+    }
+    const delta = d.content;
     if (typeof delta === "string" && delta && typeof onDelta === "function") {
       onDelta(delta);
     }
@@ -1229,7 +1241,38 @@ async function fetchLocalModels(modeId) {
   const models = Array.isArray(data?.data)
     ? data.data.map((m) => m && m.id).filter(Boolean)
     : [];
-  return models;
+  // The OpenAI-compat /v1/models does not report context length. Get the real
+  // loaded context window from LM Studio's native API (/api/v0/models) or from
+  // llama.cpp's /props, best-effort, so the UI can show "used / context".
+  const root = baseUrl.replace(/\/v\d+$/, "");
+  let contextLength = null;
+  try {
+    if (modeId === "lmstudio") {
+      const r = await fetch(root + "/api/v0/models", { method: "GET" });
+      if (r.ok) {
+        const d = await r.json().catch(() => null);
+        const loaded = Array.isArray(d?.data)
+          ? d.data.find(
+              (m) =>
+                m &&
+                m.state === "loaded" &&
+                typeof m.loaded_context_length === "number",
+            )
+          : null;
+        if (loaded) contextLength = loaded.loaded_context_length;
+      }
+    } else {
+      const r = await fetch(root + "/props", { method: "GET" });
+      if (r.ok) {
+        const d = await r.json().catch(() => null);
+        const n = d?.default_generation_settings?.n_ctx ?? d?.n_ctx;
+        if (typeof n === "number") contextLength = n;
+      }
+    }
+  } catch (_e) {
+    // context length is best-effort
+  }
+  return { models, contextLength };
 }
 
 // Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
@@ -1388,11 +1431,21 @@ async function handleLocalModeStream(modeId, req, res, send) {
         onDelta: (delta) => {
           output += delta;
           if (output.includes("<call:")) return;
+          // Send the raw output (including any trailing partial "<call") so the
+          // client can hide it and show the animated drum icon, matching Ollama.
           emit({
             type: "delta",
             delta,
-            response: stripTrailingPartialSkillCall(output),
+            response: output,
           });
+        },
+        onReasoning: (chunk) => {
+          if (!emittedThinkingStart) {
+            emittedThinkingStart = true;
+            emit({ type: "thinking_start" });
+          }
+          thinking += chunk;
+          emit({ type: "thinking_delta", delta: chunk, thinking });
         },
         onUsage: (nextUsage) => {
           usage = nextUsage;
@@ -1819,12 +1872,6 @@ function getCloudSkillsPolicyPrompt() {
     "If the skill result was irrelevant and you did not use it, do not cite it.",
   );
   return lines.join("\n");
-}
-
-function stripTrailingPartialSkillCall(text) {
-  const value = String(text || "");
-  const match = value.match(/<c(?:a(?:l(?:l(?:[^>]*)?)?)?)?$/i);
-  return match ? value.slice(0, match.index) : value;
 }
 
 function isTransientLibraryContextMessage(item) {
@@ -4630,10 +4677,12 @@ const server = http.createServer(async (req, res) => {
             // Stop streaming visible text once a skill call starts; the
             // call block is excised below and streaming resumes next round.
             if (output.includes("<call:")) return;
+            // Send the raw output (including any trailing partial "<call") so the
+            // client can hide it and show the animated drum icon, matching Ollama.
             emit({
               type: "delta",
               delta,
-              response: stripTrailingPartialSkillCall(output),
+              response: output,
             });
           },
           onUsage: (nextUsage) => {
@@ -4773,7 +4822,7 @@ const server = http.createServer(async (req, res) => {
   ) {
     const modeId = urlPath.includes("lmstudio") ? "lmstudio" : "llamacpp";
     try {
-      send(200, { models: await fetchLocalModels(modeId) });
+      send(200, await fetchLocalModels(modeId));
     } catch (e) {
       send(e.statusCode || 502, { error: e.message });
     }
