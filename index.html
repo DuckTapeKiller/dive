@@ -635,6 +635,14 @@
       #mcpPanel.open {
         display: flex;
       }
+      /* Keep the settings header + tabs fixed; only the active panel scrolls. */
+      #settingsPanel {
+        overflow: hidden;
+      }
+      #settingsBody {
+        overflow: hidden;
+        min-height: 0;
+      }
       #settingsHeader,
       #mcpHeader {
         display: flex;
@@ -721,6 +729,9 @@
       }
       .settings-tab-panel.active {
         display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
       }
       .setting-group {
         display: flex;
@@ -5003,6 +5014,7 @@
           draftAssistant: null,
           streamingAssistantDiv: null,
           thinkingController: null,
+          drumPending: false,
         };
       }
 
@@ -10028,9 +10040,27 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         div.appendChild(container);
       }
 
+      // Remove every form of skill-call syntax so a raw <call:...> can NEVER be
+      // shown in a bubble, in ANY mode or render path. This is the single choke
+      // point that guarantees the drum — not the call — is what the user sees.
+      function stripSkillCallsForDisplay(text) {
+        return (
+          String(text || "")
+            // Completed call block: <call:name>args</call>
+            .replace(/<call:[^>]*>[\s\S]*?<\/call>/gi, "")
+            // Malformed call: opener plus a JSON argument object, no closing tag.
+            .replace(/<call:[^>]*>\s*\{[^{}]*\}/gi, "")
+            // A dangling opener (with or without '>') left at the very end.
+            .replace(/<call:[^>]*>?\s*$/i, "")
+            // A bare partial "<c".."<call" fragment at the very end (mid-stream).
+            .replace(/<c(?:a(?:l(?:l)?)?)?$/i, "")
+        );
+      }
+
       function renderAssistantMessage(div, text, librarySources) {
         if (!div) return;
-        div.dataset.rawText = text || "";
+        const cleanText = stripSkillCallsForDisplay(text);
+        div.dataset.rawText = cleanText;
         if (Array.isArray(librarySources)) {
           div.dataset.librarySources = JSON.stringify(
             normalizeLibrarySourceResults(librarySources),
@@ -10038,7 +10068,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
         const sourceResults = readLibrarySourcesFromMessage(div);
 
-        let finalText = text || "";
+        let finalText = cleanText;
 
         if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
           div.innerHTML = DOMPurify.sanitize(marked.parse(finalText));
@@ -10409,6 +10439,11 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             );
           }
           renderAssistantHistoryMessage(session.draftAssistant, session);
+          // Restore the tool-call drum if this mode is still streaming a call,
+          // so it stays visible across mode switches instead of vanishing.
+          if (session.drumPending && session.activeAbortController) {
+            appendDrumIcon(session.streamingAssistantDiv);
+          }
         } else if (session.activeAbortController) {
           session.thinkingController = addThinking(
             activeThinkingSnapshot || {},
@@ -10427,18 +10462,22 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         session.lastExchangePersisted = lastExchangePersisted;
       }
 
+      // The animated drum shown while a mode is streaming a tool/skill call.
+      const DRUM_ICON_HTML = `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`;
+      function appendDrumIcon(div) {
+        if (div && !div.querySelector(".lucide-drum")) {
+          div.insertAdjacentHTML("beforeend", DRUM_ICON_HTML);
+        }
+      }
+
       function setDraftAssistant(modeName, content, librarySources, metadata) {
         const session = getActiveModeSession(modeName);
-        // Hide a trailing (possibly partial) skill call from the visible bubble
-        // and surface the animated drum icon instead. Applied here so every mode
-        // (ollama, pi, cloud, lmstudio, llamacpp) behaves identically.
-        let text = content || "";
-        let showDrumIcon = false;
-        const partialCallMatch = text.match(/<c(?:a(?:l(?:l(?:[^>]*))?)?)?$/i);
-        if (partialCallMatch) {
-          text = text.substring(0, partialCallMatch.index);
-          showDrumIcon = true;
-        }
+        // Hide any skill call (partial, complete, or malformed) from the visible
+        // bubble and surface the animated drum instead. Applied here so every
+        // mode (ollama, pi, cloud, lmstudio, llamacpp) behaves identically.
+        const raw = content || "";
+        const text = stripSkillCallsForDisplay(raw);
+        const showDrumIcon = text !== raw;
         const existingMetadata = getAssistantMetadataFromMessage(
           session.draftAssistant,
         );
@@ -10459,6 +10498,10 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           librarySources || [],
           nextMetadata,
         );
+        // Remember whether a tool/skill call is mid-flight so the drum can be
+        // restored when this mode's transcript is re-rendered (e.g. after the
+        // user switches modes and comes back while it is still calling tools).
+        session.drumPending = showDrumIcon;
 
         if (mode !== modeName || currentConvId !== session.convId) return;
         if (
@@ -10476,10 +10519,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
             librarySources || [],
           );
           if (showDrumIcon) {
-            session.streamingAssistantDiv.insertAdjacentHTML(
-              "beforeend",
-              `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`,
-            );
+            appendDrumIcon(session.streamingAssistantDiv);
           }
           scrollChatToBottom();
         }
@@ -10509,6 +10549,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         session.draftAssistant = null;
         session.streamingAssistantDiv = null;
         session.thinkingController = null;
+        session.drumPending = false;
         return assistantMessage;
       }
 

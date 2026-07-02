@@ -1276,6 +1276,24 @@ async function fetchLocalModels(modeId) {
 }
 
 // Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
+// Remove any skill-call syntax that survived the streaming loop so it can never
+// reach the chat bubble. Covers three cases the local models produce that Ollama
+// does not: a completed <call:...></call> when skills were disabled (DB on), a
+// malformed call missing its closing tag, and a dangling opener at end of text.
+function stripLeakedSkillCalls(text) {
+  return (
+    String(text || "")
+      // Completed call blocks: <call:name>args</call>.
+      .replace(/<call:[^>]*>[\s\S]*?<\/call>/gi, "")
+      // Malformed call: opener plus a JSON argument object but no closing tag.
+      // Only the opener and its args are removed so real answer text survives.
+      .replace(/<call:[^>]*>\s*\{[^{}]*\}/gi, "")
+      // A bare opener/partial left dangling at the very end of the text.
+      .replace(/<call:[^>]*>?\s*$/i, "")
+      .trim()
+  );
+}
+
 async function handleLocalModeStream(modeId, req, res, send) {
   let finished = false;
   const abortController = new AbortController();
@@ -1514,6 +1532,11 @@ async function handleLocalModeStream(modeId, req, res, send) {
       ];
       emit({ type: "delta", delta: "", response: output });
     }
+
+    // Final safety net: never let raw skill-call syntax reach the bubble, even
+    // if a call was malformed or emitted while skills were disabled (DB on).
+    output = stripLeakedSkillCalls(output);
+    emit({ type: "delta", delta: "", response: output });
 
     if (emittedThinkingStart) {
       emit({ type: "thinking_end", thinking });
@@ -4756,6 +4779,11 @@ const server = http.createServer(async (req, res) => {
         ];
         emit({ type: "delta", delta: "", response: output });
       }
+
+      // Final safety net: never let raw skill-call syntax reach the bubble, even
+      // if a call was malformed or emitted while skills were disabled (DB on).
+      output = stripLeakedSkillCalls(output);
+      emit({ type: "delta", delta: "", response: output });
 
       if (emittedThinkingStart) {
         emit({ type: "thinking_end", thinking });
