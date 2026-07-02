@@ -242,10 +242,11 @@ function parseDdgResults($, limit) {
   return results;
 }
 
-// ---- Web search providers. Each returns [{ title, url, snippet }]. ----
+// ---- Web search: DuckDuckGo only. No API keys, no accounts, no setup. ----
 
-// DuckDuckGo HTML scrape (no API key). Primary html endpoint + lite fallback.
-async function searchDuckDuckGo(query, limit) {
+// DuckDuckGo HTML scrape. Primary html endpoint + lite fallback. Returns a
+// list of { title, url, snippet }.
+async function runWebSearch(query, limit) {
   let results = [];
   try {
     const html = await fetchHtml(
@@ -265,122 +266,14 @@ async function searchDuckDuckGo(query, limit) {
       /* no results */
     }
   }
-  return results;
+  return { provider: "duckduckgo", results };
 }
 
-// Tavily: LLM-optimized search API (POST JSON, bearer key).
-async function searchTavily(query, limit, apiKey) {
-  const res = await fetchHtml("https://api.tavily.com/search", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      query,
-      max_results: limit,
-      search_depth: "basic",
-    }),
-    timeout: 20000,
-  });
-  const data = JSON.parse(res);
-  return (Array.isArray(data.results) ? data.results : [])
-    .slice(0, limit)
-    .map((r) => ({
-      title: String(r.title || r.url || "").trim(),
-      url: String(r.url || "").trim(),
-      snippet: String(r.content || "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    }))
-    .filter((r) => /^https?:\/\//i.test(r.url));
-}
-
-// Brave Search API (GET, subscription-token header).
-async function searchBrave(query, limit, apiKey) {
-  const res = await fetchHtml(
-    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`,
-    {
-      headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
-      timeout: 20000,
-    },
-  );
-  const data = JSON.parse(res);
-  return (
-    (data.web && Array.isArray(data.web.results) && data.web.results) ||
-    []
-  )
-    .slice(0, limit)
-    .map((r) => ({
-      title: String(r.title || r.url || "").trim(),
-      url: String(r.url || "").trim(),
-      snippet: String(r.description || "")
-        .replace(/<[^>]*>/g, "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    }))
-    .filter((r) => /^https?:\/\//i.test(r.url));
-}
-
-// SearXNG JSON API on a user-provided instance (no key required).
-async function searchSearxng(query, limit, baseUrl) {
-  const root = String(baseUrl || "").replace(/\/+$/, "");
-  const res = await fetchHtml(
-    `${root}/search?q=${encodeURIComponent(query)}&format=json`,
-    { headers: { Accept: "application/json" }, timeout: 20000 },
-  );
-  const data = JSON.parse(res);
-  return (Array.isArray(data.results) ? data.results : [])
-    .slice(0, limit)
-    .map((r) => ({
-      title: String(r.title || r.url || "").trim(),
-      url: String(r.url || "").trim(),
-      snippet: String(r.content || "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    }))
-    .filter((r) => /^https?:\/\//i.test(r.url));
-}
-
-// Run the configured provider, then fall back through the chain to DuckDuckGo.
-// Returns { provider, results }. A keyless/misconfigured provider is skipped.
-async function runWebSearch(query, limit, cfg = {}) {
-  const provider = cfg.provider || "auto";
-  const order =
-    provider === "auto"
-      ? ["tavily", "brave", "searxng", "duckduckgo"]
-      : [provider, "tavily", "brave", "searxng", "duckduckgo"];
-  const seen = new Set();
-  for (const p of order) {
-    if (seen.has(p)) continue;
-    seen.add(p);
-    try {
-      let results = null;
-      if (p === "tavily" && cfg.tavilyKey)
-        results = await searchTavily(query, limit, cfg.tavilyKey);
-      else if (p === "brave" && cfg.braveKey)
-        results = await searchBrave(query, limit, cfg.braveKey);
-      else if (p === "searxng" && cfg.searxngUrl)
-        results = await searchSearxng(query, limit, cfg.searxngUrl);
-      else if (p === "duckduckgo")
-        results = await searchDuckDuckGo(query, limit);
-      if (results && results.length) return { provider: p, results };
-    } catch {
-      /* try the next provider in the chain */
-    }
-  }
-  return { provider: "duckduckgo", results: [] };
-}
-
-async function executeDuckDuckGo({ query, max_results = 6 }, context = {}) {
+async function executeDuckDuckGo({ query, max_results = 6 }) {
   const limit = Math.max(1, Math.min(Number(max_results) || 6, 10));
   try {
-    // 1) Real web results via the configured provider chain.
-    const { provider, results } = await runWebSearch(
-      query,
-      limit,
-      (context && context.webSearch) || {},
-    );
+    // 1) Real web results from DuckDuckGo (no key).
+    const { provider, results } = await runWebSearch(query, limit);
 
     // 2) Best-effort instant answer (definitions / entities) as a header.
     let instant = "";
@@ -486,53 +379,53 @@ async function executeFactCheck({ claim, language = "en" }, context = {}) {
   return `### Wikipedia findings:\n${wiki}\n\n### Britannica findings:\n${brit}\n\n### Web search findings:\n${ddg}`;
 }
 
-async function executeWebScraper({ url }) {
+// Read a URL's main content as clean text. SSRF-guarded. Tries Jina Reader for
+// LLM-ready markdown, then a direct fetch + boilerplate strip. Returns
+// { ok, text } or { ok:false, error }. Shared by web_scraper and deep_research.
+async function readUrlContent(url, maxChars = 6000) {
+  let parsed;
   try {
-    // --- SSRF / local-file-read guard ---
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return "Web Scraper Error: Invalid URL.";
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, error: "Invalid URL." };
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return { ok: false, error: "Only http and https URLs are allowed." };
+  }
+  const h = parsed.hostname.toLowerCase();
+  const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+  const PRIVATE_RANGES = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
+  if (BLOCKED_HOSTS.has(h) || PRIVATE_RANGES.test(h)) {
+    return {
+      ok: false,
+      error: "Access to local or private network addresses is not allowed.",
+    };
+  }
+  // 1) Jina Reader (clean markdown, no key). Falls through on JSON error.
+  try {
+    const md = await fetchHtml(`https://r.jina.ai/${url}`, {
+      headers: { "X-Return-Format": "markdown" },
+      timeout: 20000,
+    });
+    const clean = (md || "").trim();
+    const looksValid =
+      clean.length > 200 &&
+      !clean.startsWith("{") &&
+      !/^(error|failed)\b/i.test(clean);
+    if (looksValid) {
+      return {
+        ok: true,
+        text:
+          clean.length > maxChars
+            ? clean.slice(0, maxChars) + "\n\n... [TRUNCATED]"
+            : clean,
+      };
     }
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return "Web Scraper Error: Only http and https URLs are allowed.";
-    }
-    const h = parsed.hostname.toLowerCase();
-    const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
-    const PRIVATE_RANGES = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
-    if (BLOCKED_HOSTS.has(h) || PRIVATE_RANGES.test(h)) {
-      return "Web Scraper Error: Access to local or private network addresses is not allowed.";
-    }
-    // ------------------------------------
-    const MAX = 6000;
-
-    // 1) Jina Reader: returns clean, LLM-ready markdown of the main content
-    // (strips nav/ads/boilerplate). No API key. Best quality for local models.
-    try {
-      const md = await fetchHtml(`https://r.jina.ai/${url}`, {
-        headers: { "X-Return-Format": "markdown" },
-        timeout: 20000,
-      });
-      const clean = (md || "").trim();
-      // Accept only genuine reader output. Jina returns a JSON error object
-      // (starting with "{") when rate-limited/blocked — fall through to a
-      // direct fetch in that case instead of surfacing the error as content.
-      const looksValid =
-        clean.length > 200 &&
-        !clean.startsWith("{") &&
-        !/^(error|failed)\b/i.test(clean);
-      if (looksValid) {
-        return clean.length > MAX
-          ? clean.slice(0, MAX) + "\n\n... [TRUNCATED]"
-          : clean;
-      }
-    } catch {
-      /* fall back to a direct fetch + extraction below */
-    }
-
-    // 2) Fallback: fetch the page directly and extract the main text, dropping
-    // navigation/script/style boilerplate so the model sees the real content.
+  } catch {
+    /* fall back to a direct fetch + extraction below */
+  }
+  // 2) Direct fetch + main-content extraction.
+  try {
     const html = await fetchHtml(url);
     const $ = cheerio.load(html);
     $(
@@ -544,10 +437,111 @@ async function executeWebScraper({ url }) {
         ? $("main").first()
         : $("body");
     const text = container.text().replace(/\s+/g, " ").trim();
-    if (!text) return "No readable text found at that URL.";
-    return text.length > MAX ? text.slice(0, MAX) + "... [TRUNCATED]" : text;
+    if (!text) return { ok: false, error: "No readable text found." };
+    return {
+      ok: true,
+      text:
+        text.length > maxChars
+          ? text.slice(0, maxChars) + "... [TRUNCATED]"
+          : text,
+    };
   } catch (e) {
-    return `Web Scraper Error: ${e.message}`;
+    return { ok: false, error: e.message };
+  }
+}
+
+async function executeWebScraper({ url }) {
+  const r = await readUrlContent(url, 6000);
+  return r.ok ? r.text : `Web Scraper Error: ${r.error}`;
+}
+
+// One-shot, multi-angle, multi-source research (no API keys). Searches the web
+// across every angle the model provides (or a single query), merges and
+// de-duplicates results, reads several independent (distinct-domain) pages in
+// parallel, and returns a consolidated digest so the model can synthesize a
+// thorough answer without chaining many calls. Every source URL becomes a pill.
+async function executeDeepResearch({ query, queries, max_sources = 6 }) {
+  // Accept a single query or several varied angles (preferred for coverage).
+  const angles = [];
+  if (Array.isArray(queries)) {
+    for (const q of queries) {
+      if (typeof q === "string" && q.trim()) angles.push(q.trim());
+    }
+  }
+  if (typeof query === "string" && query.trim()) angles.unshift(query.trim());
+  const uniqAngles = [...new Set(angles)].slice(0, 4);
+  if (!uniqAngles.length) return "Deep Research Error: no query provided.";
+
+  const target = Math.max(4, Math.min(Number(max_sources) || 6, 8));
+  const domainOf = (u) => {
+    try {
+      return new URL(u).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  };
+  try {
+    // Search each angle and merge results, de-duplicating by URL. Space the
+    // requests slightly so DuckDuckGo does not rate-limit the burst.
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const merged = [];
+    const seenUrls = new Set();
+    for (let i = 0; i < uniqAngles.length; i += 1) {
+      if (i > 0) await sleep(400);
+      const { results } = await runWebSearch(uniqAngles[i], 8);
+      for (const r of results) {
+        if (r.url && !seenUrls.has(r.url)) {
+          seenUrls.add(r.url);
+          merged.push(r);
+        }
+      }
+    }
+    if (!merged.length) {
+      return `No web results found for ${uniqAngles.map((a) => `"${a}"`).join(", ")}. Try different or more specific keywords.`;
+    }
+    // Prefer breadth: one result per distinct domain first, then top up.
+    const picked = [];
+    const seenDomains = new Set();
+    for (const r of merged) {
+      const d = domainOf(r.url);
+      if (!d || seenDomains.has(d)) continue;
+      seenDomains.add(d);
+      picked.push(r);
+      if (picked.length >= target) break;
+    }
+    for (const r of merged) {
+      if (picked.length >= target) break;
+      if (!picked.includes(r)) picked.push(r);
+    }
+    // Read all chosen pages concurrently, with generous per-source content.
+    const reads = await Promise.all(
+      picked.map(async (r) => {
+        const c = await readUrlContent(r.url, 4500);
+        return {
+          title: r.title,
+          url: r.url,
+          content: c.ok ? c.text : `(could not read this page: ${c.error})`,
+        };
+      }),
+    );
+    let out = `## Deep research — ${uniqAngles
+      .map((a) => `"${a}"`)
+      .join(", ")} (${reads.length} sources)\n\n`;
+    reads.forEach((r, i) => {
+      out += `${i + 1}. ${r.title}\n   URL: ${r.url}\n\n${r.content}\n\n---\n\n`;
+    });
+    out +=
+      `You now have ${reads.length} independent sources above. Write a ` +
+      `COMPREHENSIVE, well-structured answer for the user that synthesizes ` +
+      `ALL of them — several detailed paragraphs, NOT a three-line summary. ` +
+      `Cover background, key facts, context, and significance; integrate ` +
+      `information across sources, prefer facts confirmed by more than one, ` +
+      `and note any disagreements. Do NOT write source links or a references ` +
+      `section (the app shows sources as pills). Do not call this skill again ` +
+      `for the same topic.`;
+    return out.trim();
+  } catch (e) {
+    return `Deep Research Error: ${e.message}`;
   }
 }
 
@@ -840,7 +834,7 @@ const ALL_SKILLS = [
     function: {
       name: "wikipedia",
       description:
-        "Searches Wikipedia for factual information. Unless the user specifically asks for another source, ALWAYS check Wikipedia AND Britannica for general queries to cross-reference.",
+        "Looks up a single Wikipedia article summary. Use ONLY when the user explicitly asks for Wikipedia. For general factual, biographical, or research questions, use deep_research instead (it reads Wikipedia AND several other independent sources in one step).",
       parameters: {
         type: "object",
         properties: {
@@ -892,7 +886,7 @@ const ALL_SKILLS = [
     function: {
       name: "duckduckgo",
       description:
-        "Searches the live web and returns a numbered list of results (title, snippet, URL). Use this FIRST to find current information or sources. Then pick the single most relevant URL and read it with the web_scraper skill before answering. Never repeat the same search query twice.",
+        "Quick web search that returns a numbered list of results (title, snippet, URL). Use for a single lookup. For any 'who/what is', biographical, or research question that needs a THOROUGH answer, use the deep_research skill instead. Never repeat the same query twice.",
       parameters: {
         type: "object",
         properties: {
@@ -903,6 +897,34 @@ const ALL_SKILLS = [
           },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "deep_research",
+      description:
+        "PREFERRED for any factual, biographical, current-events, or 'who/what is X' question. In ONE call it searches the web across multiple angles and reads several independent sources (different websites), returning their full content plus every source URL. For thorough coverage, pass 'queries' with 2-4 VARIED angles (different phrasing and scope), e.g. ['Dean Benedetti biography', 'Dean Benedetti Charlie Parker recordings', 'Dean Benedetti jazz history'] — not one query. After it returns, write a comprehensive, multi-paragraph answer that synthesizes ALL the sources.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "A single research topic/question. Prefer 'queries' with multiple angles for thorough research.",
+          },
+          queries: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "2-4 varied search angles (different phrasing/scope) for broad coverage. Preferred over a single query.",
+          },
+          max_sources: {
+            type: "number",
+            description: "How many sources to read (4-8, default 6).",
+          },
+        },
       },
     },
   },
@@ -1125,6 +1147,8 @@ async function executeSkill(toolCall, context = {}) {
       return await executeDeepEtymology(args);
     case "duckduckgo":
       return await executeDuckDuckGo(args, context);
+    case "deep_research":
+      return await executeDeepResearch(args, context);
     case "fact_check":
       return await executeFactCheck(args, context);
     case "web_scraper":

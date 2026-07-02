@@ -2174,7 +2174,9 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        max-width: 320px;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
         border-color: var(--accent);
         border-radius: 999px;
       }
@@ -2887,59 +2889,6 @@
             <div class="setting-help">
               Choose which chat modes appear in the top-left switcher. At least
               one mode must stay enabled.
-            </div>
-          </div>
-          <div id="webSearchSettingsGroup" class="setting-group">
-            <label>WEB SEARCH PROVIDER</label>
-            <select id="webSearchProvider">
-              <option value="auto">
-                Auto — best available, then DuckDuckGo
-              </option>
-              <option value="tavily">Tavily (API key)</option>
-              <option value="brave">Brave Search (API key)</option>
-              <option value="searxng">SearXNG (instance URL)</option>
-              <option value="duckduckgo">DuckDuckGo (no key)</option>
-            </select>
-            <div class="setting-help">
-              Powers the web_search skill for local and cloud models. "Auto"
-              tries Tavily → Brave → SearXNG → DuckDuckGo, using whichever is
-              configured. DuckDuckGo always works with no key.
-            </div>
-            <label>TAVILY API KEY</label>
-            <input
-              id="webSearchTavilyKey"
-              type="password"
-              autocomplete="off"
-              placeholder="Leave blank to keep saved key"
-            />
-            <div id="webSearchTavilyStatus" class="setting-help"></div>
-            <label>BRAVE API KEY</label>
-            <input
-              id="webSearchBraveKey"
-              type="password"
-              autocomplete="off"
-              placeholder="Leave blank to keep saved key"
-            />
-            <div id="webSearchBraveStatus" class="setting-help"></div>
-            <label>SEARXNG INSTANCE URL</label>
-            <input
-              id="webSearchSearxngUrl"
-              type="text"
-              placeholder="https://searx.example.com"
-            />
-            <div class="setting-help">
-              Base URL of your SearXNG instance (its JSON API must be enabled).
-            </div>
-            <div
-              style="
-                display: flex;
-                gap: 8px;
-                align-items: center;
-                margin-top: 8px;
-              "
-            >
-              <button id="webSearchSaveBtn" type="button">SAVE</button>
-              <span id="webSearchStatus" class="setting-help"></span>
             </div>
           </div>
           <div
@@ -5499,6 +5448,7 @@
         britannica: true,
         wiktionary: true,
         deep_etymology: true,
+        deep_research: true,
         duckduckgo: true,
         web_scraper: true,
         calculator: true,
@@ -5524,8 +5474,13 @@
           desc: "Cross-references multiple etymological dictionaries to find origins, cognates, and false friends.",
           example: '{"word": "eventualmente", "language": "es"}',
         },
+        deep_research: {
+          desc: "PREFERRED for factual/biographical/research questions: searches the web across multiple angles and reads several independent sources in one call. Pass 'queries' with 2-4 varied angles, then write a comprehensive multi-paragraph answer.",
+          example:
+            '{"queries": ["Dean Benedetti biography", "Dean Benedetti Charlie Parker recordings", "Dean Benedetti jazz saxophonist history"]}',
+        },
         duckduckgo: {
-          desc: "Performs a general web search.",
+          desc: "Quick single web search (title, snippet, URL list). For thorough answers use deep_research instead.",
           example: '{"query": "Latest AI news"}',
         },
         calculator: {
@@ -5600,13 +5555,11 @@ To trigger a tool, output an XML block in this exact format:
 <call:skill_name>{"arg": "value"}</call>
 The system will intercept this block, execute the tool, and provide you the results.
 
-CRITICAL INSTRUCTION REGARDING SOURCES:
-The tool results will often contain the exact source URL inside an HTML comment at the end (e.g. <!-- https://... -->).
-If you decide to use the information provided by a tool to answer the user, you MUST manually append a Markdown source link at the absolute end of your final response in this exact format:
+RESEARCH:
+For factual, biographical, current-events, or "who/what is X" questions, use the deep_research tool and pass "queries" with 2-4 VARIED angles (different phrasing and scope) so it gathers broad coverage from several independent sources. Then write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance. Never answer a research question in just a few lines; be thorough and integrate all the sources.
 
-Source: [Title of Page](URL)
-
-If the tool result was irrelevant (e.g. wrong person or off-topic) and you did NOT use the information, do NOT cite it.`;
+SOURCES:
+Do NOT write source links, a "Source:" line, a "References" section, or URLs in your answer. The app shows every source used as a clickable pill automatically. Just write the answer itself.`;
 
       function getOllamaBasePolicyPrompt() {
         // Each mode independently selects its prompt from its own Database
@@ -10173,9 +10126,25 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         );
       }
 
+      // Sources are shown as pills, so any "Source:/References:" citation line or
+      // trailing citation the model still writes must be removed from the bubble.
+      function stripSourceCitations(text) {
+        return String(text || "")
+          .replace(
+            /^[ \t]*(?:\*\*|__)?(?:sources?|references?|fuentes?|referencias?)(?:\*\*|__)?[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)[ \t]*\.?[ \t]*$/gim,
+            "",
+          )
+          .replace(
+            /\s*(?:sources?|references?|fuentes?|referencias?)[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)\s*\.?\s*$/i,
+            "",
+          )
+          .replace(/\n{3,}/g, "\n\n")
+          .replace(/\s+$/, "");
+      }
+
       function renderAssistantMessage(div, text, librarySources) {
         if (!div) return;
-        const cleanText = stripSkillCallsForDisplay(text);
+        const cleanText = stripSourceCitations(stripSkillCallsForDisplay(text));
         div.dataset.rawText = cleanText;
         if (Array.isArray(librarySources)) {
           div.dataset.librarySources = JSON.stringify(
@@ -10841,112 +10810,6 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           await appAlert(
             error.message || "Failed to save Cloud settings.",
             "Cloud",
-          );
-        }
-      }
-
-      // ---- Web Search provider settings (Tavily / Brave / SearXNG / DDG) ----
-      let webSearchSettings = {
-        provider: "auto",
-        searxngUrl: "",
-        hasKey: { tavily: false, brave: false, searxng: false },
-      };
-
-      function renderWebSearchForm() {
-        const providerSel = document.getElementById("webSearchProvider");
-        if (providerSel) {
-          providerSel.value = webSearchSettings.provider || "auto";
-          refreshCustomSelectUi(providerSel);
-        }
-        const tavily = document.getElementById("webSearchTavilyKey");
-        const brave = document.getElementById("webSearchBraveKey");
-        const searxng = document.getElementById("webSearchSearxngUrl");
-        if (tavily) {
-          tavily.value = "";
-          tavily.placeholder = webSearchSettings.hasKey?.tavily
-            ? "Saved — leave blank to keep"
-            : "Leave blank if unused";
-        }
-        if (brave) {
-          brave.value = "";
-          brave.placeholder = webSearchSettings.hasKey?.brave
-            ? "Saved — leave blank to keep"
-            : "Leave blank if unused";
-        }
-        if (searxng) searxng.value = webSearchSettings.searxngUrl || "";
-        const ts = document.getElementById("webSearchTavilyStatus");
-        if (ts)
-          ts.textContent = webSearchSettings.hasKey?.tavily
-            ? "Key saved."
-            : "No key saved.";
-        const bs = document.getElementById("webSearchBraveStatus");
-        if (bs)
-          bs.textContent = webSearchSettings.hasKey?.brave
-            ? "Key saved."
-            : "No key saved.";
-      }
-
-      async function loadWebSearchSettingsUi() {
-        try {
-          const res = await fetch(apiUrl("/api/websearch/settings"));
-          const payload = await readJsonResponse(
-            res,
-            "Load web search settings",
-          );
-          if (payload?.settings) webSearchSettings = payload.settings;
-        } catch (error) {
-          console.error("Could not load web search settings", error);
-        }
-        renderWebSearchForm();
-      }
-
-      async function saveWebSearchSettingsUi() {
-        const statusEl = document.getElementById("webSearchStatus");
-        try {
-          const settings = {
-            provider:
-              document.getElementById("webSearchProvider")?.value || "auto",
-            tavilyKey:
-              document.getElementById("webSearchTavilyKey")?.value || "",
-            braveKey: document.getElementById("webSearchBraveKey")?.value || "",
-            searxngUrl:
-              document.getElementById("webSearchSearxngUrl")?.value || "",
-          };
-          const res = await fetch(apiUrl("/api/websearch/settings"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ settings }),
-          });
-          const payload = await readJsonResponse(
-            res,
-            "Save web search settings",
-          );
-          if (payload?.settings) webSearchSettings = payload.settings;
-          renderWebSearchForm();
-          if (statusEl) {
-            statusEl.textContent = "Saved.";
-            setTimeout(() => {
-              statusEl.textContent = "";
-            }, 1500);
-          }
-        } catch (error) {
-          console.error("Could not save web search settings", error);
-          if (statusEl) statusEl.textContent = "Save failed.";
-        }
-      }
-
-      function wireWebSearchSettings() {
-        const saveBtn = document.getElementById("webSearchSaveBtn");
-        if (saveBtn && !saveBtn.dataset.wired) {
-          saveBtn.dataset.wired = "1";
-          saveBtn.addEventListener("click", () => saveWebSearchSettingsUi());
-        }
-        const providerSel = document.getElementById("webSearchProvider");
-        if (providerSel && !providerSel.dataset.wired) {
-          providerSel.dataset.wired = "1";
-          // Provider changes save immediately (no key needed to switch).
-          providerSel.addEventListener("change", () =>
-            saveWebSearchSettingsUi(),
           );
         }
       }
@@ -13029,7 +12892,6 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "promptManageGroup",
         ]);
         appendSettingsGroups("settingsTabSkills", [
-          "webSearchSettingsGroup",
           "builtinSkillsGroup",
           "customSkillsGroup",
         ]);
@@ -13320,8 +13182,6 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         await __timed("loadCustomSkills", loadCustomSkills);
         await __timed("loadPiSettings", loadPiSettings);
         await __timed("loadCloudSettings", loadCloudSettings);
-        await __timed("loadWebSearchSettings", loadWebSearchSettingsUi);
-        wireWebSearchSettings();
         await __timed("loadLocalModeSettings", loadLocalModeSettings);
         wireLocalModeSettings();
         await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);

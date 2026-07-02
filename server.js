@@ -87,17 +87,6 @@ const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
-const WEB_SEARCH_SETTINGS_FILE = path.join(
-  DATA_DIR,
-  "web-search-settings.json",
-);
-const WEB_SEARCH_PROVIDERS = [
-  "auto",
-  "tavily",
-  "brave",
-  "searxng",
-  "duckduckgo",
-];
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
 const LIBRARY_INDEX_ERROR_FILE = path.join(
@@ -490,6 +479,7 @@ function defaultSkillsConfig() {
     britannica: true,
     wiktionary: true,
     deep_etymology: true,
+    deep_research: true,
     duckduckgo: true,
     web_scraper: true,
     calculator: true,
@@ -965,97 +955,6 @@ function loadCloudSettings() {
     }
   }
   return defaultCloudSettings();
-}
-
-// ---- Web Search provider settings (Tavily / Brave / SearXNG / DuckDuckGo) ----
-function defaultWebSearchSettings() {
-  return { provider: "auto", tavilyKey: "", braveKey: "", searxngUrl: "" };
-}
-
-function sanitizeWebSearchSettings(rawInput, existingInput = null) {
-  const defaults = defaultWebSearchSettings();
-  const existing =
-    existingInput &&
-    typeof existingInput === "object" &&
-    !Array.isArray(existingInput)
-      ? existingInput
-      : {};
-  const raw =
-    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
-      ? rawInput
-      : {};
-  const next = {
-    provider: WEB_SEARCH_PROVIDERS.includes(existing.provider)
-      ? existing.provider
-      : defaults.provider,
-    tavilyKey: typeof existing.tavilyKey === "string" ? existing.tavilyKey : "",
-    braveKey: typeof existing.braveKey === "string" ? existing.braveKey : "",
-    searxngUrl:
-      typeof existing.searxngUrl === "string" ? existing.searxngUrl : "",
-  };
-  if (WEB_SEARCH_PROVIDERS.includes(raw.provider)) next.provider = raw.provider;
-  if (typeof raw.tavilyKey === "string") {
-    const v = raw.tavilyKey.trim();
-    if (v) next.tavilyKey = v.slice(0, 4000);
-  }
-  if (typeof raw.braveKey === "string") {
-    const v = raw.braveKey.trim();
-    if (v) next.braveKey = v.slice(0, 4000);
-  }
-  if (typeof raw.searxngUrl === "string") {
-    next.searxngUrl = normalizeCloudBaseUrl(
-      raw.searxngUrl,
-      next.searxngUrl || "",
-    );
-  }
-  if (raw.clearKeys && typeof raw.clearKeys === "object") {
-    if (raw.clearKeys.tavily === true) next.tavilyKey = "";
-    if (raw.clearKeys.brave === true) next.braveKey = "";
-    if (raw.clearKeys.searxng === true) next.searxngUrl = "";
-  }
-  return next;
-}
-
-function saveWebSearchSettings(settings) {
-  const sanitized = sanitizeWebSearchSettings(
-    settings,
-    defaultWebSearchSettings(),
-  );
-  fs.writeFileSync(
-    WEB_SEARCH_SETTINGS_FILE,
-    JSON.stringify(sanitized, null, 2),
-    { mode: 0o600 },
-  );
-  try {
-    fs.chmodSync(WEB_SEARCH_SETTINGS_FILE, 0o600);
-  } catch (e) {}
-  return sanitized;
-}
-
-function loadWebSearchSettings() {
-  if (fs.existsSync(WEB_SEARCH_SETTINGS_FILE)) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(WEB_SEARCH_SETTINGS_FILE, "utf8"));
-      return sanitizeWebSearchSettings(raw, defaultWebSearchSettings());
-    } catch (e) {
-      console.warn("Failed to load web search settings:", e.message || e);
-    }
-  }
-  return defaultWebSearchSettings();
-}
-
-// Never send raw API keys to the client — only whether each is configured.
-function redactWebSearchSettings(settings) {
-  const s = sanitizeWebSearchSettings(settings, defaultWebSearchSettings());
-  return {
-    provider: s.provider,
-    searxngUrl: s.searxngUrl,
-    hasKey: {
-      tavily: Boolean(s.tavilyKey),
-      brave: Boolean(s.braveKey),
-      searxng: Boolean(s.searxngUrl),
-    },
-  };
 }
 
 // ---- Local OpenAI-compatible modes: LM Studio and llama.cpp ----
@@ -2019,6 +1918,8 @@ const CLOUD_SKILL_EXAMPLES = {
   britannica: '{"query": "Bob Dylan"}',
   wiktionary: '{"word": "algorithm", "language": "en"}',
   deep_etymology: '{"word": "eventualmente", "language": "es"}',
+  deep_research:
+    '{"queries": ["Dean Benedetti biography", "Dean Benedetti Charlie Parker recordings", "Dean Benedetti jazz saxophonist history"]}',
   duckduckgo: '{"query": "latest AI news"}',
   fact_check: '{"claim": "The moon is made of cheese"}',
   web_scraper: '{"url": "https://example.com"}',
@@ -2074,10 +1975,11 @@ function getCloudSkillsPolicyPrompt() {
     "The system intercepts the block, executes the skill, and sends you the result so you can continue your answer.",
     "Call one skill at a time. After receiving a result you may call another skill if needed.",
     "",
+    "RESEARCH:",
+    "For factual, biographical, current-events, or 'who/what is X' questions, use the deep_research skill and pass 'queries' with 2-4 VARIED angles (different phrasing and scope) so it gathers broad coverage from several independent sources. Then write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance. Never answer a research question in just a few lines; be thorough and integrate all the sources.",
+    "",
     "SOURCES:",
-    "Skill results often contain the exact source URL inside an HTML comment at the end (e.g. <!-- https://... -->). If you used the information from a skill, append a Markdown source link at the absolute end of your final response in this exact format:",
-    "Source: [Title of Page](URL)",
-    "If the skill result was irrelevant and you did not use it, do not cite it.",
+    "Do NOT write source links, a 'Source:' line, a 'References' section, or URLs in your answer. The app shows every source used as a clickable pill automatically. Just write the answer itself.",
   );
   return lines.join("\n");
 }
@@ -2409,7 +2311,6 @@ async function executeToolCallWithConfirmation(toolCall, emit) {
   return await executeSkill(toolCall, {
     dataDir: DATA_DIR,
     allowShellCommand: requiresShellConfirmation,
-    webSearch: loadWebSearchSettings(),
   });
 }
 
@@ -4038,34 +3939,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && urlPath === "/api/websearch/settings") {
-    send(200, { settings: redactWebSearchSettings(loadWebSearchSettings()) });
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/websearch/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-      const nextSettings =
-        body.settings && typeof body.settings === "object"
-          ? body.settings
-          : body;
-      const sanitized = sanitizeWebSearchSettings(
-        nextSettings,
-        loadWebSearchSettings(),
-      );
-      saveWebSearchSettings(sanitized);
-      send(200, { ok: true, settings: redactWebSearchSettings(sanitized) });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
   if (req.method === "GET" && urlPath === "/api/library/settings") {
     try {
       const config = loadLibraryConfig();
@@ -5565,10 +5438,7 @@ const server = http.createServer(async (req, res) => {
           } else if (toolCall.function.name.startsWith("mcp__")) {
             result = await executeMcpTool(toolCall);
           } else {
-            result = await executeSkill(toolCall, {
-              dataDir: DATA_DIR,
-              webSearch: loadWebSearchSettings(),
-            });
+            result = await executeSkill(toolCall, { dataDir: DATA_DIR });
           }
           messages.push({
             role: "tool",
