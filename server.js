@@ -1672,6 +1672,17 @@ function getCloudApiKey(settings, provider) {
   return typeof envValue === "string" ? envValue.trim() : "";
 }
 
+// Cloud keys the web-search skills can reuse as high-quality search backends.
+// Whichever the user already saved (or set via env) is used, else DuckDuckGo.
+function getCloudSearchKeys() {
+  const settings = loadCloudSettings();
+  return {
+    openai: getCloudApiKey(settings, "openai") || "",
+    anthropic: getCloudApiKey(settings, "anthropic") || "",
+    google: getCloudApiKey(settings, "google") || "",
+  };
+}
+
 function redactCloudSettings(settings) {
   const sanitized = sanitizeCloudSettings(settings, defaultCloudSettings());
   return {
@@ -2311,6 +2322,7 @@ async function executeToolCallWithConfirmation(toolCall, emit) {
   return await executeSkill(toolCall, {
     dataDir: DATA_DIR,
     allowShellCommand: requiresShellConfirmation,
+    cloudKeys: getCloudSearchKeys(),
   });
 }
 
@@ -5438,7 +5450,10 @@ const server = http.createServer(async (req, res) => {
           } else if (toolCall.function.name.startsWith("mcp__")) {
             result = await executeMcpTool(toolCall);
           } else {
-            result = await executeSkill(toolCall, { dataDir: DATA_DIR });
+            result = await executeSkill(toolCall, {
+              dataDir: DATA_DIR,
+              cloudKeys: getCloudSearchKeys(),
+            });
           }
           messages.push({
             role: "tool",
