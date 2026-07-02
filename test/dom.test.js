@@ -81,15 +81,6 @@ function createFetchStub() {
         },
       });
     }
-    if (path === "/api/websearch/settings") {
-      return jsonResponse({
-        settings: {
-          provider: "auto",
-          searxngUrl: "",
-          hasKey: { tavily: false, brave: false, searxng: false },
-        },
-      });
-    }
     if (path === "/api/library/config") {
       return jsonResponse({
         config: {
