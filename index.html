@@ -56,7 +56,7 @@
         --border-color: #000000;
         --text-normal: #000000;
         --text-inverse: #ffb000;
-        --accent: #0000ff;
+        --accent: #0d7377;
       }
       [data-theme="dark"][data-palette="orange"] {
         --bg-primary: #1a1a1a;
@@ -166,6 +166,27 @@
         --text-normal: #d8dee9;
         --text-inverse: #2e3440;
         --accent: #ebcb8b;
+      }
+
+      /* Carbon — graphite. Light theme is light grey with dark text; dark theme
+         is dark graphite with light-grey text (editor-style). */
+      [data-palette="carbon"] {
+        --bg-primary: #c4c4c4;
+        --bg-secondary: #b7b7b7;
+        --bg-inverse: #ababab;
+        --border-color: #6f6f6f;
+        --text-normal: #232323;
+        --text-inverse: #232323;
+        --accent: #6b8cae;
+      }
+      [data-theme="dark"][data-palette="carbon"] {
+        --bg-primary: #1e1e1e;
+        --bg-secondary: #262626;
+        --bg-inverse: #2d2d2d;
+        --border-color: #3a3a3a;
+        --text-normal: #d0d0d0;
+        --text-inverse: #d0d0d0;
+        --accent: #6b8cae;
       }
 
       /* FIREFOX SCROLLBAR FIX ADDED HERE */
@@ -2855,6 +2876,7 @@
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">Theme used in LM Studio mode.</div>
             <label>FONT FAMILY</label>
@@ -2929,6 +2951,7 @@
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">Theme used in llama.cpp mode.</div>
             <label>FONT FAMILY</label>
@@ -2976,6 +2999,7 @@
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">
               Theme used when chat mode is set to `OLLAMA`.
@@ -2991,6 +3015,7 @@
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">
               Theme used when chat mode is set to `PI`.
@@ -3010,6 +3035,7 @@
               <option value="calmblue">Gentle Blue (Default)</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">
               Theme used when chat mode is set to `Cloud`.
@@ -4740,6 +4766,42 @@
                 >
               </div>
             </div>
+            <div id="diagnosticsGroup" class="setting-group">
+              <label>DIAGNOSTICS</label>
+              <div class="setting-help">
+                Environment, startup timings, per-mode state and recent errors.
+                Paste this when reporting a bug or a slow startup.
+              </div>
+              <textarea
+                id="diagnosticsOutput"
+                readonly
+                spellcheck="false"
+                style="
+                  width: 100%;
+                  min-height: 180px;
+                  font-family: monospace;
+                  font-size: 10px;
+                  white-space: pre;
+                  overflow: auto;
+                "
+              ></textarea>
+              <div style="display: flex; gap: 6px; margin-top: 6px">
+                <button
+                  id="diagnosticsCopyBtn"
+                  type="button"
+                  class="settings-action-btn"
+                >
+                  Copy
+                </button>
+                <button
+                  id="diagnosticsRefreshBtn"
+                  type="button"
+                  class="settings-action-btn"
+                >
+                  Refresh
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -4859,6 +4921,52 @@
       </div>
     </div>
     <script>
+      // ---- Diagnostics: startup timings + captured errors (set up first) ----
+      const __appLoadStart =
+        typeof performance !== "undefined" ? performance.now() : 0;
+      const __bootTimings = [];
+      const __capturedErrors = [];
+      function __recordError(msg) {
+        const clean = String(msg)
+          .replace(/<[^>]*>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 240);
+        __capturedErrors.push(
+          new Date().toISOString().slice(11, 19) + "  " + clean,
+        );
+        if (__capturedErrors.length > 50) __capturedErrors.shift();
+      }
+      window.addEventListener("error", (e) => {
+        __recordError(
+          (e.message || "error") +
+            (e.filename
+              ? " @ " + e.filename.split("/").pop() + ":" + e.lineno
+              : ""),
+        );
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        __recordError("unhandledrejection: " + (e.reason?.message || e.reason));
+      });
+      (function () {
+        const orig = console.error;
+        console.error = function (...args) {
+          __recordError(
+            args.map((a) => (a?.message ? a.message : a)).join(" "),
+          );
+          orig.apply(console, args);
+        };
+      })();
+      // Wrap a boot step to record how long it took (for slow-startup analysis).
+      async function __timed(label, fn) {
+        const t = performance.now();
+        try {
+          return await fn();
+        } finally {
+          __bootTimings.push({ label, ms: Math.round(performance.now() - t) });
+        }
+      }
+
       let mode = "ollama";
       // Registry of selectable chat modes. Each entry drives the top-left mode
       // switcher and the "Enabled Modes" settings checkboxes. New modes are
@@ -12465,6 +12573,112 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         }
       }
 
+      // Build a copyable diagnostics report: environment, startup timings,
+      // per-mode state, and recent errors — for bug/slow-startup reports.
+      function buildDiagnosticsReport() {
+        const lines = [];
+        const add = (k, v) => lines.push(k + ": " + v);
+        const nav =
+          (performance.getEntriesByType &&
+            performance.getEntriesByType("navigation")[0]) ||
+          null;
+        const versionLabel =
+          document.getElementById("app-version-label")?.textContent || "?";
+        lines.push("=== DIVE DIAGNOSTICS ===");
+        add("generated", new Date().toISOString());
+        add("app version", versionLabel);
+        lines.push("");
+        lines.push("--- ENVIRONMENT ---");
+        add("userAgent", navigator.userAgent);
+        add("electron", /Electron/i.test(navigator.userAgent) ? "yes" : "no");
+        add("platform", navigator.platform);
+        add("language", navigator.language);
+        add("online", String(navigator.onLine));
+        add("cpuCores", String(navigator.hardwareConcurrency || "?"));
+        add("deviceMemoryGB", String(navigator.deviceMemory || "?"));
+        add(
+          "window",
+          window.innerWidth +
+            "x" +
+            window.innerHeight +
+            " @" +
+            (window.devicePixelRatio || 1) +
+            "x",
+        );
+        add("apiBase", typeof API_BASE !== "undefined" ? API_BASE : "?");
+        if (performance.memory) {
+          add(
+            "jsHeapMB",
+            Math.round(performance.memory.usedJSHeapSize / 1048576) +
+              " / " +
+              Math.round(performance.memory.jsHeapSizeLimit / 1048576),
+          );
+        }
+        lines.push("");
+        lines.push("--- STARTUP TIMING (ms) ---");
+        if (nav) {
+          add("html responseEnd", Math.round(nav.responseEnd - nav.startTime));
+          add(
+            "domContentLoaded",
+            Math.round(nav.domContentLoadedEventEnd - nav.startTime),
+          );
+          add("load event", Math.round(nav.loadEventEnd - nav.startTime));
+          if (nav.transferSize) add("html transferBytes", nav.transferSize);
+        }
+        __bootTimings.forEach((t) => add("  " + t.label, t.ms));
+        lines.push("");
+        lines.push("--- STATE ---");
+        add("active mode", mode);
+        add("theme", isDark ? "dark" : "light");
+        add(
+          "enabled modes",
+          typeof enabledModes !== "undefined" ? enabledModes.join(", ") : "?",
+        );
+        try {
+          add(
+            "palettes",
+            `ollama=${ollamaPalette} pi=${piPalette} cloud=${cloudPalette} lmstudio=${lmstudioPalette} llamacpp=${llamacppPalette}`,
+          );
+          const dbcfg =
+            typeof collectDatabaseConfigFromForm === "function"
+              ? collectDatabaseConfigFromForm().chatModes
+              : databaseChatModes;
+          add(
+            "database enabled",
+            SEARCH_ALGO_MODE_KEYS.map(
+              (m) => m + "=" + (dbcfg[m]?.enabled ? "on" : "off"),
+            ).join(" "),
+          );
+          add("ollama model", localStorage.getItem(MODEL_STORAGE_KEY) || "?");
+          add(
+            "cloud provider/model",
+            (cloudSettings.provider || "?") +
+              " / " +
+              (cloudSettings.models?.[cloudSettings.provider] || "?"),
+          );
+          LOCAL_MODE_IDS.forEach((id) => {
+            const c = localModelConfig[id];
+            add(id, `${c.baseUrl}  model=${c.model || "(auto)"}`);
+          });
+          add("active prompt", activePromptId || "(default)");
+        } catch (e) {
+          add("state error", e.message);
+        }
+        lines.push("");
+        lines.push("--- RECENT ERRORS (" + __capturedErrors.length + ") ---");
+        if (__capturedErrors.length) {
+          lines.push(...__capturedErrors.slice(-20));
+        } else {
+          lines.push("(none)");
+        }
+        return lines.join("\n");
+      }
+
+      function refreshDiagnostics() {
+        const out = document.getElementById("diagnosticsOutput");
+        if (out) out.value = buildDiagnosticsReport();
+      }
+
       function toggleSettings() {
         settingsOpen = !settingsOpen;
         const panel = document.getElementById("settingsPanel");
@@ -12476,6 +12690,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           panel.classList.add("open");
           resizerEl.style.display = "block";
           closePromptEditor();
+          refreshDiagnostics();
         } else {
           panel.classList.remove("open");
           resizerEl.style.display = "none";
@@ -12747,7 +12962,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         isDark = localStorage.getItem("ollama-pi-chat-dark-mode") === "true";
         updateThemeUI();
 
-        await loadUiSettings();
+        await __timed("loadUiSettings", loadUiSettings);
         loadOllamaOptionsFromStorage();
         document.getElementById("settingOllamaPalette").value = ollamaPalette;
         document.getElementById("settingPiPalette").value = piPalette;
@@ -12761,8 +12976,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         syncFontControls("lmstudio", lmstudioFont);
         syncFontControls("llamacpp", llamacppFont);
         renderOllamaOptionsForm();
-        await loadLibrarySettings();
-        await pollLibraryIndexJob();
+        await __timed("loadLibrarySettings", loadLibrarySettings);
+        await __timed("pollLibraryIndexJob", pollLibraryIndexJob);
         applyPalette(
           mode === "ollama"
             ? ollamaPalette
@@ -12797,15 +13012,19 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           : "";
         updateSendButtonState();
 
-        // 2. Load models & Prompts
-        await loadModels();
-        await loadPrompts();
-        await loadCustomSkills();
-        await loadPiSettings();
-        await loadCloudSettings();
-        await loadLocalModeSettings();
+        // 2. Load models & Prompts (timed for slow-startup diagnostics)
+        await __timed("loadModels", loadModels);
+        await __timed("loadPrompts", loadPrompts);
+        await __timed("loadCustomSkills", loadCustomSkills);
+        await __timed("loadPiSettings", loadPiSettings);
+        await __timed("loadCloudSettings", loadCloudSettings);
+        await __timed("loadLocalModeSettings", loadLocalModeSettings);
         wireLocalModeSettings();
-        await loadOllamaSkillsConfig();
+        await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);
+        __bootTimings.push({
+          label: "__boot_total",
+          ms: Math.round(performance.now() - __appLoadStart),
+        });
         const permissionPolicySelect = document.getElementById(
           "piPermissionPolicySelect",
         );
@@ -13277,6 +13496,33 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         const bookFilterBtn = document.getElementById("bookFilterBtn");
         if (bookFilterBtn) {
           bookFilterBtn.addEventListener("click", openBookFilterPanel);
+        }
+
+        const diagRefreshBtn = document.getElementById("diagnosticsRefreshBtn");
+        if (diagRefreshBtn) {
+          diagRefreshBtn.addEventListener("click", refreshDiagnostics);
+        }
+        const diagCopyBtn = document.getElementById("diagnosticsCopyBtn");
+        if (diagCopyBtn) {
+          diagCopyBtn.addEventListener("click", async () => {
+            refreshDiagnostics();
+            const out = document.getElementById("diagnosticsOutput");
+            const text = out ? out.value : "";
+            try {
+              await navigator.clipboard.writeText(text);
+            } catch (_e) {
+              if (out) {
+                out.focus();
+                out.select();
+                document.execCommand("copy");
+              }
+            }
+            const prev = diagCopyBtn.textContent;
+            diagCopyBtn.textContent = "Copied!";
+            setTimeout(() => {
+              diagCopyBtn.textContent = prev;
+            }, 1200);
+          });
         }
         const bookFilterCloseBtn =
           document.getElementById("bookFilterCloseBtn");

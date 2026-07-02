@@ -147,6 +147,7 @@ const VALID_UI_PALETTES = new Set([
   "calmblue",
   "retro",
   "nordic",
+  "carbon",
 ]);
 const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral", "google"];
 const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
