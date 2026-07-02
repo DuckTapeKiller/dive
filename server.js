@@ -87,6 +87,17 @@ const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
+const WEB_SEARCH_SETTINGS_FILE = path.join(
+  DATA_DIR,
+  "web-search-settings.json",
+);
+const WEB_SEARCH_PROVIDERS = [
+  "auto",
+  "tavily",
+  "brave",
+  "searxng",
+  "duckduckgo",
+];
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
 const LIBRARY_INDEX_ERROR_FILE = path.join(
@@ -956,6 +967,97 @@ function loadCloudSettings() {
   return defaultCloudSettings();
 }
 
+// ---- Web Search provider settings (Tavily / Brave / SearXNG / DuckDuckGo) ----
+function defaultWebSearchSettings() {
+  return { provider: "auto", tavilyKey: "", braveKey: "", searxngUrl: "" };
+}
+
+function sanitizeWebSearchSettings(rawInput, existingInput = null) {
+  const defaults = defaultWebSearchSettings();
+  const existing =
+    existingInput &&
+    typeof existingInput === "object" &&
+    !Array.isArray(existingInput)
+      ? existingInput
+      : {};
+  const raw =
+    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      ? rawInput
+      : {};
+  const next = {
+    provider: WEB_SEARCH_PROVIDERS.includes(existing.provider)
+      ? existing.provider
+      : defaults.provider,
+    tavilyKey: typeof existing.tavilyKey === "string" ? existing.tavilyKey : "",
+    braveKey: typeof existing.braveKey === "string" ? existing.braveKey : "",
+    searxngUrl:
+      typeof existing.searxngUrl === "string" ? existing.searxngUrl : "",
+  };
+  if (WEB_SEARCH_PROVIDERS.includes(raw.provider)) next.provider = raw.provider;
+  if (typeof raw.tavilyKey === "string") {
+    const v = raw.tavilyKey.trim();
+    if (v) next.tavilyKey = v.slice(0, 4000);
+  }
+  if (typeof raw.braveKey === "string") {
+    const v = raw.braveKey.trim();
+    if (v) next.braveKey = v.slice(0, 4000);
+  }
+  if (typeof raw.searxngUrl === "string") {
+    next.searxngUrl = normalizeCloudBaseUrl(
+      raw.searxngUrl,
+      next.searxngUrl || "",
+    );
+  }
+  if (raw.clearKeys && typeof raw.clearKeys === "object") {
+    if (raw.clearKeys.tavily === true) next.tavilyKey = "";
+    if (raw.clearKeys.brave === true) next.braveKey = "";
+    if (raw.clearKeys.searxng === true) next.searxngUrl = "";
+  }
+  return next;
+}
+
+function saveWebSearchSettings(settings) {
+  const sanitized = sanitizeWebSearchSettings(
+    settings,
+    defaultWebSearchSettings(),
+  );
+  fs.writeFileSync(
+    WEB_SEARCH_SETTINGS_FILE,
+    JSON.stringify(sanitized, null, 2),
+    { mode: 0o600 },
+  );
+  try {
+    fs.chmodSync(WEB_SEARCH_SETTINGS_FILE, 0o600);
+  } catch (e) {}
+  return sanitized;
+}
+
+function loadWebSearchSettings() {
+  if (fs.existsSync(WEB_SEARCH_SETTINGS_FILE)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(WEB_SEARCH_SETTINGS_FILE, "utf8"));
+      return sanitizeWebSearchSettings(raw, defaultWebSearchSettings());
+    } catch (e) {
+      console.warn("Failed to load web search settings:", e.message || e);
+    }
+  }
+  return defaultWebSearchSettings();
+}
+
+// Never send raw API keys to the client — only whether each is configured.
+function redactWebSearchSettings(settings) {
+  const s = sanitizeWebSearchSettings(settings, defaultWebSearchSettings());
+  return {
+    provider: s.provider,
+    searxngUrl: s.searxngUrl,
+    hasKey: {
+      tavily: Boolean(s.tavilyKey),
+      brave: Boolean(s.braveKey),
+      searxng: Boolean(s.searxngUrl),
+    },
+  };
+}
+
 // ---- Local OpenAI-compatible modes: LM Studio and llama.cpp ----
 // Both expose an OpenAI-style /v1/chat/completions (SSE) + /v1/models with no
 // auth. They are first-class bespoke modes with their own endpoints, but share
@@ -1294,6 +1396,65 @@ function stripLeakedSkillCalls(text) {
   );
 }
 
+// Derive the source pills (title + URL) from a skill result so the UI can show
+// every source it consulted, the same way library passages are surfaced. Covers
+// web_search result lists, <!-- url --> citation comments, and web_scraper URLs.
+function hostTitleFromUrl(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function extractSkillSources(toolName, argsObj, resultText) {
+  const text = String(resultText || "");
+  const sources = [];
+  const seen = new Set();
+  const add = (title, url) => {
+    const clean = String(url || "").trim();
+    if (!/^https?:\/\//i.test(clean) || seen.has(clean)) return;
+    seen.add(clean);
+    sources.push({
+      title: String(title || hostTitleFromUrl(clean)).slice(0, 140),
+      url: clean,
+    });
+  };
+  // web_search list: "N. Title" line followed by a "URL: <url>" line.
+  const lines = text.split("\n");
+  let lastTitle = "";
+  for (const line of lines) {
+    const t = line.match(/^\s*\d+\.\s*(.+?)\s*$/);
+    if (t) {
+      lastTitle = t[1].trim();
+      continue;
+    }
+    const u = line.match(/^\s*URL:\s*(\S+)/i);
+    if (u) {
+      add(lastTitle, u[1]);
+      lastTitle = "";
+    }
+  }
+  // Citation comments used by wikipedia/britannica/wiktionary: <!-- https://... -->
+  const commentRe = /<!--\s*(https?:\/\/\S+?)\s*-->/g;
+  let m;
+  while ((m = commentRe.exec(text)) !== null) add(hostTitleFromUrl(m[1]), m[1]);
+  // web_scraper reads a single URL passed as an argument.
+  if (toolName === "web_scraper" && argsObj && argsObj.url) {
+    add(hostTitleFromUrl(argsObj.url), argsObj.url);
+  }
+  return sources;
+}
+
+// Parse a tool-call argument string without throwing.
+function safeParseArgs(argStr) {
+  try {
+    return JSON.parse(argStr);
+  } catch {
+    return {};
+  }
+}
+
 async function handleLocalModeStream(modeId, req, res, send) {
   let finished = false;
   const abortController = new AbortController();
@@ -1437,6 +1598,7 @@ async function handleLocalModeStream(modeId, req, res, send) {
     }
 
     const MAX_LOCAL_SKILL_ROUNDS = 6;
+    const seenSkillCalls = new Set();
     for (let round = 0; ; round += 1) {
       usage = await streamLocalOpenAiCompletion({
         baseUrl,
@@ -1500,11 +1662,22 @@ async function handleLocalModeStream(modeId, req, res, send) {
         argsPreview: toolCall.function.arguments.slice(0, 300),
       });
 
+      // Loop guard: if the model repeats the exact same call (a common failure
+      // mode for small models that keep re-searching), don't run it again —
+      // tell it to answer from what it has. This prevents runaway recursion.
+      const callKey = `${toolCall.function.name}:${toolCall.function.arguments
+        .replace(/\s+/g, "")
+        .toLowerCase()}`;
       let result;
-      try {
-        result = await executeToolCallWithConfirmation(toolCall, emit);
-      } catch (toolError) {
-        result = `Error: ${toolError.message}`;
+      if (seenSkillCalls.has(callKey)) {
+        result = `You already ran ${toolCall.function.name} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
+      } else {
+        seenSkillCalls.add(callKey);
+        try {
+          result = await executeToolCallWithConfirmation(toolCall, emit);
+        } catch (toolError) {
+          result = `Error: ${toolError.message}`;
+        }
       }
 
       emit({
@@ -1513,6 +1686,14 @@ async function handleLocalModeStream(modeId, req, res, send) {
         outputPreview: String(result || "").slice(0, 300),
         isError: /^Error:/i.test(String(result || "")),
       });
+      const localSources = extractSkillSources(
+        toolCall.function.name,
+        safeParseArgs(toolCall.function.arguments),
+        result,
+      );
+      if (localSources.length) {
+        emit({ type: "web_sources", sources: localSources });
+      }
       const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
       thinking += endMsg;
       emit({ type: "thinking_delta", delta: endMsg, thinking });
@@ -1527,9 +1708,13 @@ async function handleLocalModeStream(modeId, req, res, send) {
         ...requestMessages,
         {
           role: "user",
-          content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nContinue your answer using this skill result. Do not repeat the same skill call with the same arguments.`,
+          content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this skill result, write your complete final answer to the user's question now. Do not repeat this skill call.`,
         },
       ];
+      // Reset the accumulated text so the final reply is ONLY what the model
+      // writes after seeing the skill result. Otherwise any answer it produced
+      // BEFORE calling the skill stays prepended and the reply looks duplicated.
+      output = "";
       emit({ type: "delta", delta: "", response: output });
     }
 
@@ -2224,6 +2409,7 @@ async function executeToolCallWithConfirmation(toolCall, emit) {
   return await executeSkill(toolCall, {
     dataDir: DATA_DIR,
     allowShellCommand: requiresShellConfirmation,
+    webSearch: loadWebSearchSettings(),
   });
 }
 
@@ -3852,6 +4038,34 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath === "/api/websearch/settings") {
+    send(200, { settings: redactWebSearchSettings(loadWebSearchSettings()) });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/websearch/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const nextSettings =
+        body.settings && typeof body.settings === "object"
+          ? body.settings
+          : body;
+      const sanitized = sanitizeWebSearchSettings(
+        nextSettings,
+        loadWebSearchSettings(),
+      );
+      saveWebSearchSettings(sanitized);
+      send(200, { ok: true, settings: redactWebSearchSettings(sanitized) });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && urlPath === "/api/library/settings") {
     try {
       const config = loadLibraryConfig();
@@ -4686,6 +4900,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const MAX_CLOUD_SKILL_ROUNDS = 6;
+      const seenSkillCalls = new Set();
       for (let round = 0; ; round += 1) {
         usage = await streamCloudCompletion({
           provider,
@@ -4747,11 +4962,21 @@ const server = http.createServer(async (req, res) => {
           argsPreview: toolCall.function.arguments.slice(0, 300),
         });
 
+        // Loop guard: repeated identical call -> answer from existing results
+        // instead of re-running it, preventing runaway tool recursion.
+        const callKey = `${toolCall.function.name}:${toolCall.function.arguments
+          .replace(/\s+/g, "")
+          .toLowerCase()}`;
         let result;
-        try {
-          result = await executeToolCallWithConfirmation(toolCall, emit);
-        } catch (toolError) {
-          result = `Error: ${toolError.message}`;
+        if (seenSkillCalls.has(callKey)) {
+          result = `You already ran ${toolCall.function.name} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
+        } else {
+          seenSkillCalls.add(callKey);
+          try {
+            result = await executeToolCallWithConfirmation(toolCall, emit);
+          } catch (toolError) {
+            result = `Error: ${toolError.message}`;
+          }
         }
 
         emit({
@@ -4760,6 +4985,14 @@ const server = http.createServer(async (req, res) => {
           outputPreview: String(result || "").slice(0, 300),
           isError: /^Error:/i.test(String(result || "")),
         });
+        const cloudSources = extractSkillSources(
+          toolCall.function.name,
+          safeParseArgs(toolCall.function.arguments),
+          result,
+        );
+        if (cloudSources.length) {
+          emit({ type: "web_sources", sources: cloudSources });
+        }
         const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
         thinking += endMsg;
         emit({ type: "thinking_delta", delta: endMsg, thinking });
@@ -4774,9 +5007,13 @@ const server = http.createServer(async (req, res) => {
           ...requestMessages,
           {
             role: "user",
-            content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nContinue your answer using this skill result. Do not repeat the same skill call with the same arguments.`,
+            content: `[SKILL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this skill result, write your complete final answer to the user's question now. Do not repeat this skill call.`,
           },
         ];
+        // Reset the accumulated text so the final reply is ONLY what the model
+        // writes after seeing the skill result. Otherwise any answer it produced
+        // BEFORE calling the skill stays prepended and the reply looks duplicated.
+        output = "";
         emit({ type: "delta", delta: "", response: output });
       }
 
@@ -5128,6 +5365,15 @@ const server = http.createServer(async (req, res) => {
                         emit,
                       );
 
+                      const ollamaSources = extractSkillSources(
+                        tc.function.name,
+                        safeParseArgs(tc.function.arguments),
+                        result,
+                      );
+                      if (ollamaSources.length) {
+                        emit({ type: "web_sources", sources: ollamaSources });
+                      }
+
                       messages.push({
                         role: "user",
                         content: `[SKILL RESULT: ${tc.function.name}]\n\n${result}\n\nPlease continue your response based on this result.`,
@@ -5319,7 +5565,10 @@ const server = http.createServer(async (req, res) => {
           } else if (toolCall.function.name.startsWith("mcp__")) {
             result = await executeMcpTool(toolCall);
           } else {
-            result = await executeSkill(toolCall, { dataDir: DATA_DIR });
+            result = await executeSkill(toolCall, {
+              dataDir: DATA_DIR,
+              webSearch: loadWebSearchSettings(),
+            });
           }
           messages.push({
             role: "tool",

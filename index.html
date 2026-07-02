@@ -2163,6 +2163,38 @@
         font-family: inherit;
         text-align: left;
       }
+      .sources-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .web-source-pill {
+        cursor: pointer;
+        font-family: inherit;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 320px;
+        border-color: var(--accent);
+        border-radius: 999px;
+      }
+      .web-source-pill svg {
+        flex-shrink: 0;
+        color: var(--accent);
+        transition: color 0.2s;
+      }
+      .web-source-pill span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .web-source-pill:hover {
+        background-color: var(--accent);
+        color: var(--bg-inverse);
+      }
+      .web-source-pill:hover svg {
+        color: var(--bg-inverse);
+      }
       .custom-select-wrapper {
         position: relative;
         display: inline-block;
@@ -2855,6 +2887,59 @@
             <div class="setting-help">
               Choose which chat modes appear in the top-left switcher. At least
               one mode must stay enabled.
+            </div>
+          </div>
+          <div id="webSearchSettingsGroup" class="setting-group">
+            <label>WEB SEARCH PROVIDER</label>
+            <select id="webSearchProvider">
+              <option value="auto">
+                Auto — best available, then DuckDuckGo
+              </option>
+              <option value="tavily">Tavily (API key)</option>
+              <option value="brave">Brave Search (API key)</option>
+              <option value="searxng">SearXNG (instance URL)</option>
+              <option value="duckduckgo">DuckDuckGo (no key)</option>
+            </select>
+            <div class="setting-help">
+              Powers the web_search skill for local and cloud models. "Auto"
+              tries Tavily → Brave → SearXNG → DuckDuckGo, using whichever is
+              configured. DuckDuckGo always works with no key.
+            </div>
+            <label>TAVILY API KEY</label>
+            <input
+              id="webSearchTavilyKey"
+              type="password"
+              autocomplete="off"
+              placeholder="Leave blank to keep saved key"
+            />
+            <div id="webSearchTavilyStatus" class="setting-help"></div>
+            <label>BRAVE API KEY</label>
+            <input
+              id="webSearchBraveKey"
+              type="password"
+              autocomplete="off"
+              placeholder="Leave blank to keep saved key"
+            />
+            <div id="webSearchBraveStatus" class="setting-help"></div>
+            <label>SEARXNG INSTANCE URL</label>
+            <input
+              id="webSearchSearxngUrl"
+              type="text"
+              placeholder="https://searx.example.com"
+            />
+            <div class="setting-help">
+              Base URL of your SearXNG instance (its JSON API must be enabled).
+            </div>
+            <div
+              style="
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                margin-top: 8px;
+              "
+            >
+              <button id="webSearchSaveBtn" type="button">SAVE</button>
+              <span id="webSearchStatus" class="setting-help"></span>
             </div>
           </div>
           <div
@@ -8893,6 +8978,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
               evt.type === "skill_links" ||
+              evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
               evt.type === "slash_command"
@@ -9042,6 +9128,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
               evt.type === "skill_links" ||
+              evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
               evt.type === "slash_command"
@@ -9160,6 +9247,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
               evt.type === "skill_links" ||
+              evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
               evt.type === "slash_command"
@@ -9289,6 +9377,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
               evt.type === "skill_links" ||
+              evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
               evt.type === "slash_command"
@@ -9816,13 +9905,15 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           const pathValue = String(result.path || "").trim();
           const titleValue = String(result.title || "").trim();
           const authorValue = String(result.author || "").trim();
-          const key = pathValue || `${titleValue}|${authorValue}`;
+          const urlValue = String(result.url || "").trim();
+          const key = pathValue || urlValue || `${titleValue}|${authorValue}`;
           if (!key) continue;
           if (!bySource.has(key)) {
             bySource.set(key, {
               title: titleValue || basenameFromPath(pathValue) || "Untitled",
               author: authorValue,
               path: pathValue,
+              url: urlValue,
               heading: String(result.heading || "").trim(),
               passages: [],
               passageKeys: new Set(),
@@ -10014,26 +10105,51 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         label.textContent = "SOURCES";
         container.appendChild(label);
 
+        const hasWeb = normalized.some((s) => s.url);
+        label.textContent = hasWeb ? "WEB SOURCES" : "SOURCES";
+
         const list = document.createElement("div");
         list.className = "sources-list";
         normalized.forEach((source, index) => {
           const button = document.createElement("button");
           button.type = "button";
-          button.className = "source-pill library-source-pill";
-          const author = source.author ? ` - ${source.author}` : "";
-          button.textContent = `${index + 1}. ${source.title}${author}`;
-          button.title = "Copy source path and retrieved passages";
-          button.addEventListener("click", async () => {
-            if (!navigator.clipboard?.writeText) return;
-            await navigator.clipboard.writeText(
-              formatSourcePassagesForClipboard(source),
-            );
-            const prior = button.textContent;
-            button.textContent = "COPIED PASSAGES";
-            setTimeout(() => {
-              button.textContent = prior;
-            }, 1200);
-          });
+          if (source.url) {
+            // Web source: a clickable pill that opens the page in the browser.
+            button.className = "source-pill web-source-pill";
+            let domain = "";
+            try {
+              domain = new URL(source.url).hostname.replace(/^www\./, "");
+            } catch {
+              domain = "";
+            }
+            const labelText = domain
+              ? `${source.title} · ${domain}`
+              : source.title;
+            button.innerHTML =
+              `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>` +
+              `<span>${index + 1}. ${escapeHTML(labelText)}</span>`;
+            button.title = `Open ${source.url}`;
+            button.addEventListener("click", () => {
+              window.open(source.url, "_blank", "noopener,noreferrer");
+            });
+          } else {
+            // Library (database) source: copies the retrieved passages.
+            button.className = "source-pill library-source-pill";
+            const author = source.author ? ` - ${source.author}` : "";
+            button.textContent = `${index + 1}. ${source.title}${author}`;
+            button.title = "Copy source path and retrieved passages";
+            button.addEventListener("click", async () => {
+              if (!navigator.clipboard?.writeText) return;
+              await navigator.clipboard.writeText(
+                formatSourcePassagesForClipboard(source),
+              );
+              const prior = button.textContent;
+              button.textContent = "COPIED PASSAGES";
+              setTimeout(() => {
+                button.textContent = prior;
+              }, 1200);
+            });
+          }
           list.appendChild(button);
         });
         container.appendChild(list);
@@ -10725,6 +10841,112 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           await appAlert(
             error.message || "Failed to save Cloud settings.",
             "Cloud",
+          );
+        }
+      }
+
+      // ---- Web Search provider settings (Tavily / Brave / SearXNG / DDG) ----
+      let webSearchSettings = {
+        provider: "auto",
+        searxngUrl: "",
+        hasKey: { tavily: false, brave: false, searxng: false },
+      };
+
+      function renderWebSearchForm() {
+        const providerSel = document.getElementById("webSearchProvider");
+        if (providerSel) {
+          providerSel.value = webSearchSettings.provider || "auto";
+          refreshCustomSelectUi(providerSel);
+        }
+        const tavily = document.getElementById("webSearchTavilyKey");
+        const brave = document.getElementById("webSearchBraveKey");
+        const searxng = document.getElementById("webSearchSearxngUrl");
+        if (tavily) {
+          tavily.value = "";
+          tavily.placeholder = webSearchSettings.hasKey?.tavily
+            ? "Saved — leave blank to keep"
+            : "Leave blank if unused";
+        }
+        if (brave) {
+          brave.value = "";
+          brave.placeholder = webSearchSettings.hasKey?.brave
+            ? "Saved — leave blank to keep"
+            : "Leave blank if unused";
+        }
+        if (searxng) searxng.value = webSearchSettings.searxngUrl || "";
+        const ts = document.getElementById("webSearchTavilyStatus");
+        if (ts)
+          ts.textContent = webSearchSettings.hasKey?.tavily
+            ? "Key saved."
+            : "No key saved.";
+        const bs = document.getElementById("webSearchBraveStatus");
+        if (bs)
+          bs.textContent = webSearchSettings.hasKey?.brave
+            ? "Key saved."
+            : "No key saved.";
+      }
+
+      async function loadWebSearchSettingsUi() {
+        try {
+          const res = await fetch(apiUrl("/api/websearch/settings"));
+          const payload = await readJsonResponse(
+            res,
+            "Load web search settings",
+          );
+          if (payload?.settings) webSearchSettings = payload.settings;
+        } catch (error) {
+          console.error("Could not load web search settings", error);
+        }
+        renderWebSearchForm();
+      }
+
+      async function saveWebSearchSettingsUi() {
+        const statusEl = document.getElementById("webSearchStatus");
+        try {
+          const settings = {
+            provider:
+              document.getElementById("webSearchProvider")?.value || "auto",
+            tavilyKey:
+              document.getElementById("webSearchTavilyKey")?.value || "",
+            braveKey: document.getElementById("webSearchBraveKey")?.value || "",
+            searxngUrl:
+              document.getElementById("webSearchSearxngUrl")?.value || "",
+          };
+          const res = await fetch(apiUrl("/api/websearch/settings"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ settings }),
+          });
+          const payload = await readJsonResponse(
+            res,
+            "Save web search settings",
+          );
+          if (payload?.settings) webSearchSettings = payload.settings;
+          renderWebSearchForm();
+          if (statusEl) {
+            statusEl.textContent = "Saved.";
+            setTimeout(() => {
+              statusEl.textContent = "";
+            }, 1500);
+          }
+        } catch (error) {
+          console.error("Could not save web search settings", error);
+          if (statusEl) statusEl.textContent = "Save failed.";
+        }
+      }
+
+      function wireWebSearchSettings() {
+        const saveBtn = document.getElementById("webSearchSaveBtn");
+        if (saveBtn && !saveBtn.dataset.wired) {
+          saveBtn.dataset.wired = "1";
+          saveBtn.addEventListener("click", () => saveWebSearchSettingsUi());
+        }
+        const providerSel = document.getElementById("webSearchProvider");
+        if (providerSel && !providerSel.dataset.wired) {
+          providerSel.dataset.wired = "1";
+          // Provider changes save immediately (no key needed to switch).
+          providerSel.addEventListener("change", () =>
+            saveWebSearchSettingsUi(),
           );
         }
       }
@@ -11480,12 +11702,25 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
       }
 
       function captureLibrarySources(evt, state, assistantDiv) {
-        if (evt?.type !== "library_results" || !state) return;
-        state.results = mergeLibraryResultsWithPassages(
-          evt.results,
-          evt.passages,
-        );
-        state.passages = Array.isArray(evt.passages) ? evt.passages : [];
+        if (!state) return;
+        if (evt?.type === "library_results") {
+          state.results = mergeLibraryResultsWithPassages(
+            evt.results,
+            evt.passages,
+          );
+          state.passages = Array.isArray(evt.passages) ? evt.passages : [];
+        } else if (evt?.type === "web_sources") {
+          // Web-search sources flow through the same pill pipeline; each keeps a
+          // url so its pill opens the page in the browser instead of copying.
+          const incoming = Array.isArray(evt.sources) ? evt.sources : [];
+          if (!incoming.length) return;
+          state.results = normalizeLibrarySourceResults([
+            ...(Array.isArray(state.results) ? state.results : []),
+            ...incoming,
+          ]);
+        } else {
+          return;
+        }
         if (assistantDiv?.isConnected) {
           renderAssistantMessage(
             assistantDiv,
@@ -12794,6 +13029,7 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
           "promptManageGroup",
         ]);
         appendSettingsGroups("settingsTabSkills", [
+          "webSearchSettingsGroup",
           "builtinSkillsGroup",
           "customSkillsGroup",
         ]);
@@ -13084,6 +13320,8 @@ If the tool result was irrelevant (e.g. wrong person or off-topic) and you did N
         await __timed("loadCustomSkills", loadCustomSkills);
         await __timed("loadPiSettings", loadPiSettings);
         await __timed("loadCloudSettings", loadCloudSettings);
+        await __timed("loadWebSearchSettings", loadWebSearchSettingsUi);
+        wireWebSearchSettings();
         await __timed("loadLocalModeSettings", loadLocalModeSettings);
         wireLocalModeSettings();
         await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);

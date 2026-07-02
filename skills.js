@@ -1,5 +1,6 @@
 const https = require("https");
 const http = require("http");
+const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -74,6 +75,72 @@ function fetchText(url, redirectsLeft = MAX_REDIRECTS) {
   });
 }
 
+// Browser-like fetch that transparently decompresses gzip/deflate/br, follows
+// redirects, and supports POST. Used for real search-engine + reader endpoints
+// that reject bare clients or always compress their responses.
+function fetchHtml(url, options = {}, redirectsLeft = MAX_REDIRECTS) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith("https") ? https : http;
+    const req = lib.request(
+      url,
+      {
+        method: options.method || "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Accept-Encoding": "gzip, deflate, br",
+          ...(options.headers || {}),
+        },
+      },
+      (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          if (redirectsLeft <= 0)
+            return reject(new Error("Too many redirects"));
+          const next = new URL(res.headers.location, url).toString();
+          return fetchHtml(next, options, redirectsLeft - 1)
+            .then(resolve)
+            .catch(reject);
+        }
+        const enc = String(res.headers["content-encoding"] || "").toLowerCase();
+        let stream = res;
+        if (enc === "gzip") stream = res.pipe(zlib.createGunzip());
+        else if (enc === "deflate") stream = res.pipe(zlib.createInflate());
+        else if (enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
+        const chunks = [];
+        stream.on("data", (c) => chunks.push(c));
+        stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        stream.on("error", reject);
+      },
+    );
+    req.setTimeout(options.timeout || REQUEST_TIMEOUT_MS, () =>
+      req.destroy(new Error("Request timed out")),
+    );
+    req.on("error", reject);
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
+
+// Decode DuckDuckGo's redirect wrapper (//duckduckgo.com/l/?uddg=<encoded>).
+function decodeDdgHref(href) {
+  if (!href) return "";
+  try {
+    let h = href.startsWith("//") ? "https:" + href : href;
+    const u = new URL(h);
+    const uddg = u.searchParams.get("uddg");
+    return uddg ? decodeURIComponent(uddg) : h;
+  } catch {
+    return href;
+  }
+}
+
 async function executeWikipedia({ query, language = "en" }) {
   try {
     const wikiBase = `https://${language.toLowerCase().slice(0, 2)}.wikipedia.org`;
@@ -125,64 +192,232 @@ async function executeWiktionary({ word, language = "en" }) {
   }
 }
 
-async function executeDuckDuckGo({ query }) {
-  try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-    const data = await fetchJson(url);
-
-    let output = `## DuckDuckGo: "${query}"\n\n`;
-    let hasContent = false;
-
-    if (data.Abstract && data.Abstract.trim().length > 0) {
-      output += `**Answer:** ${data.Abstract}\n`;
-      if (data.AbstractSource) output += `**Source:** ${data.AbstractSource}`;
-      if (data.AbstractURL) output += `\n<!-- ${data.AbstractURL} -->`;
-      output += "\n\n";
-      hasContent = true;
+// Parse a DuckDuckGo results page (html or lite endpoint) into a list of
+// { title, url, snippet }. Ads and internal DDG links are skipped.
+function parseDdgResults($, limit) {
+  const results = [];
+  // Modern html.duckduckgo.com layout.
+  $(".result").each((_, el) => {
+    if (results.length >= limit) return;
+    const node = $(el);
+    if (node.hasClass("result--ad") || node.hasClass("result--no-result"))
+      return;
+    const a = node.find("a.result__a").first();
+    const title = a.text().replace(/\s+/g, " ").trim();
+    const url = decodeDdgHref(a.attr("href"));
+    const snippet = node
+      .find(".result__snippet")
+      .first()
+      .text()
+      .replace(/\s+/g, " ")
+      .trim();
+    if (title && /^https?:\/\//i.test(url) && !/duckduckgo\.com\//i.test(url)) {
+      results.push({ title, url, snippet });
     }
-
-    if (data.Answer && data.Answer.trim().length > 0) {
-      output += `**Direct Answer:** ${data.Answer}\n`;
-      if (data.AnswerType) output += `(Type: ${data.AnswerType})\n`;
-      output += "\n";
-      hasContent = true;
-    }
-
-    if (data.Definition && data.Definition.trim().length > 0) {
-      output += `**Definition:** ${data.Definition}\n`;
-      if (data.DefinitionSource) output += `Source: ${data.DefinitionSource}\n`;
-      output += "\n";
-      hasContent = true;
-    }
-
-    if (
-      data.RelatedTopics &&
-      Array.isArray(data.RelatedTopics) &&
-      data.RelatedTopics.length > 0
-    ) {
-      const topics = data.RelatedTopics.filter(
-        (t) => t.Text && t.Text.trim().length > 0,
-      ).slice(0, 3);
-
-      if (topics.length > 0) {
-        output += "**Related:**\n";
-        for (const topic of topics) {
-          if (topic.Text) output += `- ${topic.Text}\n`;
-        }
-        output += "\n";
-        hasContent = true;
+  });
+  // Fallback: lite.duckduckgo.com table layout.
+  if (!results.length) {
+    $("a.result-link").each((_, el) => {
+      if (results.length >= limit) return;
+      const a = $(el);
+      const title = a.text().replace(/\s+/g, " ").trim();
+      const url = decodeDdgHref(a.attr("href"));
+      const snippet = a
+        .closest("tr")
+        .nextAll("tr")
+        .find(".result-snippet")
+        .first()
+        .text()
+        .replace(/\s+/g, " ")
+        .trim();
+      if (
+        title &&
+        /^https?:\/\//i.test(url) &&
+        !/duckduckgo\.com\//i.test(url)
+      ) {
+        results.push({ title, url, snippet });
       }
+    });
+  }
+  return results;
+}
+
+// ---- Web search providers. Each returns [{ title, url, snippet }]. ----
+
+// DuckDuckGo HTML scrape (no API key). Primary html endpoint + lite fallback.
+async function searchDuckDuckGo(query, limit) {
+  let results = [];
+  try {
+    const html = await fetchHtml(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+    );
+    results = parseDdgResults(cheerio.load(html), limit);
+  } catch {
+    /* try the lite endpoint below */
+  }
+  if (!results.length) {
+    try {
+      const lite = await fetchHtml(
+        `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
+      );
+      results = parseDdgResults(cheerio.load(lite), limit);
+    } catch {
+      /* no results */
+    }
+  }
+  return results;
+}
+
+// Tavily: LLM-optimized search API (POST JSON, bearer key).
+async function searchTavily(query, limit, apiKey) {
+  const res = await fetchHtml("https://api.tavily.com/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      query,
+      max_results: limit,
+      search_depth: "basic",
+    }),
+    timeout: 20000,
+  });
+  const data = JSON.parse(res);
+  return (Array.isArray(data.results) ? data.results : [])
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url || "").trim(),
+      url: String(r.url || "").trim(),
+      snippet: String(r.content || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    }))
+    .filter((r) => /^https?:\/\//i.test(r.url));
+}
+
+// Brave Search API (GET, subscription-token header).
+async function searchBrave(query, limit, apiKey) {
+  const res = await fetchHtml(
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`,
+    {
+      headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
+      timeout: 20000,
+    },
+  );
+  const data = JSON.parse(res);
+  return (
+    (data.web && Array.isArray(data.web.results) && data.web.results) ||
+    []
+  )
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url || "").trim(),
+      url: String(r.url || "").trim(),
+      snippet: String(r.description || "")
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    }))
+    .filter((r) => /^https?:\/\//i.test(r.url));
+}
+
+// SearXNG JSON API on a user-provided instance (no key required).
+async function searchSearxng(query, limit, baseUrl) {
+  const root = String(baseUrl || "").replace(/\/+$/, "");
+  const res = await fetchHtml(
+    `${root}/search?q=${encodeURIComponent(query)}&format=json`,
+    { headers: { Accept: "application/json" }, timeout: 20000 },
+  );
+  const data = JSON.parse(res);
+  return (Array.isArray(data.results) ? data.results : [])
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url || "").trim(),
+      url: String(r.url || "").trim(),
+      snippet: String(r.content || "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    }))
+    .filter((r) => /^https?:\/\//i.test(r.url));
+}
+
+// Run the configured provider, then fall back through the chain to DuckDuckGo.
+// Returns { provider, results }. A keyless/misconfigured provider is skipped.
+async function runWebSearch(query, limit, cfg = {}) {
+  const provider = cfg.provider || "auto";
+  const order =
+    provider === "auto"
+      ? ["tavily", "brave", "searxng", "duckduckgo"]
+      : [provider, "tavily", "brave", "searxng", "duckduckgo"];
+  const seen = new Set();
+  for (const p of order) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    try {
+      let results = null;
+      if (p === "tavily" && cfg.tavilyKey)
+        results = await searchTavily(query, limit, cfg.tavilyKey);
+      else if (p === "brave" && cfg.braveKey)
+        results = await searchBrave(query, limit, cfg.braveKey);
+      else if (p === "searxng" && cfg.searxngUrl)
+        results = await searchSearxng(query, limit, cfg.searxngUrl);
+      else if (p === "duckduckgo")
+        results = await searchDuckDuckGo(query, limit);
+      if (results && results.length) return { provider: p, results };
+    } catch {
+      /* try the next provider in the chain */
+    }
+  }
+  return { provider: "duckduckgo", results: [] };
+}
+
+async function executeDuckDuckGo({ query, max_results = 6 }, context = {}) {
+  const limit = Math.max(1, Math.min(Number(max_results) || 6, 10));
+  try {
+    // 1) Real web results via the configured provider chain.
+    const { provider, results } = await runWebSearch(
+      query,
+      limit,
+      (context && context.webSearch) || {},
+    );
+
+    // 2) Best-effort instant answer (definitions / entities) as a header.
+    let instant = "";
+    try {
+      const data = await fetchJson(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      );
+      if (data && typeof data === "object") {
+        const ans = (data.Abstract || data.Answer || data.Definition || "")
+          .toString()
+          .trim();
+        if (ans) {
+          instant = `**Instant answer:** ${ans}`;
+          if (data.AbstractURL) instant += ` (${data.AbstractURL})`;
+          instant += "\n\n";
+        }
+      }
+    } catch {
+      /* instant answer is optional */
     }
 
-    if (!hasContent) {
-      return `DuckDuckGo returned no instant answer for "${query}". Try a more specific query or use the wikipedia skill instead.`;
+    if (!results.length) {
+      return (
+        instant +
+        `No web results found for "${query}". Try different or more specific keywords.`
+      ).trim();
     }
 
-    if (output.length > 2500) {
-      output = output.substring(0, 2450) + "\n\n...[TRUNCATED]";
-    }
-
-    return output;
+    let output = `## Web search results for "${query}" (via ${provider})\n\n${instant}`;
+    results.forEach((r, i) => {
+      output += `${i + 1}. ${r.title}\n   ${r.snippet || "(no snippet)"}\n   URL: ${r.url}\n\n`;
+    });
+    output +=
+      "Next step: choose the single most relevant URL above and call the " +
+      "web_scraper skill with it to read the full page, then answer. Do NOT " +
+      "run this same search again.";
+    return output.trim();
   } catch (e) {
     return `Web Search Error: ${e.message}`;
   }
@@ -244,10 +479,10 @@ async function executeBritannica({ query }) {
   }
 }
 
-async function executeFactCheck({ claim, language = "en" }) {
+async function executeFactCheck({ claim, language = "en" }, context = {}) {
   const wiki = await executeWikipedia({ query: claim, language });
   const brit = await executeBritannica({ query: claim });
-  const ddg = await executeDuckDuckGo({ query: claim });
+  const ddg = await executeDuckDuckGo({ query: claim }, context);
   return `### Wikipedia findings:\n${wiki}\n\n### Britannica findings:\n${brit}\n\n### Web search findings:\n${ddg}`;
 }
 
@@ -270,11 +505,47 @@ async function executeWebScraper({ url }) {
       return "Web Scraper Error: Access to local or private network addresses is not allowed.";
     }
     // ------------------------------------
-    const html = await fetchText(url);
+    const MAX = 6000;
+
+    // 1) Jina Reader: returns clean, LLM-ready markdown of the main content
+    // (strips nav/ads/boilerplate). No API key. Best quality for local models.
+    try {
+      const md = await fetchHtml(`https://r.jina.ai/${url}`, {
+        headers: { "X-Return-Format": "markdown" },
+        timeout: 20000,
+      });
+      const clean = (md || "").trim();
+      // Accept only genuine reader output. Jina returns a JSON error object
+      // (starting with "{") when rate-limited/blocked — fall through to a
+      // direct fetch in that case instead of surfacing the error as content.
+      const looksValid =
+        clean.length > 200 &&
+        !clean.startsWith("{") &&
+        !/^(error|failed)\b/i.test(clean);
+      if (looksValid) {
+        return clean.length > MAX
+          ? clean.slice(0, MAX) + "\n\n... [TRUNCATED]"
+          : clean;
+      }
+    } catch {
+      /* fall back to a direct fetch + extraction below */
+    }
+
+    // 2) Fallback: fetch the page directly and extract the main text, dropping
+    // navigation/script/style boilerplate so the model sees the real content.
+    const html = await fetchHtml(url);
     const $ = cheerio.load(html);
-    const text = $("body").text().replace(/\s+/g, " ").trim();
-    if (text.length > 3000) return text.substring(0, 3000) + "... [TRUNCATED]";
-    return text || "No text found.";
+    $(
+      "script, style, noscript, nav, header, footer, aside, form, svg",
+    ).remove();
+    const container = $("article").first().length
+      ? $("article").first()
+      : $("main").first().length
+        ? $("main").first()
+        : $("body");
+    const text = container.text().replace(/\s+/g, " ").trim();
+    if (!text) return "No readable text found at that URL.";
+    return text.length > MAX ? text.slice(0, MAX) + "... [TRUNCATED]" : text;
   } catch (e) {
     return `Web Scraper Error: ${e.message}`;
   }
@@ -620,11 +891,16 @@ const ALL_SKILLS = [
     type: "function",
     function: {
       name: "duckduckgo",
-      description: "Performs a web search.",
+      description:
+        "Searches the live web and returns a numbered list of results (title, snippet, URL). Use this FIRST to find current information or sources. Then pick the single most relevant URL and read it with the web_scraper skill before answering. Never repeat the same search query twice.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string" },
+          query: { type: "string", description: "The web search query." },
+          max_results: {
+            type: "number",
+            description: "How many results to return (1-10, default 6).",
+          },
         },
         required: ["query"],
       },
@@ -679,7 +955,8 @@ When asked about these relationships, ALWAYS query both words and explain the di
     type: "function",
     function: {
       name: "web_scraper",
-      description: "Reads and extracts text content from a given URL.",
+      description:
+        "Fetches a URL and returns its clean main text/markdown (no nav/ads). Use this after the duckduckgo skill to read a result you selected, then answer the user from what you read.",
       parameters: {
         type: "object",
         properties: {
@@ -847,9 +1124,9 @@ async function executeSkill(toolCall, context = {}) {
     case "deep_etymology":
       return await executeDeepEtymology(args);
     case "duckduckgo":
-      return await executeDuckDuckGo(args);
+      return await executeDuckDuckGo(args, context);
     case "fact_check":
-      return await executeFactCheck(args);
+      return await executeFactCheck(args, context);
     case "web_scraper":
       return await executeWebScraper(args);
     case "calculator":
