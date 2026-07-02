@@ -242,11 +242,12 @@ function parseDdgResults($, limit) {
   return results;
 }
 
-// ---- Web search: DuckDuckGo only. No API keys, no accounts, no setup. ----
+// ---- Web search. Uses the cloud API keys the user already saved (OpenAI /
+// Anthropic / Google) for high-quality provider search, and always falls back
+// to keyless DuckDuckGo scraping. Each returns [{ title, url, snippet }]. ----
 
-// DuckDuckGo HTML scrape. Primary html endpoint + lite fallback. Returns a
-// list of { title, url, snippet }.
-async function runWebSearch(query, limit) {
+// DuckDuckGo HTML scrape (no key). Primary html endpoint + lite fallback.
+async function searchDuckDuckGo(query, limit) {
   let results = [];
   try {
     const html = await fetchHtml(
@@ -266,14 +267,138 @@ async function runWebSearch(query, limit) {
       /* no results */
     }
   }
+  return results;
+}
+
+// OpenAI web search (chat completions + web_search_options). Result URLs come
+// from the message annotations (url_citation).
+async function searchOpenAI(query, limit, apiKey) {
+  const res = await fetchHtml("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini-search-preview",
+      web_search_options: {},
+      messages: [
+        {
+          role: "user",
+          content: `Search the web for: ${query}. List the most relevant sources.`,
+        },
+      ],
+    }),
+    timeout: 30000,
+  });
+  const data = JSON.parse(res);
+  const msg = data.choices?.[0]?.message || {};
+  const annotations = Array.isArray(msg.annotations) ? msg.annotations : [];
+  const out = [];
+  const seen = new Set();
+  for (const a of annotations) {
+    const c = a?.url_citation || a;
+    const url = String(c?.url || "").trim();
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    out.push({ title: String(c?.title || url).trim(), url, snippet: "" });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// Anthropic web search tool. Result URLs come from web_search_tool_result blocks.
+async function searchAnthropic(query, limit, apiKey) {
+  const res = await fetchHtml("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-haiku-latest",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: `Search the web for: ${query}` }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
+    }),
+    timeout: 30000,
+  });
+  const data = JSON.parse(res);
+  const blocks = Array.isArray(data.content) ? data.content : [];
+  const out = [];
+  const seen = new Set();
+  for (const b of blocks) {
+    const items =
+      b?.type === "web_search_tool_result" && Array.isArray(b.content)
+        ? b.content
+        : [];
+    for (const it of items) {
+      const url = String(it?.url || "").trim();
+      if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+      seen.add(url);
+      out.push({ title: String(it?.title || url).trim(), url, snippet: "" });
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
+// Google Gemini search grounding. Result URLs come from groundingChunks.
+async function searchGemini(query, limit, apiKey) {
+  const res = await fetchHtml(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `Search the web for: ${query}` }] }],
+        tools: [{ google_search: {} }],
+      }),
+      timeout: 30000,
+    },
+  );
+  const data = JSON.parse(res);
+  const chunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+  const out = [];
+  const seen = new Set();
+  for (const ch of chunks) {
+    const url = String(ch?.web?.uri || "").trim();
+    if (!/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    seen.add(url);
+    out.push({ title: String(ch?.web?.title || url).trim(), url, snippet: "" });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// Run the best available backend: whichever cloud key the user has saved
+// (OpenAI, then Anthropic, then Google), else keyless DuckDuckGo.
+async function runWebSearch(query, limit, cloudKeys = {}) {
+  const providers = [
+    ["openai", cloudKeys.openai, searchOpenAI],
+    ["anthropic", cloudKeys.anthropic, searchAnthropic],
+    ["google", cloudKeys.google, searchGemini],
+  ];
+  for (const [name, key, fn] of providers) {
+    if (!key) continue;
+    try {
+      const results = await fn(query, limit, key);
+      if (results && results.length) return { provider: name, results };
+    } catch {
+      /* try the next backend */
+    }
+  }
+  const results = await searchDuckDuckGo(query, limit);
   return { provider: "duckduckgo", results };
 }
 
-async function executeDuckDuckGo({ query, max_results = 6 }) {
+async function executeDuckDuckGo({ query, max_results = 6 }, context = {}) {
   const limit = Math.max(1, Math.min(Number(max_results) || 6, 10));
+  const cloudKeys = (context && context.cloudKeys) || {};
   try {
-    // 1) Real web results from DuckDuckGo (no key).
-    const { provider, results } = await runWebSearch(query, limit);
+    // 1) Best available backend (saved cloud key, else DuckDuckGo).
+    const { provider, results } = await runWebSearch(query, limit, cloudKeys);
 
     // 2) Best-effort instant answer (definitions / entities) as a header.
     let instant = "";
@@ -460,7 +585,10 @@ async function executeWebScraper({ url }) {
 // de-duplicates results, reads several independent (distinct-domain) pages in
 // parallel, and returns a consolidated digest so the model can synthesize a
 // thorough answer without chaining many calls. Every source URL becomes a pill.
-async function executeDeepResearch({ query, queries, max_sources = 6 }) {
+async function executeDeepResearch(
+  { query, queries, max_sources = 6 },
+  context = {},
+) {
   // Accept a single query or several varied angles (preferred for coverage).
   const angles = [];
   if (Array.isArray(queries)) {
@@ -473,6 +601,7 @@ async function executeDeepResearch({ query, queries, max_sources = 6 }) {
   if (!uniqAngles.length) return "Deep Research Error: no query provided.";
 
   const target = Math.max(4, Math.min(Number(max_sources) || 6, 8));
+  const cloudKeys = (context && context.cloudKeys) || {};
   const domainOf = (u) => {
     try {
       return new URL(u).hostname.replace(/^www\./, "");
@@ -488,7 +617,7 @@ async function executeDeepResearch({ query, queries, max_sources = 6 }) {
     const seenUrls = new Set();
     for (let i = 0; i < uniqAngles.length; i += 1) {
       if (i > 0) await sleep(400);
-      const { results } = await runWebSearch(uniqAngles[i], 8);
+      const { results } = await runWebSearch(uniqAngles[i], 8, cloudKeys);
       for (const r of results) {
         if (r.url && !seenUrls.has(r.url)) {
           seenUrls.add(r.url);
