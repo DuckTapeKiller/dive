@@ -10194,8 +10194,10 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
             .replace(/<call:[^>]*>\s*\{[^{}]*\}/gi, "")
             // A dangling opener (with or without '>') left at the very end.
             .replace(/<call:[^>]*>?\s*$/i, "")
-            // A bare partial "<c".."<call" fragment at the very end (mid-stream).
-            .replace(/<c(?:a(?:l(?:l)?)?)?$/i, "")
+            // A bare partial "<".."<call" fragment at the very end (mid-stream).
+            // The lone "<" case matters: stream chunks can split right after
+            // the opening bracket of "<call:", and it must show the drum too.
+            .replace(/<(?:c(?:a(?:l(?:l)?)?)?)?$/i, "")
         );
       }
 
