@@ -714,7 +714,7 @@ function normalizeFontStackValue(fontStack) {
 function defaultUiSettings() {
   return {
     palettes: {
-      ollama: "solarised",
+      ollama: "carbon",
       pi: "orange",
       cloud: "calmblue",
       lmstudio: "calmblue",
@@ -4430,10 +4430,59 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && urlPath === "/api/mcp/config") {
     try {
       const body = await parseJsonBody(req);
-      await initMcpServers(body.config);
-      send(200, { success: true });
+      const servers = await initMcpServers(body.config);
+      send(200, { success: true, servers: servers || [] });
     } catch (e) {
       send(500, { error: e.message });
+    }
+    return;
+  }
+
+  // Stop all MCP servers and delete everything they downloaded. The download
+  // locations are the absolute paths in each server's env (npm cache, browser
+  // downloads, memory file). Only paths nested at least two levels under the
+  // user's home are deleted, so a stray "/" or "~" can never be wiped.
+  if (req.method === "POST" && urlPath === "/api/mcp/purge") {
+    try {
+      const body = await parseJsonBody(req);
+      await initMcpServers("");
+      const removed = [];
+      let config = null;
+      try {
+        config = JSON.parse(typeof body.config === "string" ? body.config : "");
+      } catch (_e) {
+        config = null;
+      }
+      const home = os.homedir();
+      const candidates = new Set();
+      if (config && config.mcpServers) {
+        for (const server of Object.values(config.mcpServers)) {
+          const env =
+            server && typeof server.env === "object" && server.env
+              ? server.env
+              : {};
+          for (const value of Object.values(env)) {
+            if (typeof value === "string" && path.isAbsolute(value.trim())) {
+              candidates.add(value.trim());
+            }
+          }
+        }
+      }
+      for (const candidate of candidates) {
+        const resolved = path.resolve(candidate);
+        if (!resolved.startsWith(home + path.sep)) continue;
+        const rel = path.relative(home, resolved);
+        if (!rel || rel.split(path.sep).length < 2) continue;
+        try {
+          fs.rmSync(resolved, { recursive: true, force: true });
+          removed.push(resolved);
+        } catch (e) {
+          console.error(`[MCP] Could not delete ${resolved}:`, e.message);
+        }
+      }
+      send(200, { ok: true, removed });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
     }
     return;
   }
@@ -4782,9 +4831,14 @@ const server = http.createServer(async (req, res) => {
       if (cloudSkillsEnabled) {
         const skillsPrompt = getCloudSkillsPolicyPrompt();
         if (skillsPrompt) {
+          // Merge into the FIRST system message instead of adding a second
+          // one: OpenAI models (gpt-4o) weight the first system message and
+          // often ignore later system turns, silently skipping the tools.
           requestMessages = [
-            requestMessages[0],
-            { role: "system", content: skillsPrompt },
+            {
+              role: "system",
+              content: `${requestMessages[0].content}\n\n${skillsPrompt}`,
+            },
             ...requestMessages.slice(1),
           ];
         }

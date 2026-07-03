@@ -2,9 +2,46 @@ const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 const {
   StdioClientTransport,
 } = require("@modelcontextprotocol/sdk/client/stdio.js");
+const fs = require("fs");
+const path = require("path");
 
 // Store active MCP clients: { serverName: { client, transport, tools } }
 const activeMcpClients = new Map();
+
+// Packaged macOS apps launch with a minimal PATH (/usr/bin:/bin:...) that does
+// not include Homebrew or the Node installer locations, so "npx"/"uvx" are
+// never found and every MCP server silently fails. Search these too.
+const EXTRA_PATH_DIRS = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+];
+
+function augmentedPath() {
+  const dirs = (process.env.PATH || "").split(":").filter(Boolean);
+  for (const dir of EXTRA_PATH_DIRS) {
+    if (!dirs.includes(dir)) dirs.push(dir);
+  }
+  return dirs.join(":");
+}
+
+// Resolve a bare command name ("npx") to an absolute executable path using the
+// augmented PATH, so spawning works in the packaged app. Paths pass through.
+function resolveCommandPath(cmd) {
+  const trimmed = String(cmd || "").trim();
+  if (!trimmed || trimmed.includes("/")) return trimmed;
+  for (const dir of augmentedPath().split(":")) {
+    const candidate = path.join(dir, trimmed);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return trimmed;
+}
 
 /**
  * Permitted MCP launcher commands.
@@ -34,7 +71,11 @@ function isMcpCommandAllowed(cmd) {
   return MCP_ALLOWED_COMMANDS.has(base);
 }
 
+// Returns per-server statuses: [{ name, ok, toolCount, tools, error }] so the
+// UI can show exactly which servers connected and why any failed, instead of
+// failures dying silently in a console the packaged app never shows.
 async function initMcpServers(configJson) {
+  const statuses = [];
   // Clean up existing clients
   for (const [name, state] of activeMcpClients.entries()) {
     try {
@@ -45,25 +86,28 @@ async function initMcpServers(configJson) {
   }
   activeMcpClients.clear();
 
-  if (!configJson) return;
+  if (!configJson) return statuses;
 
   let config;
   try {
     config = JSON.parse(configJson);
   } catch (e) {
     console.error("Failed to parse MCP config:", e);
-    return;
+    return [
+      { name: "(config)", ok: false, error: `Invalid JSON: ${e.message}` },
+    ];
   }
 
-  if (!config.mcpServers) return;
+  if (!config.mcpServers) return statuses;
 
   for (const [serverName, serverConfig] of Object.entries(config.mcpServers)) {
     // --- Security: validate command before spawning ---
     if (!isMcpCommandAllowed(serverConfig.command)) {
-      console.error(
-        `[MCP] Rejected server "${serverName}": command "${serverConfig.command}" is not on the allowlist. ` +
-          `Permitted commands: ${[...MCP_ALLOWED_COMMANDS].join(", ")}`,
-      );
+      const error =
+        `Command "${serverConfig.command}" is not on the allowlist ` +
+        `(permitted: ${[...MCP_ALLOWED_COMMANDS].join(", ")}).`;
+      console.error(`[MCP] Rejected server "${serverName}": ${error}`);
+      statuses.push({ name: serverName, ok: false, error });
       continue;
     }
     // Validate args is an array of strings (no objects that could smuggle flags)
@@ -72,9 +116,9 @@ async function initMcpServers(configJson) {
         !Array.isArray(serverConfig.args) ||
         !serverConfig.args.every((a) => typeof a === "string")
       ) {
-        console.error(
-          `[MCP] Rejected server "${serverName}": args must be an array of strings.`,
-        );
+        const error = "args must be an array of strings.";
+        console.error(`[MCP] Rejected server "${serverName}": ${error}`);
+        statuses.push({ name: serverName, ok: false, error });
         continue;
       }
 
@@ -90,19 +134,26 @@ async function initMcpServers(configJson) {
         "--interactive",
       ]);
       if (serverConfig.args.some((arg) => blockedArgs.has(arg))) {
-        console.error(
-          `[MCP] Rejected server "${serverName}": args contains forbidden execution flag.`,
-        );
+        const error = "args contains a forbidden execution flag.";
+        console.error(`[MCP] Rejected server "${serverName}": ${error}`);
+        statuses.push({ name: serverName, ok: false, error });
         continue;
       }
     }
     // --------------------------------------------------
     try {
-      console.log(`[MCP] Initializing server: ${serverName}`);
+      const resolvedCommand = resolveCommandPath(serverConfig.command);
+      console.log(
+        `[MCP] Initializing server: ${serverName} (${resolvedCommand})`,
+      );
       const transport = new StdioClientTransport({
-        command: serverConfig.command,
+        command: resolvedCommand,
         args: serverConfig.args,
-        env: { ...process.env, ...(serverConfig.env || {}) },
+        env: {
+          ...process.env,
+          PATH: augmentedPath(),
+          ...(serverConfig.env || {}),
+        },
       });
 
       const client = new Client(
@@ -120,10 +171,18 @@ async function initMcpServers(configJson) {
       );
 
       activeMcpClients.set(serverName, { client, transport, tools });
+      statuses.push({
+        name: serverName,
+        ok: true,
+        toolCount: tools.length,
+        tools: tools.map((t) => t.name),
+      });
     } catch (e) {
       console.error(`[MCP] Failed to initialize server ${serverName}:`, e);
+      statuses.push({ name: serverName, ok: false, error: e.message });
     }
   }
+  return statuses;
 }
 
 // Convert MCP tools into Ollama's format

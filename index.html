@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light" data-mode="ollama" data-palette="solarised">
+<html lang="en" data-theme="light" data-mode="ollama" data-palette="carbon">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -1066,10 +1066,11 @@
         line-height: 1.4;
         opacity: 0.8;
       }
-      #modesToggleList {
+      #modesToggleList,
+      #defaultModeList {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 0;
         margin: 6px 0;
       }
       .mode-toggle-row {
@@ -2771,13 +2772,22 @@
                 margin-top: 10px;
               "
             >
-              <button
-                id="saveMcpBtn"
-                class="mcp-action-btn"
-                style="width: auto"
-              >
-                SAVE & RESTART SERVERS
-              </button>
+              <div style="display: flex; gap: 8px">
+                <button
+                  id="saveMcpBtn"
+                  class="mcp-action-btn"
+                  style="width: auto"
+                >
+                  SAVE & RESTART SERVERS
+                </button>
+                <button
+                  id="purgeMcpBtn"
+                  class="mcp-action-btn"
+                  style="width: auto; border-color: #ff4444; color: #ff4444"
+                >
+                  DELETE DOWNLOADS
+                </button>
+              </div>
               <div
                 id="mcpStatus"
                 style="
@@ -3055,12 +3065,12 @@
             <select id="settingOllamaPalette">
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
-              <option value="solarised">Solarised Everforest (Default)</option>
+              <option value="solarised">Solarised Everforest</option>
               <option value="forest">Forest Sage</option>
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
-              <option value="carbon">Carbon</option>
+              <option value="carbon">Carbon (Default)</option>
             </select>
             <div class="setting-help">
               Theme used when chat mode is set to `OLLAMA`.
@@ -5101,7 +5111,7 @@
       let activeSettingsTab = "main";
       let mcpOpen = false;
       let isDark = false;
-      let ollamaPalette = "solarised";
+      let ollamaPalette = "carbon";
       let piPalette = "orange";
       let cloudPalette = "calmblue";
       let lmstudioPalette = "calmblue";
@@ -6134,9 +6144,8 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
         const fonts = settings.fonts || {};
 
         ollamaPalette = useServer
-          ? palettes.ollama || "solarised"
-          : localStorage.getItem("ollama-pi-chat-ollama-palette") ||
-            "solarised";
+          ? palettes.ollama || "carbon"
+          : localStorage.getItem("ollama-pi-chat-ollama-palette") || "carbon";
         piPalette = useServer
           ? palettes.pi || "orange"
           : localStorage.getItem("ollama-pi-chat-pi-palette") || "orange";
@@ -13020,7 +13029,12 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
         }
       }
 
-      function renderMcpList(jsonString) {
+      // Real connection results from the server (set after each config POST),
+      // so the panel shows what actually connected instead of just the names
+      // present in the JSON.
+      let lastMcpStatuses = null;
+
+      function renderMcpList(jsonString, statuses = lastMcpStatuses) {
         const listDiv = document.getElementById("mcpActiveList");
         if (!listDiv) return;
         listDiv.innerHTML = "";
@@ -13031,10 +13045,32 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
             const servers = Object.keys(config.mcpServers);
             if (servers.length > 0) {
               servers.forEach((name) => {
+                const status = Array.isArray(statuses)
+                  ? statuses.find((s) => s && s.name === name)
+                  : null;
                 const badge = document.createElement("div");
-                badge.textContent = name.toUpperCase();
-                badge.style.cssText =
-                  "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                if (status && status.ok) {
+                  badge.textContent = `${name.toUpperCase()} · ${status.toolCount} TOOLS`;
+                  badge.title = (status.tools || []).join(", ");
+                  badge.style.cssText =
+                    "background: var(--accent); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                } else if (status && !status.ok) {
+                  badge.textContent = `${name.toUpperCase()} · FAILED`;
+                  badge.title = status.error || "Unknown error";
+                  badge.style.cssText =
+                    "background: #ff4444; color: #fff; padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                  const err = document.createElement("div");
+                  err.textContent = status.error || "Unknown error";
+                  err.style.cssText =
+                    "flex-basis: 100%; font-size: 9px; color: #ff4444; margin: -2px 0 4px;";
+                  listDiv.appendChild(badge);
+                  listDiv.appendChild(err);
+                  return;
+                } else {
+                  badge.textContent = name.toUpperCase();
+                  badge.style.cssText =
+                    "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                }
                 listDiv.appendChild(badge);
               });
             } else {
@@ -13081,25 +13117,82 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
           }
           localStorage.setItem("mcpConfig", raw);
           renderMcpList(raw);
-          status.textContent = "SAVED!";
+          status.textContent = "CONNECTING...";
           status.style.color = "var(--accent)";
 
-          await fetch("/api/mcp/config", {
+          const res = await fetch("/api/mcp/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ config: raw }),
           });
+          const payload = await res.json().catch(() => null);
+          lastMcpStatuses = Array.isArray(payload?.servers)
+            ? payload.servers
+            : null;
+          renderMcpList(raw);
 
-          status.textContent = "RESTARTED";
+          const okCount = (lastMcpStatuses || []).filter((s) => s.ok).length;
+          const failCount = (lastMcpStatuses || []).filter((s) => !s.ok).length;
+          if (failCount > 0) {
+            status.textContent = `${okCount} CONNECTED, ${failCount} FAILED`;
+            status.style.color = "#ff4444";
+          } else {
+            status.textContent = `${okCount} CONNECTED`;
+            status.style.color = "var(--accent)";
+          }
           setTimeout(() => {
             status.textContent = "";
-          }, 2000);
+          }, 6000);
         } catch (e) {
           status.textContent = "INVALID JSON";
           status.style.color = "#ff4444";
           setTimeout(() => {
             status.textContent = "";
           }, 2000);
+        }
+      }
+
+      // Stop every MCP server and delete everything they downloaded (the
+      // folders referenced in the config's env paths). Fully reversible: the
+      // next save simply re-downloads.
+      async function purgeMcpDownloads() {
+        const status = document.getElementById("mcpStatus");
+        const raw =
+          document.getElementById("mcpConfigArea")?.value.trim() ||
+          localStorage.getItem("mcpConfig") ||
+          "";
+        if (
+          !(await appConfirm(
+            "Stop all MCP servers and delete their downloaded files? The next save re-downloads them.",
+            "MCP",
+          ))
+        ) {
+          return;
+        }
+        try {
+          const res = await fetch(apiUrl("/api/mcp/purge"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: raw }),
+          });
+          const payload = await readJsonResponse(res, "Delete MCP downloads");
+          lastMcpStatuses = null;
+          renderMcpList(localStorage.getItem("mcpConfig") || "");
+          const count = Array.isArray(payload?.removed)
+            ? payload.removed.length
+            : 0;
+          status.textContent = `SERVERS STOPPED · ${count} LOCATION${count === 1 ? "" : "S"} DELETED`;
+          status.style.color = "var(--accent)";
+          setTimeout(() => {
+            status.textContent = "";
+          }, 6000);
+        } catch (e) {
+          status.textContent = "DELETE FAILED";
+          status.style.color = "#ff4444";
+          console.error("Could not delete MCP downloads", e);
+          setTimeout(() => {
+            status.textContent = "";
+          }, 3000);
         }
       }
 
@@ -13310,7 +13403,16 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ config: savedMcpConfig }),
-          }).catch((err) => console.error("Could not init MCP:", err));
+          })
+            .then((res) => res.json())
+            .then((payload) => {
+              // Keep the real connection results so opening the MCP panel
+              // shows which servers are up and why any failed.
+              if (Array.isArray(payload?.servers)) {
+                lastMcpStatuses = payload.servers;
+              }
+            })
+            .catch((err) => console.error("Could not init MCP:", err));
         }
       });
       function syncCustomSelect(selectEl) {
@@ -13663,6 +13765,13 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
         if (btn_saveMcpBtn) {
           btn_saveMcpBtn.addEventListener("click", function (event) {
             saveMcpConfig();
+          });
+        }
+
+        const btn_purgeMcpBtn = document.getElementById("purgeMcpBtn");
+        if (btn_purgeMcpBtn) {
+          btn_purgeMcpBtn.addEventListener("click", function (event) {
+            purgeMcpDownloads();
           });
         }
 
