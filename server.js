@@ -724,6 +724,7 @@ function defaultUiSettings() {
       ...DEFAULT_UI_FONTS,
     },
     enabledModes: ["ollama", "pi", "cloud"],
+    defaultMode: "",
   };
 }
 
@@ -737,6 +738,7 @@ function sanitizeUiSettings(rawInput) {
     palettes: { ...defaults.palettes },
     fonts: { ...defaults.fonts },
     enabledModes: [...defaults.enabledModes],
+    defaultMode: "",
   };
 
   if (
@@ -766,6 +768,16 @@ function sanitizeUiSettings(rawInput) {
       (id) => typeof id === "string" && allowed.has(id),
     );
     next.enabledModes = filtered.length ? filtered : [...defaults.enabledModes];
+  }
+
+  // The mode preselected when the app opens. Must be an enabled mode; empty
+  // means "first enabled mode" (legacy behavior).
+  if (
+    typeof raw.defaultMode === "string" &&
+    UI_SETTINGS_MODE_KEYS.includes(raw.defaultMode) &&
+    next.enabledModes.includes(raw.defaultMode)
+  ) {
+    next.defaultMode = raw.defaultMode;
   }
 
   return next;
@@ -1986,8 +1998,18 @@ function getCloudSkillsPolicyPrompt() {
     "The system intercepts the block, executes the skill, and sends you the result so you can continue your answer.",
     "Call one skill at a time. After receiving a result you may call another skill if needed.",
     "",
-    "RESEARCH:",
-    "For factual, biographical, current-events, or 'who/what is X' questions, use the deep_research skill and pass 'queries' with 2-4 VARIED angles (different phrasing and scope) so it gathers broad coverage from several independent sources. Then write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance. Never answer a research question in just a few lines; be thorough and integrate all the sources.",
+    "ONLY the skills listed above exist and are enabled. Any skill NOT in that list is disabled — never call it. If a skill result says a skill is disabled, do not call it again; use an enabled one.",
+    "",
+    "RESEARCH CHAIN (follow strictly, maximum 4 skill calls per question):",
+    "For factual, biographical, current-events, or 'who/what is X' questions:",
+    "1. Call deep_research with 'queries' holding 2-4 VARIED angles (different phrasing and scope).",
+    "2. If it returns nothing useful, retry deep_research ONCE with completely different phrasing.",
+    "3. If that also fails, call wikipedia and britannica on the topic and answer from them.",
+    "4. After at most 4 skill calls you MUST stop calling skills and write your answer from whatever you have; if nothing was found, say plainly that you could not verify the topic. Never repeat a failed call and never keep deliberating about whether to search again.",
+    "AMBIGUITY: If a name or term is ambiguous (multiple people or topics match) or you cannot tell who the user means, do NOT search repeatedly — answer for the most prominent match and note the assumption in one sentence, or say you cannot confidently identify the subject and ask which one they mean.",
+    "",
+    "ANSWER LENGTH AND STYLE:",
+    "When the skill results contain rich material, write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance, integrating all the sources. When the material is thin, write a shorter accurate answer instead of inflating it. FORBIDDEN: filler adverbs and adjectives, empty intensifiers ('truly remarkable', 'deeply fascinating', 'incredibly important'), and padding sentences that add no facts. Clean, precise, academic prose only — depth must come from information, never from decoration.",
     "",
     "SOURCES:",
     "Do NOT write source links, a 'Source:' line, a 'References' section, or URLs in your answer. The app shows every source used as a clickable pill automatically. Just write the answer itself.",
@@ -2286,7 +2308,17 @@ async function requestShellConfirmation({ emit, title, command, toolName }) {
 }
 
 async function executeToolCallWithConfirmation(toolCall, emit) {
-  assertBuiltinSkillEnabled(toolCall.function.name);
+  // A disabled skill must NOT crash the stream. Return an instructive result
+  // so the model recovers by using one of its enabled skills instead.
+  try {
+    assertBuiltinSkillEnabled(toolCall.function.name);
+  } catch (error) {
+    const enabled = Object.entries(loadSkillsConfig())
+      .filter(([, v]) => v !== false)
+      .map(([k]) => k)
+      .join(", ");
+    return `${error.message} Do NOT call it again. Use one of your ENABLED skills instead (${enabled}) to answer the question.`;
+  }
   const requiresShellConfirmation = skillRequiresShellConfirmation(
     toolCall.function.name,
     DATA_DIR,

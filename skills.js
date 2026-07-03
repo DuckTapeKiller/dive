@@ -626,7 +626,21 @@ async function executeDeepResearch(
       }
     }
     if (!merged.length) {
-      return `No web results found for ${uniqAngles.map((a) => `"${a}"`).join(", ")}. Try different or more specific keywords.`;
+      // Web search unavailable (rate-limited/blocked/offline): fall back to
+      // encyclopedias AUTOMATICALLY so the model never sees a bare "no
+      // results" it could loop on. The topic is the first (primary) angle.
+      const topic = uniqAngles[0];
+      const [wiki, brit] = await Promise.all([
+        executeWikipedia({ query: topic }),
+        executeBritannica({ query: topic }),
+      ]);
+      return (
+        `## Deep research: "${topic}" (web search unavailable — encyclopedia fallback)\n\n` +
+        `Live web search returned nothing (it may be temporarily rate-limited), ` +
+        `so the following encyclopedia results were retrieved instead. Answer ` +
+        `the user's question from them. Do NOT call deep_research again for ` +
+        `this topic.\n\n### Wikipedia\n\n${wiki}\n\n### Britannica\n\n${brit}`
+      );
     }
     // Prefer breadth: one result per distinct domain first, then top up.
     const picked = [];
