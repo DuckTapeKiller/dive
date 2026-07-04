@@ -219,6 +219,25 @@ test("EPUB HTML extraction preserves headings and paragraphs", () => {
   );
 });
 
+test("nested block elements are extracted once, not once per nesting level", () => {
+  // Regression: <blockquote><p>..</p></blockquote> (and <li><p>, and deeply
+  // nested quotes) used to emit the same paragraph once per matching ancestor.
+  // Measured on real EPUBs: up to 14% duplicated paragraphs per book.
+  const text = extractHtmlText(`<!doctype html>
+<html><body>
+  <blockquote><p>Quoted sentence here.</p></blockquote>
+  <ul><li><p>Item text.</p></li></ul>
+  <blockquote><blockquote><blockquote><p>Deep quote.</p></blockquote></blockquote></blockquote>
+  <li>Own text kept <p>nested paragraph</p></li>
+  <p>Normal para.</p>
+</body></html>`);
+
+  assert.strictEqual(
+    text,
+    "Quoted sentence here.\n\nItem text.\n\nDeep quote.\n\nOwn text kept\n\nnested paragraph\n\nNormal para.",
+  );
+});
+
 test("EPUB XHTML with self-closing tags is extracted (XML-mode fallback)", () => {
   // Real publisher EPUBs (e.g. Houghton Mifflin) ship well-formed XHTML with
   // self-closing <title/> and <a id=".."/>. In HTML mode a self-closing

@@ -527,33 +527,199 @@ function saveCustomSkills(skills) {
   }
 }
 
-function loadNotes() {
+// ---- Notes: individual Markdown files in DATA_DIR/notes ----
+const NOTES_DIR = path.join(DATA_DIR, "notes");
+const ACTIVE_NOTE_FILE = path.join(NOTES_DIR, ".active");
+const NOTE_MAX_CHARS = 200000;
+
+// A note name is the .md filename without extension. Strict allowlist keeps
+// path traversal impossible and filenames portable.
+function sanitizeNoteName(raw) {
+  const cleaned = String(raw || "")
+    .replace(/\.md$/i, "")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+/, "")
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return cleaned;
+}
+
+function noteFilePath(name) {
+  const clean = sanitizeNoteName(name);
+  if (!clean) {
+    const error = new Error("Invalid note name.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const filePath = path.join(NOTES_DIR, `${clean}.md`);
+  if (!filePath.startsWith(NOTES_DIR + path.sep)) {
+    const error = new Error("Invalid note path.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return { name: clean, filePath };
+}
+
+// One-time migration: the legacy single note (notes.json) becomes Notes.md.
+// The legacy file is kept as a backup, never deleted.
+function migrateLegacyNotes() {
   try {
-    if (fs.existsSync(NOTES_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(NOTES_FILE, "utf8"));
-      const text = typeof raw.text === "string" ? raw.text : "";
-      const updatedAt =
-        typeof raw.updatedAt === "string" ? raw.updatedAt : null;
-      return { text, updatedAt };
+    fs.mkdirSync(NOTES_DIR, { recursive: true });
+    const hasNotes = fs
+      .readdirSync(NOTES_DIR)
+      .some((entry) => entry.toLowerCase().endsWith(".md"));
+    if (hasNotes || !fs.existsSync(NOTES_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(NOTES_FILE, "utf8"));
+    const text = typeof raw.text === "string" ? raw.text : "";
+    if (text.trim()) {
+      fs.writeFileSync(path.join(NOTES_DIR, "Notes.md"), text, "utf8");
+      setActiveNoteName("Notes");
     }
   } catch (e) {
-    console.error("Failed to read notes:", e.message || e);
+    console.error("Notes migration failed:", e.message || e);
   }
-  return { text: "", updatedAt: null };
+}
+
+function getActiveNoteName() {
+  try {
+    const raw = fs.readFileSync(ACTIVE_NOTE_FILE, "utf8").trim();
+    const clean = sanitizeNoteName(raw);
+    if (clean && fs.existsSync(path.join(NOTES_DIR, `${clean}.md`))) {
+      return clean;
+    }
+  } catch {
+    /* no active marker yet */
+  }
+  return "";
+}
+
+function setActiveNoteName(name) {
+  try {
+    fs.mkdirSync(NOTES_DIR, { recursive: true });
+    fs.writeFileSync(ACTIVE_NOTE_FILE, sanitizeNoteName(name), "utf8");
+  } catch (e) {
+    console.error("Could not persist active note:", e.message || e);
+  }
+}
+
+function listNotes() {
+  migrateLegacyNotes();
+  let entries = [];
+  try {
+    entries = fs.readdirSync(NOTES_DIR).filter((entry) => {
+      return entry.toLowerCase().endsWith(".md") && !entry.startsWith(".");
+    });
+  } catch {
+    entries = [];
+  }
+  const notes = entries
+    .map((entry) => {
+      const filePath = path.join(NOTES_DIR, entry);
+      let stat = null;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        return null;
+      }
+      return {
+        name: entry.replace(/\.md$/i, ""),
+        updatedAt: new Date(stat.mtimeMs).toISOString(),
+        sizeBytes: stat.size,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  let active = getActiveNoteName();
+  if (!active && notes.length) active = notes[0].name;
+  return { notes, active };
+}
+
+function readNote(name) {
+  const { name: clean, filePath } = noteFilePath(name);
+  let text = "";
+  let updatedAt = null;
+  try {
+    text = fs.readFileSync(filePath, "utf8");
+    updatedAt = new Date(fs.statSync(filePath).mtimeMs).toISOString();
+  } catch {
+    text = "";
+  }
+  return { name: clean, text, updatedAt };
+}
+
+function writeNote(name, text) {
+  const { name: clean, filePath } = noteFilePath(name);
+  const body =
+    String(text || "").length > NOTE_MAX_CHARS
+      ? String(text).slice(0, NOTE_MAX_CHARS)
+      : String(text || "");
+  fs.mkdirSync(NOTES_DIR, { recursive: true });
+  fs.writeFileSync(filePath, body, "utf8");
+  setActiveNoteName(clean);
+  return { name: clean, text: body, updatedAt: new Date().toISOString() };
+}
+
+// Create a note with a unique name derived from the requested title.
+function createNote(title) {
+  migrateLegacyNotes();
+  const base = sanitizeNoteName(title) || "Untitled";
+  let candidate = base;
+  let counter = 2;
+  while (fs.existsSync(path.join(NOTES_DIR, `${candidate}.md`))) {
+    candidate = `${base} ${counter}`;
+    counter += 1;
+    if (counter > 500) throw new Error("Could not allocate a note name.");
+  }
+  return writeNote(candidate, "");
+}
+
+function renameNote(name, title) {
+  const { name: fromName, filePath: fromPath } = noteFilePath(name);
+  const toBase = sanitizeNoteName(title);
+  if (!toBase) {
+    const error = new Error("Invalid note title.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (toBase === fromName) return { name: fromName };
+  const { name: toName, filePath: toPath } = noteFilePath(toBase);
+  if (fs.existsSync(toPath)) {
+    const error = new Error(`A note named "${toName}" already exists.`);
+    error.statusCode = 409;
+    throw error;
+  }
+  fs.renameSync(fromPath, toPath);
+  if (getActiveNoteName() === fromName) setActiveNoteName(toName);
+  return { name: toName };
+}
+
+function deleteNote(name) {
+  const { name: clean, filePath } = noteFilePath(name);
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    /* already gone */
+  }
+  if (getActiveNoteName() === clean) {
+    const { notes } = listNotes();
+    setActiveNoteName(notes.length ? notes[0].name : "");
+  }
+  return listNotes();
+}
+
+// Legacy single-note API compatibility: reads/writes the active note.
+function loadNotes() {
+  migrateLegacyNotes();
+  const active = getActiveNoteName() || listNotes().active;
+  if (active) return readNote(active);
+  return { name: "", text: "", updatedAt: null };
 }
 
 function saveNotes(text) {
-  const entry = {
-    text,
-    updatedAt: new Date().toISOString(),
-  };
-  try {
-    fs.writeFileSync(NOTES_FILE, JSON.stringify(entry, null, 2));
-  } catch (e) {
-    console.error("Failed to save notes:", e.message || e);
-    throw e;
-  }
-  return entry;
+  const active = getActiveNoteName() || listNotes().active || "Notes";
+  return writeNote(active, text);
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -1251,9 +1417,15 @@ async function fetchLocalModels(modeId) {
     throw createHttpError(res.status, `Model list failed (${res.status}).`);
   }
   const data = await res.json().catch(() => null);
-  const models = Array.isArray(data?.data)
+  const allIds = Array.isArray(data?.data)
     ? data.data.map((m) => m && m.id).filter(Boolean)
     : [];
+  // Embedding models (e.g. LM Studio's bundled
+  // text-embedding-nomic-embed-text-v1.5) are listed by /v1/models but cannot
+  // chat — keep them out of the chat dropdown and report them separately so
+  // the Database settings can offer them as embedding backends.
+  const models = allIds.filter((id) => !/embed/i.test(id));
+  const embeddingModels = allIds.filter((id) => /embed/i.test(id));
   // The OpenAI-compat /v1/models does not report context length. Get the real
   // loaded context window from LM Studio's native API (/api/v0/models) or from
   // llama.cpp's /props, best-effort, so the UI can show "used / context".
@@ -1285,7 +1457,7 @@ async function fetchLocalModels(modeId) {
   } catch (_e) {
     // context length is best-effort
   }
-  return { models, contextLength };
+  return { models, embeddingModels, contextLength };
 }
 
 // Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
@@ -1387,9 +1559,14 @@ async function handleLocalModeStream(modeId, req, res, send) {
       conf.baseUrl,
       LOCAL_MODE_DEFAULTS[modeId].baseUrl,
     );
+    // Client sends explicit "" when "(auto / server default)" is selected.
+    // Prefer the client's explicit choice; fall back to server saved setting only
+    // when the client sent nothing (undefined), not when it sent empty string.
     const model =
-      typeof body.model === "string" && body.model.trim()
-        ? body.model.trim()
+      body.model !== undefined
+        ? typeof body.model === "string"
+          ? body.model.trim()
+          : ""
         : conf.model || "";
     // Prefer params from the request; fall back to the saved per-mode config.
     const params = sanitizeLocalParams(body.params || conf.params);
@@ -1402,7 +1579,12 @@ async function handleLocalModeStream(modeId, req, res, send) {
       history,
       originalMessage,
     );
-    let requestMessages = withSharedSystemPrompt(messages);
+    // Hard-mode override (proofread / translate): bypass policy, library, skills.
+    const systemOverride =
+      typeof body.systemOverride === "string" ? body.systemOverride.trim() : "";
+    let requestMessages = systemOverride
+      ? [{ role: "system", content: systemOverride }, ...messages]
+      : withSharedSystemPrompt(messages);
     let librarySourceResults = [];
     let libraryPassages = [];
     let databaseContextEnabled = false;
@@ -1422,66 +1604,71 @@ async function handleLocalModeStream(modeId, req, res, send) {
     });
     emitSlashCommand(emit, slashCommand);
 
-    try {
-      const libraryContext = await buildChatLibraryContext(
-        message,
-        getLibraryRequestForCommand(library, slashCommand, history, modeId),
-      );
-      if (libraryContext.enabled) {
-        databaseContextEnabled = true;
-        requestMessages[0] = {
-          role: "system",
-          content: getSharedAssistantPolicyPrompt(true),
-        };
-        requestMessages = insertLibraryContextMessage(
-          requestMessages,
-          libraryContext.contextMessage,
+    // Tracks whether model-callable skills are offered this turn.
+    // Stays false in hard-mode (systemOverride), DB-context, and slash commands.
+    let localSkillsEnabled = false;
+    if (!systemOverride) {
+      try {
+        const libraryContext = await buildChatLibraryContext(
+          message,
+          getLibraryRequestForCommand(library, slashCommand, history, modeId),
         );
-        librarySourceResults = serializeLibraryResults(
-          getLibraryContextSourceResults(libraryContext),
-          getLibraryRequestForCommand(library, slashCommand, history),
-        );
-        libraryPassages = Array.isArray(libraryContext.contextResults)
-          ? libraryContext.contextResults
-          : [];
-        emit({
-          type: "library_results",
-          results: librarySourceResults,
-          passages: libraryPassages,
-          meta: libraryContext.contextMeta,
-        });
+        if (libraryContext.enabled) {
+          databaseContextEnabled = true;
+          requestMessages[0] = {
+            role: "system",
+            content: getSharedAssistantPolicyPrompt(true),
+          };
+          requestMessages = insertLibraryContextMessage(
+            requestMessages,
+            libraryContext.contextMessage,
+          );
+          librarySourceResults = serializeLibraryResults(
+            getLibraryContextSourceResults(libraryContext),
+            getLibraryRequestForCommand(library, slashCommand, history),
+          );
+          libraryPassages = Array.isArray(libraryContext.contextResults)
+            ? libraryContext.contextResults
+            : [];
+          emit({
+            type: "library_results",
+            results: librarySourceResults,
+            passages: libraryPassages,
+            meta: libraryContext.contextMeta,
+          });
+        }
+      } catch (e) {
+        emit({ type: "library_error", error: e.message });
       }
-    } catch (e) {
-      emit({ type: "library_error", error: e.message });
-    }
 
-    // Optional user-selected system prompt overlay (topbar prompt dropdown),
-    // applied only when Database Context is off, right after the base policy.
-    const promptOverlay =
-      typeof body.promptOverlay === "string" ? body.promptOverlay.trim() : "";
-    if (promptOverlay && !databaseContextEnabled) {
-      requestMessages = [
-        requestMessages[0],
-        {
-          role: "system",
-          content: `Additional user-selected overlay instructions (secondary to the built-in default policy):\n\n${promptOverlay}`,
-        },
-        ...requestMessages.slice(1),
-      ];
-    }
-
-    // Skills work exactly like Cloud: offered only when Database Context is off
-    // (the DB-on prompt answers strictly from library passages) and not a slash
-    // command. The model drives them via the <call:...> mechanism.
-    const localSkillsEnabled = !slashCommand && !databaseContextEnabled;
-    if (localSkillsEnabled) {
-      const skillsPrompt = getCloudSkillsPolicyPrompt();
-      if (skillsPrompt) {
+      // Optional user-selected system prompt overlay (topbar prompt dropdown),
+      // applied only when Database Context is off, right after the base policy.
+      const promptOverlay =
+        typeof body.promptOverlay === "string" ? body.promptOverlay.trim() : "";
+      if (promptOverlay && !databaseContextEnabled) {
         requestMessages = [
           requestMessages[0],
-          { role: "system", content: skillsPrompt },
+          {
+            role: "system",
+            content: `Additional user-selected overlay instructions (secondary to the built-in default policy):\n\n${promptOverlay}`,
+          },
           ...requestMessages.slice(1),
         ];
+      }
+
+      // Skills work exactly like Cloud: offered only when Database Context is off
+      // (the DB-on prompt answers strictly from library passages) and not a slash
+      // command. The model drives them via the <call:...> mechanism.
+      localSkillsEnabled = !slashCommand && !databaseContextEnabled;
+      if (localSkillsEnabled) {
+        const skillsPrompt = getCloudSkillsPolicyPrompt();
+        if (skillsPrompt) {
+          requestMessages = [
+            requestMessages[0],
+            { role: "system", content: skillsPrompt },
+            ...requestMessages.slice(1),
+          ];
+        }
       }
     }
 
@@ -2937,10 +3124,19 @@ function startLibraryIndexJob(options = {}) {
     compact: job.compact,
     retryEmbeddings: job.retryEmbeddings,
     startFileIndex,
-    resumeProgress: startFileIndex > 0 ? resumeProgress : null,
+    resumeFromPath: options.resumeFromPath || "",
+    resumeProgress:
+      startFileIndex > 0 || options.resumeFromPath ? resumeProgress : null,
     onProgress: (progress) => {
       job.progress = progress;
-      persistLibraryIndexJob(job);
+      // Progress fires per file AND per embedding batch — persisting each one
+      // hammers the disk for hours on a big run. Crash-resume only needs a
+      // recent snapshot, so throttle to one write every 2 seconds.
+      const now = Date.now();
+      if (!job._lastPersistMs || now - job._lastPersistMs >= 2000) {
+        job._lastPersistMs = now;
+        persistLibraryIndexJob(job);
+      }
     },
     onError: (entry) => {
       appendLibraryIndexError(job, entry);
@@ -3009,6 +3205,10 @@ function resumePersistedLibraryIndexJob() {
     return;
   }
   const startFileIndex = persistedJobStartFileIndex(persisted);
+  // Resume by the last in-flight file PATH (robust to list changes while the
+  // app was down); the numeric index is only a fallback for old job files.
+  const resumeFromPath =
+    startFileIndex > 0 ? String(persisted.progress?.currentFile || "") : "";
   try {
     startLibraryIndexJob({
       id: persisted.id || randomUUID(),
@@ -3017,7 +3217,11 @@ function resumePersistedLibraryIndexJob() {
       prune: persisted.prune !== false,
       compact: persisted.compact !== false,
       autoResume: true,
-      resumeProgress: startFileIndex > 0 ? persisted.progress || null : null,
+      resumeFromPath,
+      resumeProgress:
+        startFileIndex > 0 || resumeFromPath
+          ? persisted.progress || null
+          : null,
       startFileIndex,
     });
   } catch (error) {
@@ -4703,15 +4907,66 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath === "/api/notes/list") {
+    try {
+      send(200, listNotes());
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && urlPath === "/api/notes") {
-    const notes = loadNotes();
-    send(200, notes);
+    try {
+      const requestedName = requestUrl.searchParams.get("name");
+      if (requestedName) {
+        const note = readNote(requestedName);
+        // Opening a note in the panel makes it the target of the local_notes
+        // skill ("append this to my notes" lands where the user is looking).
+        setActiveNoteName(note.name);
+        send(200, note);
+        return;
+      }
+      send(200, loadNotes());
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/notes/create") {
+    try {
+      const body = await parseJsonBody(req);
+      send(200, createNote(body?.title || ""));
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/notes/rename") {
+    try {
+      const body = await parseJsonBody(req);
+      send(200, renameNote(body?.name || "", body?.title || ""));
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/notes/delete") {
+    try {
+      const body = await parseJsonBody(req);
+      send(200, deleteNote(body?.name || ""));
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
     return;
   }
 
   if (
     (req.method === "PUT" || req.method === "POST") &&
-    req.url === "/api/notes"
+    urlPath === "/api/notes"
   ) {
     try {
       const body = await parseJsonBody(req);
@@ -4719,9 +4974,9 @@ const server = http.createServer(async (req, res) => {
         send(400, { error: "text field required" });
         return;
       }
-      const text =
-        body.text.length > 200000 ? body.text.slice(0, 200000) : body.text;
-      const saved = saveNotes(text);
+      const saved = body.name
+        ? writeNote(body.name, body.text)
+        : saveNotes(body.text);
       send(200, saved);
     } catch (e) {
       const status = e && e.statusCode ? e.statusCode : 500;
@@ -4768,7 +5023,14 @@ const server = http.createServer(async (req, res) => {
         history,
         originalMessage,
       );
-      let requestMessages = withSharedSystemPrompt(messages);
+      // Hard-mode override (proofread / translate): bypass policy, library, skills.
+      const systemOverride =
+        typeof body.systemOverride === "string"
+          ? body.systemOverride.trim()
+          : "";
+      let requestMessages = systemOverride
+        ? [{ role: "system", content: systemOverride }, ...messages]
+        : withSharedSystemPrompt(messages);
       let librarySourceResults = [];
       let libraryPassages = [];
       let databaseContextEnabled = false;
@@ -4790,57 +5052,67 @@ const server = http.createServer(async (req, res) => {
 
       emitSlashCommand(emit, slashCommand);
 
-      try {
-        const libraryContext = await buildChatLibraryContext(
-          message,
-          getLibraryRequestForCommand(library, slashCommand, history, "cloud"),
-        );
-        if (libraryContext.enabled) {
-          databaseContextEnabled = true;
-          // Database Context is on for this cloud turn: use the strict
-          // library-only prompt instead of the default tool-enabled one.
-          requestMessages[0] = {
-            role: "system",
-            content: getSharedAssistantPolicyPrompt(true),
-          };
-          requestMessages = insertLibraryContextMessage(
-            requestMessages,
-            libraryContext.contextMessage,
+      // Tracks whether model-callable skills are offered this turn.
+      // Stays false in hard-mode (systemOverride), DB-context, and slash commands.
+      let cloudSkillsEnabled = false;
+      if (!systemOverride) {
+        try {
+          const libraryContext = await buildChatLibraryContext(
+            message,
+            getLibraryRequestForCommand(
+              library,
+              slashCommand,
+              history,
+              "cloud",
+            ),
           );
-          librarySourceResults = serializeLibraryResults(
-            getLibraryContextSourceResults(libraryContext),
-            getLibraryRequestForCommand(library, slashCommand, history),
-          );
-          libraryPassages = Array.isArray(libraryContext.contextResults)
-            ? libraryContext.contextResults
-            : [];
-          emit({
-            type: "library_results",
-            results: librarySourceResults,
-            passages: libraryPassages,
-            meta: libraryContext.contextMeta,
-          });
-        }
-      } catch (e) {
-        emit({ type: "library_error", error: e.message });
-      }
-
-      // When this mode's Database Context is on, do not offer tools at all —
-      // the DB-on prompt answers strictly from the library passages.
-      const cloudSkillsEnabled = !slashCommand && !databaseContextEnabled;
-      if (cloudSkillsEnabled) {
-        const skillsPrompt = getCloudSkillsPolicyPrompt();
-        if (skillsPrompt) {
-          // Merge into the FIRST system message instead of adding a second
-          // one: OpenAI models (gpt-4o) weight the first system message and
-          // often ignore later system turns, silently skipping the tools.
-          requestMessages = [
-            {
+          if (libraryContext.enabled) {
+            databaseContextEnabled = true;
+            // Database Context is on for this cloud turn: use the strict
+            // library-only prompt instead of the default tool-enabled one.
+            requestMessages[0] = {
               role: "system",
-              content: `${requestMessages[0].content}\n\n${skillsPrompt}`,
-            },
-            ...requestMessages.slice(1),
-          ];
+              content: getSharedAssistantPolicyPrompt(true),
+            };
+            requestMessages = insertLibraryContextMessage(
+              requestMessages,
+              libraryContext.contextMessage,
+            );
+            librarySourceResults = serializeLibraryResults(
+              getLibraryContextSourceResults(libraryContext),
+              getLibraryRequestForCommand(library, slashCommand, history),
+            );
+            libraryPassages = Array.isArray(libraryContext.contextResults)
+              ? libraryContext.contextResults
+              : [];
+            emit({
+              type: "library_results",
+              results: librarySourceResults,
+              passages: libraryPassages,
+              meta: libraryContext.contextMeta,
+            });
+          }
+        } catch (e) {
+          emit({ type: "library_error", error: e.message });
+        }
+
+        // When this mode's Database Context is on, do not offer tools at all —
+        // the DB-on prompt answers strictly from the library passages.
+        cloudSkillsEnabled = !slashCommand && !databaseContextEnabled;
+        if (cloudSkillsEnabled) {
+          const skillsPrompt = getCloudSkillsPolicyPrompt();
+          if (skillsPrompt) {
+            // Merge into the FIRST system message instead of adding a second
+            // one: OpenAI models (gpt-4o) weight the first system message and
+            // often ignore later system turns, silently skipping the tools.
+            requestMessages = [
+              {
+                role: "system",
+                content: `${requestMessages[0].content}\n\n${skillsPrompt}`,
+              },
+              ...requestMessages.slice(1),
+            ];
+          }
         }
       }
 
