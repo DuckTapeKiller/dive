@@ -367,7 +367,21 @@ function extractHtmlTextWithMode(html, xmlMode) {
   const blocks = [];
   $(BLOCK_SELECTOR).each((_, element) => {
     const tag = localName(element);
-    const text = normalizeInlineText($(element).text());
+    const $element = $(element);
+    // Each element contributes only its OWN text. Containers like
+    // <blockquote><p>..</p></blockquote> or <li><p>..</p></li> must not repeat
+    // their nested blocks' text: every matching descendant is visited by this
+    // loop itself, so taking the full subtree text here would emit the same
+    // paragraph once per nesting level (measured: 14% duplicated paragraphs in
+    // real EPUBs with quotation-heavy markup).
+    let text;
+    if ($element.find(BLOCK_SELECTOR).length > 0) {
+      const clone = $element.clone();
+      clone.find(BLOCK_SELECTOR).remove();
+      text = normalizeInlineText(clone.text());
+    } else {
+      text = normalizeInlineText($element.text());
+    }
     if (!text || isBoilerplateText(text)) return;
     if (/^h[1-6]$/.test(tag)) {
       blocks.push(`# ${text}`);

@@ -85,7 +85,12 @@ test("Local Notes Skill - Read and Append", async () => {
       },
       { dataDir: tmpDir },
     );
-    assert.strictEqual(append, "Successfully appended to your notes.");
+    assert.strictEqual(append, 'Successfully appended to your note "Notes".');
+    // Notes are individual Markdown files now.
+    assert.ok(
+      fs.existsSync(path.join(tmpDir, "notes", "Notes.md")),
+      "expected notes/Notes.md to exist",
+    );
 
     // Read again
     const read2 = await executeSkill(

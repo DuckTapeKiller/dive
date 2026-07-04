@@ -393,14 +393,14 @@ test("palette change listener updates UI state", async () => {
       "1.0.5",
   );
 
-  const select = dom.window.document.getElementById("settingOllamaPalette");
-  select.value = "orange";
+  const select = dom.window.document.getElementById("lmStudioPaletteSelect");
+  select.value = "calmblue";
   select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
 
   assert.deepStrictEqual(errors, []);
   assert.strictEqual(
     dom.window.document.documentElement.getAttribute("data-palette"),
-    "orange",
+    "calmblue",
   );
 });
 

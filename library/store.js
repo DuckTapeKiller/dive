@@ -1222,10 +1222,22 @@ function vectorSqlExpression(config, vectorJson) {
   return `vec_normalize(vec_f32(${literal}))`;
 }
 
+// The embedding loop calls this once per batch; the answer only changes when
+// the database, model, dimensions, or quantization change, so cache it and
+// save two sqlite3 process spawns per batch on large index runs.
+let ensuredVectorTableKey = "";
+
 async function ensureVectorTable(config, dimensions) {
   if (!isVectorSearchConfigured(config)) return false;
   const dimensionText = sqlInteger(dimensions, 0);
   if (dimensionText === "0") return false;
+  const cacheKey = [
+    config.databasePath,
+    config.embedding.model,
+    dimensionText,
+    vectorStorageMode(config),
+  ].join("|");
+  if (ensuredVectorTableKey === cacheKey) return true;
   const existingRows = await runSqliteJson(
     config.databasePath,
     "SELECT key, value FROM library_vector_meta WHERE key IN ('dimensions', 'model', 'quantization');",
@@ -1257,6 +1269,7 @@ INSERT OR REPLACE INTO library_vector_meta(key, value) VALUES ('quantization', $
 `,
     { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
   );
+  ensuredVectorTableKey = cacheKey;
   return true;
 }
 
@@ -1266,23 +1279,6 @@ async function pruneVectorTable(config) {
     await runSqliteScript(
       config.databasePath,
       "DELETE FROM library_chunks_vec WHERE chunk_id NOT IN (SELECT id FROM library_chunks);",
-      { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
-    );
-  } catch (_error) {}
-}
-
-async function deleteVectorRowsForFile(config, filePath) {
-  if (!isVectorSearchConfigured(config)) return;
-  try {
-    await runSqliteScript(
-      config.databasePath,
-      `DELETE FROM library_chunks_vec
-WHERE chunk_id IN (
-  SELECT c.id
-  FROM library_chunks c
-  JOIN library_files f ON f.id = c.file_id
-  WHERE f.path = ${sqlLiteral(filePath)}
-);`,
       { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
     );
   } catch (_error) {}
@@ -1308,7 +1304,9 @@ function hashJson(value) {
 function buildIndexSignature(config) {
   return hashJson({
     schema: 4,
-    extractor: "epub-cleanup-v2",
+    // v3: leaf-block extraction — nested <blockquote>/<li> paragraphs are no
+    // longer duplicated once per nesting level. Bumping re-chunks every file.
+    extractor: "epub-cleanup-v3",
     storage: {
       textEncoding: "deflate",
     },
@@ -1518,7 +1516,18 @@ function collectSourceFiles(config) {
             stack.push(fullPath);
           continue;
         }
-        if (!entry.isFile()) continue;
+        // Dirent.isFile() is false for symlinks, which silently dropped
+        // symlinked books. Follow file symlinks; deliberately do NOT follow
+        // directory symlinks (cycle risk).
+        let isFileEntry = entry.isFile();
+        if (!isFileEntry && entry.isSymbolicLink()) {
+          try {
+            isFileEntry = fs.statSync(fullPath).isFile();
+          } catch {
+            isFileEntry = false;
+          }
+        }
+        if (!isFileEntry) continue;
         if (SOURCE_SKIP_FILES.has(entry.name.toLowerCase())) continue;
         if (extensionSet.has(path.extname(entry.name).toLowerCase())) {
           files.push({ path: fullPath, source });
@@ -1553,10 +1562,10 @@ function existingFileCanBeReused(existing, stat, indexSignature) {
     Number(existing.sizeBytes) === stat.size &&
     Number(existing.mtimeMs) === Math.round(stat.mtimeMs);
   if (!unchanged) return false;
-  if (existing.indexSignature === indexSignature) return true;
-  return Boolean(
-    existing.indexSignature && Number(existing.chunkCount || 0) > 0,
-  );
+  // The signature encodes the extractor version and chunking geometry. A
+  // mismatch MUST re-chunk the file, or config/extractor changes silently
+  // apply only to new books and the library ends up inconsistently chunked.
+  return existing.indexSignature === indexSignature;
 }
 
 function createDocumentSkipError(message) {
@@ -1702,11 +1711,26 @@ VALUES (
           )
           .join("\n")
       : "";
-  await deleteVectorRowsForFile(config, file.path);
+  // Vector rows are deleted INSIDE the same transaction that replaces the
+  // chunks. Deleting them beforehand left a window where a failed transaction
+  // orphaned stale vectors, and SQLite rowid reuse could then pair an old
+  // embedding with a new, unrelated chunk until the gap-repair pass ran.
+  const vectorConfigured = isVectorSearchConfigured(config);
   await runSqliteScript(
     config.databasePath,
     `PRAGMA foreign_keys = ON;
 BEGIN;
+${
+  vectorConfigured
+    ? `DELETE FROM library_chunks_vec
+WHERE chunk_id IN (
+  SELECT c.id
+  FROM library_chunks c
+  JOIN library_files f ON f.id = c.file_id
+  WHERE f.path = ${sqlLiteral(file.path)}
+);`
+    : ""
+}
 ${
   config.search?.keywordEnabled === true
     ? `DELETE FROM library_chunks_fts
@@ -1747,6 +1771,11 @@ INSERT INTO library_files(
 ${chunkSql}
 ${ftsSql}
 COMMIT;`,
+    {
+      loadExtensionPath: vectorConfigured
+        ? config.embedding.sqliteVecExtensionPath
+        : "",
+    },
   );
   return {
     textBytes: storedChunks.reduce(
@@ -1908,8 +1937,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// The embedding server can be Ollama OR any OpenAI-compatible server
+// (LM Studio, llama.cpp). The endpoint chain tries, in order:
+//   1. POST {base}/api/embed        (Ollama native, batched)
+//   2. POST {base}/v1/embeddings    (OpenAI-compatible: LM Studio, llama.cpp)
+//   3. POST {base}/api/embeddings   (Ollama legacy, one text per call)
+// so pointing the Embedding Server URL at http://127.0.0.1:1234 makes the
+// whole library pipeline work with LM Studio and no Ollama installed.
 async function embedTexts(config, texts, purpose = "document") {
-  const baseUrl = normalizeOllamaBaseUrl(config.embedding.ollamaBaseUrl);
+  const baseUrl = normalizeOllamaBaseUrl(
+    config.embedding.ollamaBaseUrl,
+  ).replace(/\/v\d+$/, "");
   const model = config.embedding.model;
   const inputs = texts.map((text) =>
     formatEmbeddingInput(config, text, purpose),
@@ -1919,44 +1957,100 @@ async function embedTexts(config, texts, purpose = "document") {
   const requestedDimensions = embeddingDimensionsFor(config);
   const body = { model, input: inputs };
   if (requestedDimensions > 0) body.dimensions = requestedDimensions;
-  const embedResponse = await fetchWithTimeout(`${baseUrl}/api/embed`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (embedResponse.ok) {
-    const payload = await embedResponse.json();
-    if (Array.isArray(payload.embeddings)) {
-      return payload.embeddings.map((vector) =>
-        normalizeVector(vector, requestedDimensions),
-      );
-    }
-  }
-  const embedError = await readOllamaError(embedResponse);
-  if (embedResponse.status !== 404 && embedResponse.status !== 405) {
-    throw new Error(formatOllamaHttpError(embedResponse.status, embedError));
-  }
+  const errors = [];
 
-  const embeddings = [];
-  for (const text of inputs) {
-    const legacyResponse = await fetchWithTimeout(`${baseUrl}/api/embeddings`, {
+  // 1) Ollama native batched endpoint. A wrong-shape 200 (e.g. LM Studio
+  // answering /api/embed with its own payload) falls through to the next
+  // endpoint instead of failing the batch.
+  try {
+    const res = await fetchWithTimeout(`${baseUrl}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: text }),
+      body: JSON.stringify(body),
     });
-    if (!legacyResponse.ok) {
-      const legacyError = await readOllamaError(legacyResponse);
-      throw new Error(
-        formatOllamaHttpError(legacyResponse.status, legacyError || embedError),
+    if (res.ok) {
+      const payload = await res.json().catch(() => null);
+      if (
+        Array.isArray(payload?.embeddings) &&
+        payload.embeddings.length === inputs.length
+      ) {
+        const vectors = payload.embeddings.map((vector) =>
+          normalizeVector(vector, requestedDimensions),
+        );
+        if (vectors.every((vector) => vector.length)) return vectors;
+      }
+      errors.push("api/embed returned an unexpected response shape");
+    } else {
+      errors.push(
+        formatOllamaHttpError(res.status, await readOllamaError(res)),
       );
     }
-    const payload = await legacyResponse.json();
-    if (!Array.isArray(payload.embedding)) {
-      throw new Error("Ollama embedding response did not include a vector.");
-    }
-    embeddings.push(normalizeVector(payload.embedding, requestedDimensions));
+  } catch (e) {
+    errors.push(`api/embed: ${e.message}`);
   }
-  return embeddings;
+
+  // 2) OpenAI-compatible embeddings (LM Studio, llama.cpp server), so the
+  // whole library pipeline works with no Ollama installed.
+  try {
+    const res = await fetchWithTimeout(`${baseUrl}/v1/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const payload = await res.json().catch(() => null);
+      if (Array.isArray(payload?.data)) {
+        const byIndex = [...payload.data].sort(
+          (a, b) => (a?.index ?? 0) - (b?.index ?? 0),
+        );
+        const vectors = byIndex.map((item) =>
+          normalizeVector(item?.embedding, requestedDimensions),
+        );
+        if (
+          vectors.length === inputs.length &&
+          vectors.every((vector) => vector.length)
+        ) {
+          return vectors;
+        }
+      }
+      errors.push("v1/embeddings returned an unexpected response shape");
+    } else {
+      errors.push(
+        `v1/embeddings failed (${res.status}): ${await readOllamaError(res)}`,
+      );
+    }
+  } catch (e) {
+    errors.push(`v1/embeddings: ${e.message}`);
+  }
+
+  // 3) Ollama legacy endpoint, one text per call.
+  try {
+    const embeddings = [];
+    for (const text of inputs) {
+      const res = await fetchWithTimeout(`${baseUrl}/api/embeddings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, prompt: text }),
+      });
+      if (!res.ok) {
+        throw new Error(
+          formatOllamaHttpError(res.status, await readOllamaError(res)),
+        );
+      }
+      const payload = await res.json();
+      if (!Array.isArray(payload.embedding)) {
+        throw new Error("response did not include a vector");
+      }
+      embeddings.push(normalizeVector(payload.embedding, requestedDimensions));
+    }
+    return embeddings;
+  } catch (e) {
+    errors.push(`api/embeddings: ${e.message}`);
+  }
+
+  throw new Error(
+    `Embedding failed at ${baseUrl} (tried api/embed, v1/embeddings, api/embeddings): ${[...new Set(errors)].join(" | ")}`,
+  );
 }
 
 function emitEmbeddingIssue(options, issue) {
@@ -2190,17 +2284,46 @@ async function pruneMissingFiles(config, livePaths) {
     "SELECT path FROM library_files ORDER BY path;",
   );
   const live = new Set(livePaths);
+  // Prune policy per stored row:
+  //   - path no longer under ANY configured source  -> prune (source removed)
+  //   - under a configured root that is UNAVAILABLE -> keep (e.g. the external
+  //     drive is unmounted; the books are not gone, they are unreachable)
+  //   - under an available root but missing on disk -> prune (file deleted)
+  const configuredRoots = (config.sources || [])
+    .map((source) => {
+      const raw = String(source.path || "").trim();
+      if (!raw) return null;
+      try {
+        const exists = fs.existsSync(raw);
+        return { path: exists ? fs.realpathSync(raw) : raw, exists };
+      } catch {
+        return { path: raw, exists: false };
+      }
+    })
+    .filter(Boolean);
+  const rootOf = (filePath) =>
+    configuredRoots.find(
+      (root) =>
+        filePath === root.path || filePath.startsWith(root.path + path.sep),
+    );
   const missing = rows
     .map((row) => row.path)
-    .filter((filePath) => !live.has(filePath) && !fs.existsSync(filePath));
+    .filter((filePath) => {
+      if (live.has(filePath)) return false;
+      const owner = rootOf(filePath);
+      if (!owner) return true;
+      if (!owner.exists) return false;
+      return !fs.existsSync(filePath);
+    });
   if (!missing.length) return 0;
+  const vectorConfigured = isVectorSearchConfigured(config);
   const deleteSql = missing
     .map(
       (filePath) =>
         `${
-          config.search?.keywordEnabled === true
-            ? `DELETE FROM library_chunks_fts
-WHERE rowid IN (
+          vectorConfigured
+            ? `DELETE FROM library_chunks_vec
+WHERE chunk_id IN (
   SELECT c.id
   FROM library_chunks c
   JOIN library_files f ON f.id = c.file_id
@@ -2208,15 +2331,28 @@ WHERE rowid IN (
 );`
             : ""
         }
+${
+  config.search?.keywordEnabled === true
+    ? `DELETE FROM library_chunks_fts
+WHERE rowid IN (
+  SELECT c.id
+  FROM library_chunks c
+  JOIN library_files f ON f.id = c.file_id
+  WHERE f.path = ${sqlLiteral(filePath)}
+);`
+    : ""
+}
 DELETE FROM library_files WHERE path = ${sqlLiteral(filePath)};`,
     )
     .join("\n");
-  for (const filePath of missing) {
-    await deleteVectorRowsForFile(config, filePath);
-  }
   await runSqliteScript(
     config.databasePath,
     `PRAGMA foreign_keys = ON;\nBEGIN;\n${deleteSql}\nCOMMIT;`,
+    {
+      loadExtensionPath: vectorConfigured
+        ? config.embedding.sqliteVecExtensionPath
+        : "",
+    },
   );
   await pruneVectorTable(config);
   return missing.length;
@@ -2483,20 +2619,91 @@ async function estimateLibraryIndex(options = {}) {
   };
 }
 
+// PID lockfile next to the database: the CLI indexer (npm run library:index)
+// and the in-app job were free to run concurrently, racing each other into
+// "database is locked" file errors. A stale lock (dead pid) is taken over.
+function acquireIndexLock(config) {
+  const lockPath = `${config.databasePath}.indexlock`;
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const fd = fs.openSync(lockPath, "wx");
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    let ownerPid = 0;
+    try {
+      ownerPid = Number.parseInt(fs.readFileSync(lockPath, "utf8"), 10);
+    } catch {
+      ownerPid = 0;
+    }
+    let alive = false;
+    if (Number.isFinite(ownerPid) && ownerPid > 0 && ownerPid !== process.pid) {
+      try {
+        process.kill(ownerPid, 0);
+        alive = true;
+      } catch (killError) {
+        alive = killError.code === "EPERM";
+      }
+    }
+    if (alive) {
+      const busy = new Error(
+        `Another library indexing run (pid ${ownerPid}) is already working on this database.`,
+      );
+      busy.statusCode = 409;
+      throw busy;
+    }
+    fs.writeFileSync(lockPath, String(process.pid));
+  }
+  return () => {
+    try {
+      const owner = Number.parseInt(fs.readFileSync(lockPath, "utf8"), 10);
+      if (owner === process.pid) fs.unlinkSync(lockPath);
+    } catch {
+      /* already gone */
+    }
+  };
+}
+
 async function indexLibrary(options = {}) {
   const config = options.config || loadLibraryConfig();
+  const releaseLock = acquireIndexLock(config);
+  try {
+    return await runIndexLibrary(config, options);
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runIndexLibrary(config, options) {
   const force = options.force === true;
   await initDatabase(config);
   const files = collectSourceFiles(config);
-  const startFileIndex = Math.max(
-    0,
-    Math.min(
-      files.length,
-      Number.isFinite(Number(options.startFileIndex))
-        ? Math.floor(Number(options.startFileIndex))
-        : 0,
-    ),
-  );
+  // Resuming by PATH is robust against the file list changing while the app
+  // was down: a numeric offset into the re-sorted list would silently skip
+  // files added before the crash point. The in-flight file is re-processed
+  // (its per-file transaction makes that safe).
+  const resumeFromPath =
+    typeof options.resumeFromPath === "string" && options.resumeFromPath
+      ? options.resumeFromPath
+      : "";
+  let startFileIndex = 0;
+  if (resumeFromPath) {
+    const resumeIndex = files.findIndex(
+      (file) => file.path.localeCompare(resumeFromPath) >= 0,
+    );
+    startFileIndex = resumeIndex >= 0 ? resumeIndex : files.length;
+  } else {
+    startFileIndex = Math.max(
+      0,
+      Math.min(
+        files.length,
+        Number.isFinite(Number(options.startFileIndex))
+          ? Math.floor(Number(options.startFileIndex))
+          : 0,
+      ),
+    );
+  }
   const resumeProgress =
     options.resumeProgress && typeof options.resumeProgress === "object"
       ? options.resumeProgress
@@ -2618,8 +2825,7 @@ async function indexLibrary(options = {}) {
         !force &&
         existing &&
         existing.sha256 === fileHash &&
-        (existing.indexSignature === indexSignature ||
-          (existing.indexSignature && Number(existing.chunkCount || 0) > 0))
+        existing.indexSignature === indexSignature
       ) {
         await runSqliteScript(
           config.databasePath,
@@ -2763,7 +2969,9 @@ async function indexLibrary(options = {}) {
     );
   }
   assertNotCancelled(options);
-  if (options.compact !== false) {
+  // VACUUM rewrites the whole database file — minutes on a multi-GB library.
+  // Only worth it when this run actually re-indexed or pruned something.
+  if (options.compact !== false && (stats.indexed > 0 || stats.pruned > 0)) {
     emitIndexProgress(options, stats, { phase: "compacting" });
     await compactDatabase(config);
   }

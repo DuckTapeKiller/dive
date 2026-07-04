@@ -889,33 +889,62 @@ async function executeCalculator({ expression }) {
   }
 }
 
+// Notes live as individual Markdown files in DATA_DIR/notes. The skill
+// targets the note currently open in the Notes panel (DATA_DIR/notes/.active),
+// falling back to "Notes", so "add this to my notes" lands where the user is
+// looking. The legacy single-note notes.json is read as a last resort.
+function resolveActiveNoteFile(DATA_DIR) {
+  const notesDir = path.join(DATA_DIR, "notes");
+  let name = "";
+  try {
+    name = fs
+      .readFileSync(path.join(notesDir, ".active"), "utf8")
+      .trim()
+      .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80);
+  } catch {
+    name = "";
+  }
+  if (!name) name = "Notes";
+  const filePath = path.join(notesDir, `${name}.md`);
+  if (!filePath.startsWith(notesDir + path.sep)) {
+    return {
+      notesDir,
+      name: "Notes",
+      filePath: path.join(notesDir, "Notes.md"),
+    };
+  }
+  return { notesDir, name, filePath };
+}
+
 async function executeLocalNotes({ action, content }, DATA_DIR) {
-  const notesFile = path.join(DATA_DIR, "notes.json");
+  const { notesDir, name, filePath } = resolveActiveNoteFile(DATA_DIR);
   let currentText = "";
   try {
-    if (fs.existsSync(notesFile)) {
-      const raw = JSON.parse(fs.readFileSync(notesFile, "utf8"));
-      currentText = raw.text || "";
+    if (fs.existsSync(filePath)) {
+      currentText = fs.readFileSync(filePath, "utf8");
+    } else {
+      // Legacy fallback: the old single-note blob.
+      const legacyFile = path.join(DATA_DIR, "notes.json");
+      if (fs.existsSync(legacyFile)) {
+        const raw = JSON.parse(fs.readFileSync(legacyFile, "utf8"));
+        currentText = raw.text || "";
+      }
     }
   } catch (e) {}
 
   if (action === "read") {
-    return currentText ? currentText : "Your notes are currently empty.";
+    return currentText
+      ? `[Note: ${name}]\n\n${currentText}`
+      : "Your notes are currently empty.";
   } else if (action === "append") {
     if (!content) return "Error: Content is required for append action.";
     const newText = currentText ? `${currentText}\n\n${content}` : content;
-    fs.writeFileSync(
-      notesFile,
-      JSON.stringify(
-        {
-          text: newText,
-          updatedAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
-    return "Successfully appended to your notes.";
+    fs.mkdirSync(notesDir, { recursive: true });
+    fs.writeFileSync(filePath, newText, "utf8");
+    return `Successfully appended to your note "${name}".`;
   }
   return "Error: Invalid action. Use 'read' or 'append'.";
 }
