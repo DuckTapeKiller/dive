@@ -1019,6 +1019,9 @@ function defaultCloudSettings() {
     baseUrls: { ...CLOUD_DEFAULT_BASE_URLS },
     apiKeys: {},
     maxTokens: CLOUD_DEFAULT_MAX_TOKENS,
+    // Agent mode: plan-first prompting and a larger tool-call budget.
+    agentMode: false,
+    agentMaxRounds: 25,
   };
 }
 
@@ -1062,10 +1065,18 @@ function sanitizeCloudSettings(rawInput, existingInput = null) {
       CLOUD_MAX_MAX_TOKENS,
       defaults.maxTokens,
     ),
+    agentMode: existing.agentMode === true,
+    agentMaxRounds: clampNumber(existing.agentMaxRounds, 1, 50, 25),
   };
 
   if (CLOUD_PROVIDER_SET.has(raw.provider)) {
     next.provider = raw.provider;
+  }
+  if (typeof raw.agentMode === "boolean") {
+    next.agentMode = raw.agentMode;
+  }
+  if (raw.agentMaxRounds !== undefined) {
+    next.agentMaxRounds = clampNumber(raw.agentMaxRounds, 1, 50, 25);
   }
 
   if (
@@ -2082,6 +2093,8 @@ function redactCloudSettings(settings) {
     models: sanitized.models,
     baseUrls: sanitized.baseUrls,
     maxTokens: sanitized.maxTokens,
+    agentMode: sanitized.agentMode,
+    agentMaxRounds: sanitized.agentMaxRounds,
     hasApiKey: Object.fromEntries(
       CLOUD_PROVIDERS.map((provider) => [
         provider,
@@ -2382,6 +2395,16 @@ function getCloudSkillsPolicyPrompt(options = {}) {
     for (const custom of customSkills) {
       lines.push(
         `${index}. **${custom.name}:** ${custom.description || "User-defined custom skill."}\n   - Example: <call:${custom.name}>{}</call>`,
+      );
+      index += 1;
+    }
+    // Connected MCP tools are callable through the same XML mechanism (the
+    // executor routes mcp__ names to the MCP client), so list them for the
+    // XML-driven modes: Cloud and local-mode fallback. Ollama gets MCP tools
+    // natively via its own tools API instead.
+    for (const mcpTool of getMcpOllamaTools()) {
+      lines.push(
+        `${index}. **${mcpTool.function.name}:** ${mcpTool.function.description}\n   - Example: <call:${mcpTool.function.name}>{}</call>`,
       );
       index += 1;
     }
@@ -5366,7 +5389,10 @@ const server = http.createServer(async (req, res) => {
         // the DB-on prompt answers strictly from the library passages.
         cloudSkillsEnabled = !slashCommand && !databaseContextEnabled;
         if (cloudSkillsEnabled) {
-          const skillsPrompt = getCloudSkillsPolicyPrompt();
+          const skillsPrompt = getCloudSkillsPolicyPrompt({
+            agentMode: settings.agentMode === true,
+            agentMaxRounds: settings.agentMaxRounds || 25,
+          });
           if (skillsPrompt) {
             // Merge into the FIRST system message instead of adding a second
             // one: OpenAI models (gpt-4o) weight the first system message and
@@ -5408,7 +5434,11 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const MAX_CLOUD_SKILL_ROUNDS = 6;
+      // Agent mode raises the tool budget; the default suits quick lookups.
+      const maxCloudRounds =
+        settings.agentMode === true
+          ? clampNumber(settings.agentMaxRounds, 1, 50, 25)
+          : 6;
       const seenSkillCalls = new Set();
       for (let round = 0; ; round += 1) {
         usage = await streamCloudCompletion({
@@ -5443,12 +5473,28 @@ const server = http.createServer(async (req, res) => {
         if (!xmlMatch) break;
 
         output = output.replace(xmlMatch[0], "").trim();
-        if (round >= MAX_CLOUD_SKILL_ROUNDS) {
-          emit({
-            type: "error",
-            error: "Skill call limit exceeded for this cloud request.",
-          });
-          break;
+        if (round >= maxCloudRounds) {
+          // End with an answer instead of an error: stop offering tools and
+          // tell the model to write its final reply from what it has.
+          cloudSkillsEnabled = false;
+          requestMessages = [
+            ...requestMessages,
+            {
+              role: "user",
+              content:
+                "[TOOL BUDGET EXHAUSTED] You have used every allowed tool call for this request. Do not call any more tools. Write your complete final answer now from everything you already found.",
+            },
+          ];
+          if (!emittedThinkingStart) {
+            emittedThinkingStart = true;
+            emit({ type: "thinking_start" });
+          }
+          const note = "\n\n[Tool budget exhausted — writing final answer]\n";
+          thinking += note;
+          emit({ type: "thinking_delta", delta: note, thinking });
+          output = "";
+          emit({ type: "delta", delta: "", response: output });
+          continue;
         }
 
         const toolCall = {
@@ -5751,11 +5797,30 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
+      // Agent mode (client-driven for Ollama: the skills prompt is built by
+      // the client) raises the tool budget; without it the legacy cap holds.
+      const maxOllamaDepth =
+        body.agentMode === true
+          ? clampNumber(body.agentMaxRounds, 1, 50, 25)
+          : 10;
+      let budgetExhausted = false;
       const startStream = (depth = 0) => {
-        if (depth > 10) {
-          emit({ type: "error", error: "Tool call recursion limit exceeded." });
-          if (!res.writableEnded) res.end();
-          return;
+        if (depth > maxOllamaDepth && !budgetExhausted) {
+          // End with an answer instead of an error: stop accepting tool calls
+          // and tell the model to write its final reply from what it has.
+          budgetExhausted = true;
+          messages.push({
+            role: "user",
+            content:
+              "[TOOL BUDGET EXHAUSTED] You have used every allowed tool call for this request. Do not call any more tools. Write your complete final answer now from everything you already found.",
+          });
+          if (!emittedThinkingStart) {
+            emittedThinkingStart = true;
+            emit({ type: "thinking_start" });
+          }
+          const note = "\n\n[Tool budget exhausted — writing final answer]\n";
+          thinking += note;
+          emit({ type: "thinking_delta", delta: note, thinking });
         }
         const payloadObject = {
           model,
@@ -5841,15 +5906,17 @@ const server = http.createServer(async (req, res) => {
                   return;
                 }
                 if (xmlMatch) {
-                  outputToolCalls.push({
-                    function: {
-                      name: xmlMatch[1].trim(),
-                      arguments: xmlMatch[2].trim(),
-                    },
-                  });
                   output = output.replace(xmlMatch[0], "").trim();
+                  if (!budgetExhausted) {
+                    outputToolCalls.push({
+                      function: {
+                        name: xmlMatch[1].trim(),
+                        arguments: xmlMatch[2].trim(),
+                      },
+                    });
+                  }
                 }
-                if (slashCommand) {
+                if (slashCommand || budgetExhausted) {
                   outputToolCalls = [];
                 }
 
@@ -5868,11 +5935,34 @@ const server = http.createServer(async (req, res) => {
                         delta: startMsg,
                         thinking,
                       });
+                      // Ollama native tool_calls carry arguments as an object;
+                      // the XML path pushes a string. Preview either shape.
+                      const argsPreview = (
+                        typeof tc.function.arguments === "string"
+                          ? tc.function.arguments
+                          : JSON.stringify(tc.function.arguments || {})
+                      ).slice(0, 300);
+                      emit({
+                        type: "tool_start",
+                        toolName: tc.function.name,
+                        argsPreview,
+                      });
 
-                      const result = await executeToolCallWithConfirmation(
-                        tc,
-                        emit,
-                      );
+                      let result;
+                      try {
+                        result = await executeToolCallWithConfirmation(
+                          tc,
+                          emit,
+                        );
+                      } catch (toolError) {
+                        result = `Error: ${toolError.message}`;
+                      }
+                      emit({
+                        type: "tool_end",
+                        toolName: tc.function.name,
+                        outputPreview: String(result || "").slice(0, 300),
+                        isError: /^Error:/i.test(String(result || "")),
+                      });
 
                       const ollamaSources = extractSkillSources(
                         tc.function.name,
