@@ -1225,6 +1225,11 @@ function defaultLocalModelSettings() {
       baseUrl: LOCAL_MODE_DEFAULTS[id].baseUrl,
       model: "",
       params: defaultLocalParams(),
+      // Offer skills/MCP as native OpenAI tools (XML fallback stays available).
+      nativeTools: true,
+      // Agent mode: plan-first prompting and a larger tool-call budget.
+      agentMode: false,
+      agentMaxRounds: 25,
     };
   }
   return out;
@@ -1245,6 +1250,12 @@ function sanitizeLocalModelSettings(raw) {
         }
         if (typeof entry.model === "string") out[id].model = entry.model.trim();
         out[id].params = sanitizeLocalParams(entry.params);
+        out[id].nativeTools = entry.nativeTools !== false;
+        out[id].agentMode = entry.agentMode === true;
+        const rounds = Number(entry.agentMaxRounds);
+        out[id].agentMaxRounds = Number.isFinite(rounds)
+          ? Math.min(50, Math.max(1, Math.round(rounds)))
+          : 25;
       }
     }
   }
@@ -1276,7 +1287,14 @@ function loadLocalModelSettings() {
 
 // Build an OpenAI-compatible /chat/completions request (streaming) for a local
 // server. Images are attached to the latest user turn as image_url parts.
-function buildLocalOpenAiRequest(baseUrl, model, messages, images, params) {
+function buildLocalOpenAiRequest(
+  baseUrl,
+  model,
+  messages,
+  images,
+  params,
+  tools,
+) {
   const p = sanitizeLocalParams(params);
   const imageList = normalizeAttachmentImages(images);
   let outMessages = Array.isArray(messages) ? messages : [];
@@ -1322,6 +1340,8 @@ function buildLocalOpenAiRequest(baseUrl, model, messages, images, params) {
   // llama.cpp serves whatever model is loaded and ignores this; LM Studio uses
   // it to select among loaded models. Only send it when the user picked one.
   if (model) body.model = model;
+  // Native OpenAI tool calling (skills + MCP as JSON schemas).
+  if (Array.isArray(tools) && tools.length) body.tools = tools;
   return {
     url: buildCloudEndpoint(baseUrl, "/chat/completions"),
     headers: { "Content-Type": "application/json" },
@@ -1335,6 +1355,7 @@ async function streamLocalOpenAiCompletion({
   messages,
   images,
   params,
+  tools,
   signal,
   onDelta,
   onUsage,
@@ -1346,6 +1367,7 @@ async function streamLocalOpenAiCompletion({
     messages,
     images,
     params,
+    tools,
   );
   let upstreamRes;
   try {
@@ -1374,6 +1396,9 @@ async function streamLocalOpenAiCompletion({
   }
 
   let latestUsage = null;
+  // Native tool calls stream as fragments keyed by index: the name arrives in
+  // the first fragment, the JSON arguments accumulate across the rest.
+  const toolCallsByIndex = new Map();
   const parser = createSseParser((_eventName, data) => {
     if (data === "[DONE]") return;
     let parsed;
@@ -1403,6 +1428,30 @@ async function streamLocalOpenAiCompletion({
     ) {
       onReasoning(reasoning);
     }
+    if (Array.isArray(d.tool_calls)) {
+      for (const fragment of d.tool_calls) {
+        if (!fragment || typeof fragment !== "object") continue;
+        const index = typeof fragment.index === "number" ? fragment.index : 0;
+        let call = toolCallsByIndex.get(index);
+        if (!call) {
+          call = { id: "", name: "", arguments: "" };
+          toolCallsByIndex.set(index, call);
+        }
+        if (typeof fragment.id === "string" && fragment.id) {
+          call.id = fragment.id;
+        }
+        if (
+          typeof fragment.function?.name === "string" &&
+          fragment.function.name &&
+          !call.name
+        ) {
+          call.name = fragment.function.name;
+        }
+        if (typeof fragment.function?.arguments === "string") {
+          call.arguments += fragment.function.arguments;
+        }
+      }
+    }
     const delta = d.content;
     if (typeof delta === "string" && delta && typeof onDelta === "function") {
       onDelta(delta);
@@ -1415,7 +1464,10 @@ async function streamLocalOpenAiCompletion({
     parser.push(value);
   }
   parser.flush();
-  return latestUsage;
+  return {
+    usage: latestUsage,
+    toolCalls: [...toolCallsByIndex.values()].filter((call) => call.name),
+  };
 }
 
 async function fetchLocalModels(modeId) {
@@ -1629,6 +1681,17 @@ async function handleLocalModeStream(modeId, req, res, send) {
     // Tracks whether model-callable skills are offered this turn.
     // Stays false in hard-mode (systemOverride), DB-context, and slash commands.
     let localSkillsEnabled = false;
+    // Native OpenAI tool calling (per-mode setting, default on). Falls back to
+    // the XML path mid-request if the server rejects the `tools` parameter.
+    let nativeToolsEnabled = false;
+    let nativeTools = [];
+    let skillsPromptMessage = null;
+    // Agent mode raises the tool-call budget and switches the prompt to a
+    // plan-first workflow. The default budget suits quick lookups only.
+    const agentModeEnabled = conf.agentMode === true;
+    const maxRounds = agentModeEnabled
+      ? Math.min(50, Math.max(1, Number(conf.agentMaxRounds) || 25))
+      : 6;
     if (!systemOverride) {
       try {
         const libraryContext = await buildChatLibraryContext(
@@ -1680,14 +1743,24 @@ async function handleLocalModeStream(modeId, req, res, send) {
 
       // Skills work exactly like Cloud: offered only when Database Context is off
       // (the DB-on prompt answers strictly from library passages) and not a slash
-      // command. The model drives them via the <call:...> mechanism.
+      // command. Tool-calling-trained models get them as native OpenAI tools;
+      // the <call:...> XML mechanism stays as the fallback.
       localSkillsEnabled = !slashCommand && !databaseContextEnabled;
       if (localSkillsEnabled) {
-        const skillsPrompt = getCloudSkillsPolicyPrompt();
+        if (conf.nativeTools !== false) {
+          nativeTools = getLocalNativeTools();
+          nativeToolsEnabled = nativeTools.length > 0;
+        }
+        const skillsPrompt = getCloudSkillsPolicyPrompt({
+          nativeToolCalling: nativeToolsEnabled,
+          agentMode: agentModeEnabled,
+          agentMaxRounds: maxRounds,
+        });
         if (skillsPrompt) {
+          skillsPromptMessage = { role: "system", content: skillsPrompt };
           requestMessages = [
             requestMessages[0],
-            { role: "system", content: skillsPrompt },
+            skillsPromptMessage,
             ...requestMessages.slice(1),
           ];
         }
@@ -1717,58 +1790,34 @@ async function handleLocalModeStream(modeId, req, res, send) {
       }
     }
 
-    const MAX_LOCAL_SKILL_ROUNDS = 6;
     const seenSkillCalls = new Set();
-    for (let round = 0; ; round += 1) {
-      usage = await streamLocalOpenAiCompletion({
-        baseUrl,
-        model,
-        messages: requestMessages,
-        // Attach the image only on the first (user) round.
-        images: round === 0 ? body.images : undefined,
-        params,
-        signal: abortController.signal,
-        onDelta: (delta) => {
-          output += delta;
-          if (output.includes("<call:")) return;
-          // Send the raw output (including any trailing partial "<call") so the
-          // client can hide it and show the animated drum icon, matching Ollama.
-          emit({
-            type: "delta",
-            delta,
-            response: output,
-          });
+    // When the budget runs out, end with an answer instead of an error: stop
+    // offering tools and tell the model to write its final reply.
+    const exhaustToolBudget = () => {
+      localSkillsEnabled = false;
+      nativeToolsEnabled = false;
+      requestMessages = [
+        ...requestMessages,
+        {
+          role: "user",
+          content:
+            "[TOOL BUDGET EXHAUSTED] You have used every allowed tool call for this request. Do not call any more tools. Write your complete final answer now from everything you already found.",
         },
-        onReasoning: (chunk) => {
-          if (!emittedThinkingStart) {
-            emittedThinkingStart = true;
-            emit({ type: "thinking_start" });
-          }
-          thinking += chunk;
-          emit({ type: "thinking_delta", delta: chunk, thinking });
-        },
-        onUsage: (nextUsage) => {
-          usage = nextUsage;
-        },
-      });
-
-      const xmlMatch = localSkillsEnabled
-        ? output.match(/<call:([^>]+)>(.*?)<\/call>/is)
-        : null;
-      if (!xmlMatch) break;
-
-      output = output.replace(xmlMatch[0], "").trim();
-      if (round >= MAX_LOCAL_SKILL_ROUNDS) {
-        emit({
-          type: "error",
-          error: "Skill call limit exceeded for this request.",
-        });
-        break;
+      ];
+      if (!emittedThinkingStart) {
+        emittedThinkingStart = true;
+        emit({ type: "thinking_start" });
       }
-
-      const toolCall = {
-        function: { name: xmlMatch[1].trim(), arguments: xmlMatch[2].trim() },
-      };
+      const note = "\n\n[Tool budget exhausted — writing final answer]\n";
+      thinking += note;
+      emit({ type: "thinking_delta", delta: note, thinking });
+      output = "";
+      emit({ type: "delta", delta: "", response: output });
+    };
+    // Runs a single tool call (shared by the native and XML paths): emits the
+    // trace events, applies the repeated-call guard, executes, and reports
+    // any sources the skill returned.
+    const runLocalToolCall = async (toolCall) => {
       if (!emittedThinkingStart) {
         emittedThinkingStart = true;
         emit({ type: "thinking_start" });
@@ -1817,6 +1866,128 @@ async function handleLocalModeStream(modeId, req, res, send) {
       const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
       thinking += endMsg;
       emit({ type: "thinking_delta", delta: endMsg, thinking });
+      return result;
+    };
+
+    let round = 0;
+    for (;;) {
+      let streamResult;
+      try {
+        streamResult = await streamLocalOpenAiCompletion({
+          baseUrl,
+          model,
+          messages: requestMessages,
+          // Attach the image only on the first (user) round.
+          images: round === 0 ? body.images : undefined,
+          params,
+          tools: nativeToolsEnabled ? nativeTools : undefined,
+          signal: abortController.signal,
+          onDelta: (delta) => {
+            output += delta;
+            if (output.includes("<call:")) return;
+            // Send the raw output (including any trailing partial "<call") so the
+            // client can hide it and show the animated drum icon, matching Ollama.
+            emit({
+              type: "delta",
+              delta,
+              response: output,
+            });
+          },
+          onReasoning: (chunk) => {
+            if (!emittedThinkingStart) {
+              emittedThinkingStart = true;
+              emit({ type: "thinking_start" });
+            }
+            thinking += chunk;
+            emit({ type: "thinking_delta", delta: chunk, thinking });
+          },
+          onUsage: (nextUsage) => {
+            usage = nextUsage;
+          },
+        });
+      } catch (streamError) {
+        // The server rejected the native `tools` parameter (e.g. llama.cpp
+        // started without --jinja): retry the same round on the XML path.
+        if (nativeToolsEnabled && streamError?.statusCode === 400) {
+          nativeToolsEnabled = false;
+          if (skillsPromptMessage) {
+            skillsPromptMessage.content = getCloudSkillsPolicyPrompt({
+              agentMode: agentModeEnabled,
+              agentMaxRounds: maxRounds,
+            });
+          }
+          output = "";
+          continue;
+        }
+        throw streamError;
+      }
+      if (streamResult.usage) usage = streamResult.usage;
+
+      // Native path: the model asked for tools through the OpenAI schema.
+      const nativeCalls = localSkillsEnabled ? streamResult.toolCalls : [];
+      if (nativeCalls.length) {
+        if (round >= maxRounds) {
+          exhaustToolBudget();
+          continue;
+        }
+        round += 1;
+        const assistantToolCalls = nativeCalls.map((call, i) => ({
+          id: call.id || `call_${round}_${i}`,
+          type: "function",
+          function: {
+            name: call.name,
+            arguments: call.arguments || "{}",
+          },
+        }));
+        requestMessages = [
+          ...requestMessages,
+          {
+            role: "assistant",
+            content: output,
+            tool_calls: assistantToolCalls,
+          },
+        ];
+        for (const assistantCall of assistantToolCalls) {
+          const result = await runLocalToolCall({
+            function: {
+              name: assistantCall.function.name,
+              arguments: assistantCall.function.arguments,
+            },
+          });
+          requestMessages = [
+            ...requestMessages,
+            {
+              role: "tool",
+              tool_call_id: assistantCall.id,
+              content: String(result ?? ""),
+            },
+          ];
+        }
+        // Reset the accumulated text so the final reply is ONLY what the model
+        // writes after the tool results.
+        output = "";
+        emit({ type: "delta", delta: "", response: output });
+        continue;
+      }
+
+      // XML fallback path: models without native tool support (or servers
+      // that ignore `tools`) emit the prompt-taught <call:...> syntax.
+      const xmlMatch = localSkillsEnabled
+        ? output.match(/<call:([^>]+)>(.*?)<\/call>/is)
+        : null;
+      if (!xmlMatch) break;
+
+      output = output.replace(xmlMatch[0], "").trim();
+      if (round >= maxRounds) {
+        exhaustToolBudget();
+        continue;
+      }
+      round += 1;
+
+      const toolCall = {
+        function: { name: xmlMatch[1].trim(), arguments: xmlMatch[2].trim() },
+      };
+      const result = await runLocalToolCall(toolCall);
 
       if (output) {
         requestMessages = [
@@ -2161,7 +2332,10 @@ const CLOUD_SKILL_EXAMPLES = {
   shell_command: '{"command": "ls"}',
 };
 
-function getCloudSkillsPolicyPrompt() {
+function getCloudSkillsPolicyPrompt(options = {}) {
+  const nativeToolCalling = options.nativeToolCalling === true;
+  const agentMode = options.agentMode === true;
+  const agentMaxRounds = Number(options.agentMaxRounds) || 25;
   const skillsConfig = loadSkillsConfig();
   const enabledSkills = ALL_SKILLS.filter(
     (skill) => skillsConfig[skill.function.name] !== false,
@@ -2182,41 +2356,71 @@ function getCloudSkillsPolicyPrompt() {
     "3. Base your answer on the skill results. Use your own training knowledge only when the skills return no useful result or an error, and in that case explicitly tell the user that the lookup failed or returned nothing.",
     "4. Purely creative, conversational, or text-transformation requests (rewriting, translating, proofreading, or summarizing text the user provided) do not require skills.",
     "",
-    "Available skills:",
   ];
-  let index = 1;
-  for (const skill of enabledSkills) {
-    const name = skill.function.name;
-    const example = CLOUD_SKILL_EXAMPLES[name] || "{}";
+  if (nativeToolCalling) {
+    // Native mode: the tool list (names, descriptions, JSON schemas) travels
+    // in the request's `tools` array, so don't duplicate it in the prompt.
     lines.push(
-      `${index}. **${name}:** ${skill.function.description}\n   - Example: <call:${name}>${example}</call>`,
+      "HOW TO CALL A SKILL:",
+      "Call tools ONLY through your native function-calling mechanism. NEVER write tool-call syntax (XML, JSON, or code blocks) in your reply text.",
+      "Call one tool at a time. After receiving a result you may call another tool if needed.",
+      "",
+      "ONLY the tools provided in your tool list exist and are enabled. Never invent a tool name. If a tool result says a tool is disabled, do not call it again; use an enabled one.",
+      "",
     );
-    index += 1;
+  } else {
+    lines.push("Available skills:");
+    let index = 1;
+    for (const skill of enabledSkills) {
+      const name = skill.function.name;
+      const example = CLOUD_SKILL_EXAMPLES[name] || "{}";
+      lines.push(
+        `${index}. **${name}:** ${skill.function.description}\n   - Example: <call:${name}>${example}</call>`,
+      );
+      index += 1;
+    }
+    for (const custom of customSkills) {
+      lines.push(
+        `${index}. **${custom.name}:** ${custom.description || "User-defined custom skill."}\n   - Example: <call:${custom.name}>{}</call>`,
+      );
+      index += 1;
+    }
+    lines.push(
+      "",
+      "HOW TO CALL A SKILL:",
+      "Output exactly one XML block in this exact format and then stop writing:",
+      '<call:skill_name>{"arg": "value"}</call>',
+      "The system intercepts the block, executes the skill, and sends you the result so you can continue your answer.",
+      "Call one skill at a time. After receiving a result you may call another skill if needed.",
+      "",
+      "ONLY the skills listed above exist and are enabled. Any skill NOT in that list is disabled — never call it. If a skill result says a skill is disabled, do not call it again; use an enabled one.",
+      "",
+    );
   }
-  for (const custom of customSkills) {
+  if (agentMode) {
     lines.push(
-      `${index}. **${custom.name}:** ${custom.description || "User-defined custom skill."}\n   - Example: <call:${custom.name}>{}</call>`,
+      `AGENT WORKFLOW (up to ${agentMaxRounds} tool calls for this request):`,
+      "For any task that needs multiple steps (research, comparing sources, gathering material, writing notes):",
+      "1. FIRST write a short numbered plan of the steps you intend to take. Keep it to one line per step.",
+      "2. Execute the plan one tool call at a time. After each result, note in one sentence what it gave you and whether the plan still holds; revise the plan if a step failed or a result changed the picture.",
+      "3. Never repeat a call that already failed with the same arguments — change the approach instead.",
+      "4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.",
+      "AMBIGUITY: If a name or term is ambiguous, resolve it with ONE clarifying lookup or answer for the most prominent match and note the assumption in one sentence.",
+      "",
     );
-    index += 1;
+  } else {
+    lines.push(
+      "RESEARCH CHAIN (follow strictly, maximum 4 skill calls per question):",
+      "For factual, biographical, current-events, or 'who/what is X' questions:",
+      "1. Call deep_research with 'queries' holding 2-4 VARIED angles (different phrasing and scope).",
+      "2. If it returns nothing useful, retry deep_research ONCE with completely different phrasing.",
+      "3. If that also fails, call wikipedia and britannica on the topic and answer from them.",
+      "4. After at most 4 skill calls you MUST stop calling skills and write your answer from whatever you have; if nothing was found, say plainly that you could not verify the topic. Never repeat a failed call and never keep deliberating about whether to search again.",
+      "AMBIGUITY: If a name or term is ambiguous (multiple people or topics match) or you cannot tell who the user means, do NOT search repeatedly — answer for the most prominent match and note the assumption in one sentence, or say you cannot confidently identify the subject and ask which one they mean.",
+      "",
+    );
   }
   lines.push(
-    "",
-    "HOW TO CALL A SKILL:",
-    "Output exactly one XML block in this exact format and then stop writing:",
-    '<call:skill_name>{"arg": "value"}</call>',
-    "The system intercepts the block, executes the skill, and sends you the result so you can continue your answer.",
-    "Call one skill at a time. After receiving a result you may call another skill if needed.",
-    "",
-    "ONLY the skills listed above exist and are enabled. Any skill NOT in that list is disabled — never call it. If a skill result says a skill is disabled, do not call it again; use an enabled one.",
-    "",
-    "RESEARCH CHAIN (follow strictly, maximum 4 skill calls per question):",
-    "For factual, biographical, current-events, or 'who/what is X' questions:",
-    "1. Call deep_research with 'queries' holding 2-4 VARIED angles (different phrasing and scope).",
-    "2. If it returns nothing useful, retry deep_research ONCE with completely different phrasing.",
-    "3. If that also fails, call wikipedia and britannica on the topic and answer from them.",
-    "4. After at most 4 skill calls you MUST stop calling skills and write your answer from whatever you have; if nothing was found, say plainly that you could not verify the topic. Never repeat a failed call and never keep deliberating about whether to search again.",
-    "AMBIGUITY: If a name or term is ambiguous (multiple people or topics match) or you cannot tell who the user means, do NOT search repeatedly — answer for the most prominent match and note the assumption in one sentence, or say you cannot confidently identify the subject and ask which one they mean.",
-    "",
     "ANSWER LENGTH AND STYLE:",
     "When the skill results contain rich material, write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance, integrating all the sources. When the material is thin, write a shorter accurate answer instead of inflating it. FORBIDDEN: filler adverbs and adjectives, empty intensifiers ('truly remarkable', 'deeply fascinating', 'incredibly important'), and padding sentences that add no facts. Clean, precise, academic prose only — depth must come from information, never from decoration.",
     "",
@@ -2224,6 +2428,43 @@ function getCloudSkillsPolicyPrompt() {
     "Do NOT write source links, a 'Source:' line, a 'References' section, or URLs in your answer. The app shows every source used as a clickable pill automatically. Just write the answer itself.",
   );
   return lines.join("\n");
+}
+
+// The OpenAI `tools` array offered natively to LM Studio / llama.cpp:
+// built-in skills (already OpenAI function schemas), user custom skills, and
+// connected MCP tools. Tool-calling-trained models (Gemma, Qwen, Hermes,
+// Llama 3.x) are far more reliable with this than with prompt-injected XML;
+// the XML <call:...> path remains as fallback for servers that reject `tools`.
+function getLocalNativeTools() {
+  const skillsConfig = loadSkillsConfig();
+  const tools = ALL_SKILLS.filter(
+    (skill) => skillsConfig[skill.function.name] !== false,
+  ).map((skill) => ({
+    type: "function",
+    function: {
+      name: skill.function.name,
+      description: skill.function.description,
+      parameters: skill.function.parameters || {
+        type: "object",
+        properties: {},
+      },
+    },
+  }));
+  for (const custom of loadCustomSkills()) {
+    if (!custom || typeof custom.name !== "string" || !custom.name.trim()) {
+      continue;
+    }
+    tools.push({
+      type: "function",
+      function: {
+        name: custom.name.trim(),
+        description: custom.description || "User-defined custom skill.",
+        parameters: { type: "object", properties: {} },
+      },
+    });
+  }
+  for (const mcpTool of getMcpOllamaTools()) tools.push(mcpTool);
+  return tools;
 }
 
 function isTransientLibraryContextMessage(item) {
@@ -4146,9 +4387,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && urlPath === "/api/models") {
     try {
-      send(200, await getModels());
-    } catch (e) {
-      send(500, { error: e.message });
+      send(200, { models: await getModels(), offline: false });
+    } catch (_e) {
+      // Ollama not running is a normal state for LM Studio / llama.cpp users:
+      // report it as data, not as a 500 that spams the client console.
+      send(200, { models: [], offline: true });
     }
     return;
   }
@@ -4543,7 +4786,8 @@ const server = http.createServer(async (req, res) => {
     urlPath.match(/^\/api\/conversations\/mode\/([^/]+)$/);
   if (deleteModeMatch) {
     const requestedMode = decodeURIComponent(deleteModeMatch[1] || "");
-    const allowedModes = new Set(["ollama", "pi", "cloud"]);
+    // Every chat mode keeps its own history — local modes included.
+    const allowedModes = new Set(UI_SETTINGS_MODE_KEYS);
     if (!allowedModes.has(requestedMode)) {
       send(400, { error: "Invalid conversation mode" });
       return;
