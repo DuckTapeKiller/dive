@@ -1947,7 +1947,10 @@
         flex: 1;
         overflow: hidden;
         text-overflow: ellipsis;
-        white-space: nowrap;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        word-break: break-word;
       }
       .agent-timeline-status {
         font-weight: 700;
@@ -3554,6 +3557,50 @@
             </div>
             <div class="setting-help">
               Scales every text in Ollama mode only.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="ollamaAgentModeInput" type="checkbox" />
+                AGENT MODE
+              </label>
+            </div>
+            <div class="setting-help">
+              Plan-first prompting and a larger tool budget for multi-step
+              tasks. Tool calls appear as a step timeline in the chat.
+            </div>
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >AGENT TOOL BUDGET</label
+            >
+            <div class="setting-number">
+              <input
+                id="ollamaAgentRoundsInput"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+              />
+              <div class="setting-number-controls">
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="ollamaAgentRoundsInput"
+                  data-dir="up"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="ollamaAgentRoundsInput"
+                  data-dir="down"
+                >
+                  −
+                </button>
+              </div>
+            </div>
+            <div class="setting-help">
+              Maximum tool calls per request in Agent Mode. Default: 25. Without
+              Agent Mode the budget is 10.
             </div>
           </div>
           <div id="ollamaGenGroup" class="setting-group">
@@ -5170,6 +5217,52 @@
               </div>
               <div class="setting-help">Default: 2048.</div>
             </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="cloudAgentModeInput" type="checkbox" />
+                AGENT MODE
+              </label>
+            </div>
+            <div class="setting-help">
+              Plan-first prompting and a larger tool budget for multi-step
+              tasks. Tool calls appear as a step timeline in the chat.
+            </div>
+            <div class="setting-row">
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >AGENT TOOL BUDGET</label
+              >
+              <div class="setting-number">
+                <input
+                  id="cloudAgentRoundsInput"
+                  type="number"
+                  min="1"
+                  max="50"
+                  step="1"
+                />
+                <div class="setting-number-controls">
+                  <button
+                    type="button"
+                    class="setting-number-btn"
+                    data-target="cloudAgentRoundsInput"
+                    data-dir="up"
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
+                    class="setting-number-btn"
+                    data-target="cloudAgentRoundsInput"
+                    data-dir="down"
+                  >
+                    −
+                  </button>
+                </div>
+              </div>
+              <div class="setting-help">
+                Maximum tool calls per request in Agent Mode. Default: 25.
+                Without Agent Mode the budget is 6.
+              </div>
+            </div>
             <div class="setting-row-inline" style="margin-top: 6px">
               <button id="saveCloudSettingsBtn" class="settings-action-btn">
                 SAVE CLOUD SETTINGS
@@ -6066,6 +6159,44 @@
         /^\s*(?:translate(?:\s+to)?\s+english|translate\s+into\s+english|traduce?\s+(?:al?|a)\s+ingl[eé]s)\s*:?\s*/i;
       const TRANSLATE_TO_ES_TRIGGER =
         /^\s*(?:translate(?:\s+to)?\s+spanish|translate\s+into\s+spanish|traduce?\s+(?:al?|a)\s+espa[ñn]ol)\s*:?\s*/i;
+      // Ollama Agent Mode (client-driven: Ollama's skills prompt is built
+      // here, so the toggle and budget live in localStorage like its options).
+      const OLLAMA_AGENT_MODE_KEY = "ollama-pi-chat-ollama-agent-mode";
+      const OLLAMA_AGENT_ROUNDS_KEY = "ollama-pi-chat-ollama-agent-rounds";
+      let ollamaAgentMode =
+        localStorage.getItem(OLLAMA_AGENT_MODE_KEY) === "true";
+      let ollamaAgentMaxRounds = (() => {
+        const v = parseInt(
+          localStorage.getItem(OLLAMA_AGENT_ROUNDS_KEY) || "25",
+          10,
+        );
+        return Number.isFinite(v) ? Math.min(50, Math.max(1, v)) : 25;
+      })();
+      function wireOllamaAgentSettings() {
+        const cb = document.getElementById("ollamaAgentModeInput");
+        const rounds = document.getElementById("ollamaAgentRoundsInput");
+        if (cb) {
+          cb.checked = ollamaAgentMode;
+          cb.addEventListener("change", () => {
+            ollamaAgentMode = cb.checked;
+            localStorage.setItem(
+              OLLAMA_AGENT_MODE_KEY,
+              String(ollamaAgentMode),
+            );
+          });
+        }
+        if (rounds) {
+          rounds.value = String(ollamaAgentMaxRounds);
+          rounds.addEventListener("change", () => {
+            let v = parseInt(rounds.value, 10);
+            if (!Number.isFinite(v)) v = 25;
+            v = Math.min(50, Math.max(1, v));
+            rounds.value = String(v);
+            ollamaAgentMaxRounds = v;
+            localStorage.setItem(OLLAMA_AGENT_ROUNDS_KEY, String(v));
+          });
+        }
+      }
       const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
         shell_command: false,
         wikipedia: true,
@@ -6174,22 +6305,32 @@ For any factual, encyclopedic, biographical, definitional, historical, or curren
 You have access to external tools (skills) to fetch authoritative, real-time information or perform actions.
 Call a tool whenever the question is better answered by a lookup than by memory — factual claims, definitions, people, places, events, recent or current information, calculations, or any external action the user requests.`;
 
-      const DB_OFF_TOOL_TAIL = `**HOW TO CALL A TOOL:**
+      const DB_OFF_TOOL_TAIL_HEAD = `**HOW TO CALL A TOOL:**
 To trigger a tool, output an XML block in this exact format:
 <call:skill_name>{"arg": "value"}</call>
 The system will intercept this block, execute the tool, and provide you the results.
 
-ONLY the tools listed above exist and are enabled. Any tool NOT in that list is disabled — never call it. If a tool result says a tool is disabled, do not call it again; use an enabled one.
+ONLY the tools listed above exist and are enabled. Any tool NOT in that list is disabled — never call it. If a tool result says a tool is disabled, do not call it again; use an enabled one.`;
 
-RESEARCH CHAIN (follow strictly, maximum 4 tool calls per question):
+      const DB_OFF_RESEARCH_CHAIN = `RESEARCH CHAIN (follow strictly, maximum 4 tool calls per question):
 For factual, biographical, current-events, or "who/what is X" questions:
 1. Call deep_research with "queries" holding 2-4 VARIED angles (different phrasing and scope).
 2. If it returns nothing useful, retry deep_research ONCE with completely different phrasing.
 3. If that also fails, call wikipedia and britannica on the topic and answer from them.
 4. After at most 4 tool calls you MUST stop calling tools and write your answer from whatever you have; if nothing was found, say plainly that you could not verify the topic. Never repeat a failed call and never keep deliberating about whether to search again.
-AMBIGUITY: If a name or term is ambiguous (multiple people or topics match) or you cannot tell who the user means, do NOT search repeatedly — answer for the most prominent match and note the assumption in one sentence, or say you cannot confidently identify the subject and ask which one they mean.
+AMBIGUITY: If a name or term is ambiguous (multiple people or topics match) or you cannot tell who the user means, do NOT search repeatedly — answer for the most prominent match and note the assumption in one sentence, or say you cannot confidently identify the subject and ask which one they mean.`;
 
-ANSWER LENGTH AND STYLE:
+      const dbOffAgentWorkflow = (
+        rounds,
+      ) => `AGENT WORKFLOW (up to ${rounds} tool calls for this request):
+For any task that needs multiple steps (research, comparing sources, gathering material, writing notes):
+1. FIRST write a short numbered plan of the steps you intend to take. Keep it to one line per step.
+2. Execute the plan one tool call at a time. After each result, note in one sentence what it gave you and whether the plan still holds; revise the plan if a step failed or a result changed the picture.
+3. Never repeat a call that already failed with the same arguments — change the approach instead.
+4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.
+AMBIGUITY: If a name or term is ambiguous, resolve it with ONE clarifying lookup or answer for the most prominent match and note the assumption in one sentence.`;
+
+      const DB_OFF_TOOL_TAIL_STYLE = `ANSWER LENGTH AND STYLE:
 When the tool results contain rich material, write a COMPREHENSIVE, well-structured answer — multiple detailed paragraphs covering background, key facts, context, and significance, integrating all the sources. When the material is thin, write a shorter accurate answer instead of inflating it. FORBIDDEN: filler adverbs and adjectives, empty intensifiers ("truly remarkable", "deeply fascinating", "incredibly important"), and padding sentences that add no facts. Clean, precise, academic prose only — depth must come from information, never from decoration.
 
 SOURCES:
@@ -6222,7 +6363,12 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
           });
         }
 
-        return `${DB_OFF_POLICY_PREAMBLE}\n\n${toolText}\n${DB_OFF_TOOL_TAIL}${customSkillsText}`;
+        // Agent mode swaps the strict max-4 research chain for the plan-first
+        // agent workflow with the configured tool budget.
+        const workflow = ollamaAgentMode
+          ? dbOffAgentWorkflow(ollamaAgentMaxRounds)
+          : DB_OFF_RESEARCH_CHAIN;
+        return `${DB_OFF_POLICY_PREAMBLE}\n\n${toolText}\n${DB_OFF_TOOL_TAIL_HEAD}\n\n${workflow}\n\n${DB_OFF_TOOL_TAIL_STYLE}${customSkillsText}`;
       }
       const PROOFREAD_HARD_MODE_PROMPT = `You are a dedicated, context-blind text-correction engine. You are NOT an assistant and you have no conversation with anyone.
 
@@ -10096,6 +10242,8 @@ Output rules (absolute):
             options: getOllamaOptionsRequestPayload(),
             library: getLibraryRequestPayload(),
             images: images || undefined,
+            agentMode: ollamaAgentMode || undefined,
+            agentMaxRounds: ollamaAgentMode ? ollamaAgentMaxRounds : undefined,
           }),
           signal,
         });
@@ -11448,6 +11596,8 @@ Output rules (absolute):
         timelineTitle.textContent = "STEPS";
         timeline.appendChild(timelineTitle);
         const timelineSteps = [];
+        // Full argument text (up to the server's 300-char event preview); the
+        // row clamps visually via CSS and the tooltip carries everything.
         const timelineArgsSummary = (argsPreview) => {
           if (!argsPreview) return "";
           try {
@@ -11457,19 +11607,19 @@ Output rules (absolute):
                 (v) => typeof v === "string" && v.trim(),
               );
               if (typeof firstString === "string") {
-                return firstString.slice(0, 70);
+                return firstString;
               }
               const firstArray = Object.values(parsed).find(
                 (v) => Array.isArray(v) && v.length,
               );
               if (firstArray) {
-                return firstArray.map(String).join(", ").slice(0, 70);
+                return firstArray.map(String).join(", ");
               }
             }
           } catch (_e) {
             // Not JSON (e.g. a shell command): show the raw preview.
           }
-          return String(argsPreview).slice(0, 70);
+          return String(argsPreview);
         };
 
         wrap.appendChild(timeline);
@@ -11479,6 +11629,23 @@ Output rules (absolute):
         wrap.appendChild(passagesDetails);
         chat.appendChild(wrap);
         scrollChatToBottom();
+
+        // Live elapsed counter on the thinking indicator. Only ticks for live
+        // runs — history replays pass a snapshot and stay static. Cleared on
+        // remove()/stopTimer() so no interval outlives its element.
+        const startedAt = Date.now();
+        let timerInterval = null;
+        if (!assistantMetadataHasContent(initialSnapshot)) {
+          timerInterval = window.setInterval(() => {
+            const s = Math.floor((Date.now() - startedAt) / 1000);
+            const elapsed =
+              s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+            if (plain.style.display !== "none") {
+              plain.textContent = `Thinking... ${elapsed}`;
+            }
+            summary.textContent = `Thinking... (${elapsed})`;
+          }, 1000);
+        }
 
         let reasoningText =
           typeof initialSnapshot.thinking === "string"
@@ -11623,6 +11790,12 @@ Output rules (absolute):
               step.status.textContent = "⏹";
             }
           },
+          stopTimer() {
+            if (timerInterval) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+            }
+          },
           markFailure(reason) {
             if (!reason) return;
             this.addTraceLine(`Failure: ${reason}`, { failure: true });
@@ -11637,6 +11810,7 @@ Output rules (absolute):
             });
           },
           remove() {
+            this.stopTimer();
             if (wrap.parentElement) wrap.remove();
           },
           get isConnected() {
@@ -11975,6 +12149,18 @@ Output rules (absolute):
           cloudSettings.baseUrls?.[provider] ||
           CLOUD_DEFAULT_BASE_URLS[provider];
         maxTokensInput.value = Number(cloudSettings.maxTokens) || 2048;
+        const agentModeInput = document.getElementById("cloudAgentModeInput");
+        if (agentModeInput) {
+          agentModeInput.checked = cloudSettings.agentMode === true;
+        }
+        const agentRoundsInput = document.getElementById(
+          "cloudAgentRoundsInput",
+        );
+        if (agentRoundsInput) {
+          agentRoundsInput.value = String(
+            Number(cloudSettings.agentMaxRounds) || 25,
+          );
+        }
         if (keyStatus) {
           const envName =
             cloudSettings.envKeyNames?.[provider] || "provider API key";
@@ -12010,6 +12196,14 @@ Output rules (absolute):
             [provider]: baseUrl.trim() || CLOUD_DEFAULT_BASE_URLS[provider],
           },
           maxTokens,
+          agentMode:
+            document.getElementById("cloudAgentModeInput")?.checked === true,
+          agentMaxRounds: clampInteger(
+            document.getElementById("cloudAgentRoundsInput")?.value,
+            25,
+            1,
+            50,
+          ),
           apiKeys: apiKey.trim() ? { [provider]: apiKey.trim() } : {},
           clearApiKeys: clearApiKey ? { [provider]: true } : {},
         };
@@ -12799,6 +12993,7 @@ Output rules (absolute):
           if (typeof thinking.finalizeTimeline === "function") {
             thinking.finalizeTimeline();
           }
+          if (typeof thinking.stopTimer === "function") thinking.stopTimer();
           thinking.markFailure(evt.error || "Unknown error");
         }
 
@@ -12808,6 +13003,7 @@ Output rules (absolute):
           if (typeof thinking.finalizeTimeline === "function") {
             thinking.finalizeTimeline();
           }
+          if (typeof thinking.stopTimer === "function") thinking.stopTimer();
         }
       }
 
@@ -14584,6 +14780,7 @@ Output rules (absolute):
         await __timed("loadCloudSettings", loadCloudSettings);
         await __timed("loadLocalModeSettings", loadLocalModeSettings);
         wireLocalModeSettings();
+        wireOllamaAgentSettings();
         await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);
         __bootTimings.push({
           label: "__boot_total",
