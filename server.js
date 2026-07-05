@@ -212,7 +212,7 @@ const DEFAULT_UI_FONTS = Object.freeze({
   ollama: '"iA Writer Quattro S", serif',
   pi: "Montserrat, sans-serif",
   cloud: "Sen, sans-serif",
-  lmstudio: "Sen, sans-serif",
+  lmstudio: "Marcellus, serif",
   llamacpp: "Montserrat, sans-serif",
 });
 // Every mode that has its own persisted palette/font.
@@ -883,13 +883,20 @@ function defaultUiSettings() {
       ollama: "carbon",
       pi: "orange",
       cloud: "calmblue",
-      lmstudio: "calmblue",
+      lmstudio: "carbon",
       llamacpp: "forest",
     },
     fonts: {
       ...DEFAULT_UI_FONTS,
     },
-    enabledModes: ["ollama", "pi", "cloud"],
+    fontScales: {
+      ollama: 1,
+      pi: 1,
+      cloud: 1,
+      lmstudio: 1,
+      llamacpp: 1,
+    },
+    enabledModes: ["lmstudio", "pi", "cloud"],
     defaultMode: "",
   };
 }
@@ -903,6 +910,7 @@ function sanitizeUiSettings(rawInput) {
   const next = {
     palettes: { ...defaults.palettes },
     fonts: { ...defaults.fonts },
+    fontScales: { ...defaults.fontScales },
     enabledModes: [...defaults.enabledModes],
     defaultMode: "",
   };
@@ -923,6 +931,20 @@ function sanitizeUiSettings(rawInput) {
     for (const modeName of UI_SETTINGS_MODE_KEYS) {
       if (typeof raw.fonts[modeName] === "string") {
         next.fonts[modeName] = normalizeFontStackValue(raw.fonts[modeName]);
+      }
+    }
+  }
+
+  // Per-mode font-size multiplier (clamped to the UI's supported range).
+  if (
+    raw.fontScales &&
+    typeof raw.fontScales === "object" &&
+    !Array.isArray(raw.fontScales)
+  ) {
+    for (const modeName of UI_SETTINGS_MODE_KEYS) {
+      const value = Number(raw.fontScales[modeName]);
+      if (Number.isFinite(value)) {
+        next.fontScales[modeName] = Math.min(1.6, Math.max(0.7, value));
       }
     }
   }
@@ -1162,7 +1184,7 @@ function normalizeLocalBaseUrl(url, fallback) {
 // Sampling parameters accepted by both LM Studio and llama.cpp's
 // /v1/chat/completions (min/max/default), verified against their API docs.
 const LOCAL_PARAM_SPEC = {
-  temperature: { min: 0, max: 2, def: 0.8 },
+  temperature: { min: 0, max: 2, def: 0.3 },
   top_p: { min: 0, max: 1, def: 0.95 },
   top_k: { min: 0, max: 500, def: 40 },
   min_p: { min: 0, max: 1, def: 0.05 },
@@ -1559,7 +1581,7 @@ async function handleLocalModeStream(modeId, req, res, send) {
       conf.baseUrl,
       LOCAL_MODE_DEFAULTS[modeId].baseUrl,
     );
-    // Client sends explicit "" when "(auto / server default)" is selected.
+    // Client sends explicit "" when "Automatic" is selected.
     // Prefer the client's explicit choice; fall back to server saved setting only
     // when the client sent nothing (undefined), not when it sent empty string.
     const model =
