@@ -217,6 +217,9 @@
       }
       body {
         font-family: var(--ui-font, "Space Mono", monospace);
+        /* 16px is the browser default; declaring it lets text without an
+           explicit size follow the per-mode font-scale too. */
+        font-size: calc(16px * var(--font-scale, 1));
         display: flex;
         flex-direction: column;
         background: var(--bg-secondary);
@@ -299,7 +302,7 @@
            label can ellipsize (flex items default to min-width:auto). */
         min-width: 0;
         padding: 4px 8px;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         color: var(--text-normal);
         background-color: var(--bg-secondary);
         border: var(--border-width) solid var(--border-color);
@@ -326,7 +329,7 @@
         min-height: 28px;
         margin-left: 0;
         margin-right: 12px;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
@@ -374,7 +377,7 @@
         align-items: center;
         justify-content: center;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition:
@@ -405,7 +408,7 @@
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         cursor: pointer;
         max-width: 180px;
         transition:
@@ -431,7 +434,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition:
@@ -491,7 +494,7 @@
       }
       .file-pill-label {
         color: var(--text-normal);
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         opacity: 0.8;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -506,7 +509,7 @@
         color: var(--text-normal);
         opacity: 0.6;
         cursor: pointer;
-        font-size: 14px;
+        font-size: calc(14px * var(--font-scale, 1));
         line-height: 1;
         padding: 0 2px;
       }
@@ -556,7 +559,7 @@
       }
       #notesHeader span {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition: color 0.2s;
@@ -573,7 +576,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         transition:
           background 0.1s,
@@ -595,7 +598,7 @@
         background: var(--bg-inverse);
         color: var(--text-inverse);
         font-family: inherit;
-        font-size: 13px;
+        font-size: calc(13px * var(--font-scale, 1));
         line-height: 1.6;
         border: none;
         outline: none;
@@ -606,15 +609,12 @@
       }
       #notesSaved {
         color: var(--text-inverse);
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         opacity: 0.6;
         padding: 6px 14px;
-        border-top: var(--border-width) solid var(--text-inverse);
         flex-shrink: 0;
         font-style: italic;
-        transition:
-          color 0.2s,
-          border-color 0.2s;
+        transition: color 0.2s;
       }
       /* Multi-note list: a grid of note cards (scroll icon + name) shown
          instead of the editor while browsing notes. */
@@ -660,7 +660,7 @@
         flex-shrink: 0;
       }
       .note-card-name {
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.3px;
         word-break: break-word;
@@ -679,7 +679,7 @@
         color: var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         opacity: 0.6;
         padding: 1px 4px;
@@ -694,7 +694,7 @@
       }
       #notesEmpty {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         opacity: 0.55;
         padding: 12px 14px;
         font-style: italic;
@@ -704,9 +704,7 @@
         align-items: center;
         gap: 6px;
         padding: 8px 10px;
-        border-top: var(--border-width) solid var(--text-inverse);
         flex-shrink: 0;
-        transition: border-color 0.2s;
       }
       #notesFolderBtn,
       #notesNewBtn {
@@ -719,7 +717,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         font-weight: 700;
         line-height: 1;
         transition:
@@ -745,7 +743,7 @@
         border-bottom: 1px dashed var(--text-inverse);
         color: var(--text-inverse);
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
         padding: 3px 4px;
@@ -792,7 +790,7 @@
       #settingsHeader span,
       #mcpHeader span {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition: color 0.2s;
@@ -805,7 +803,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         transition:
           background 0.1s,
@@ -840,7 +838,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
         text-align: center;
@@ -884,7 +882,7 @@
       }
       .setting-group label {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
       }
@@ -893,7 +891,7 @@
         align-items: center;
         gap: 8px;
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
       }
@@ -908,7 +906,7 @@
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         cursor: pointer;
         outline: none;
       }
@@ -920,7 +918,7 @@
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         outline: none;
         border-radius: 0;
       }
@@ -949,7 +947,7 @@
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         outline: none;
         resize: vertical;
         border-radius: 0;
@@ -988,7 +986,7 @@
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         line-height: 1;
         cursor: pointer;
       }
@@ -996,6 +994,31 @@
         border-bottom: 0;
       }
       .setting-number-btn:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      /* Per-mode FONT SIZE stepper: same brutalist look as the number
+         steppers, but standalone (no readout — every text scales from its own
+         designed size, so a single number would be meaningless). */
+      .font-scale-controls {
+        display: flex;
+        gap: 6px;
+      }
+      .font-scale-btn {
+        width: 34px;
+        height: 26px;
+        padding: 0;
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+        border: var(--border-width) solid var(--text-inverse);
+        font-family: inherit;
+        /* Deliberately unscaled so the control stays usable at any scale. */
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .font-scale-btn:hover {
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
@@ -1051,7 +1074,7 @@
         min-height: 26px;
       }
       .setting-range-value {
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         color: var(--text-normal);
         background: var(--bg-primary);
         border: 1px solid var(--text-inverse);
@@ -1085,7 +1108,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
         transition:
@@ -1198,7 +1221,7 @@
 
       .setting-help {
         color: var(--text-inverse);
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         line-height: 1.4;
         opacity: 0.8;
       }
@@ -1214,7 +1237,7 @@
         align-items: center;
         gap: 8px;
         color: var(--text-inverse);
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         cursor: pointer;
       }
       .mode-toggle-row input[type="checkbox"] {
@@ -1235,7 +1258,7 @@
         justify-content: space-between;
         gap: 8px;
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
       }
       .local-param-row input[type="number"] {
         width: 96px;
@@ -1271,7 +1294,7 @@
       }
       .database-metrics-title {
         color: var(--text-inverse);
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
       }
@@ -1290,14 +1313,14 @@
       }
       .database-metric-label {
         color: var(--text-inverse);
-        font-size: 9px;
+        font-size: calc(9px * var(--font-scale, 1));
         font-weight: 700;
         line-height: 1.2;
         opacity: 0.7;
       }
       .database-metric-value {
         color: var(--text-inverse);
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         font-weight: 700;
         line-height: 1.25;
         margin-top: 3px;
@@ -1347,7 +1370,7 @@
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
         transition:
@@ -1373,7 +1396,7 @@
       }
       .settings-footer {
         margin-top: 4px;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-style: italic;
         opacity: 0.6;
         color: var(--text-inverse);
@@ -1385,7 +1408,7 @@
            so it hides less of the scrolling settings content behind it. */
         grid-template-columns: max-content 1fr max-content 1fr;
         gap: 8px 16px;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         align-items: center;
         margin-top: 10px;
         padding-top: 10px;
@@ -1412,7 +1435,7 @@
       }
       #piRuntimeSummary,
       #ollamaPiChatFolderPath {
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         line-height: 1.45;
         opacity: 0.85;
         color: var(--text-inverse);
@@ -1432,7 +1455,7 @@
         justify-content: space-between;
         border: var(--border-width) solid var(--text-inverse);
         padding: 6px 10px;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         color: var(--text-inverse);
       }
       .prompt-item-name {
@@ -1448,7 +1471,7 @@
         color: #ff4444;
         cursor: pointer;
         font-weight: 700;
-        font-size: 14px;
+        font-size: calc(14px * var(--font-scale, 1));
         padding: 0 4px;
       }
       .prompt-item-del:hover {
@@ -1466,7 +1489,7 @@
       #historyPanel {
         width: 220px;
         background: var(--bg-inverse);
-        border-right: var(--border-width) solid var(--text-inverse);
+        border-right: var(--border-width) solid var(--border-color);
         display: none;
         flex-direction: column;
         flex-shrink: 0;
@@ -1487,7 +1510,7 @@
       }
       #historyHeader span {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition: color 0.2s;
@@ -1499,7 +1522,7 @@
         border: var(--border-width) solid #ff4444;
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
       }
       #deleteAllBtn:hover {
@@ -1524,7 +1547,7 @@
         flex: 1;
         padding: 6px 10px 4px;
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         cursor: pointer;
         line-height: 1.4;
         overflow: hidden;
@@ -1536,7 +1559,7 @@
       }
       .history-item-date {
         display: block;
-        font-size: 9px;
+        font-size: calc(9px * var(--font-scale, 1));
         opacity: 0.5;
         margin-top: 2px;
         white-space: nowrap;
@@ -1554,7 +1577,7 @@
         border-left: var(--border-width) solid var(--text-inverse);
         color: #ff4444;
         cursor: pointer;
-        font-size: 14px;
+        font-size: calc(14px * var(--font-scale, 1));
         font-weight: 700;
         transition: border-color 0.2s;
       }
@@ -1564,7 +1587,7 @@
       }
       #historyEmpty {
         color: var(--text-inverse);
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         opacity: 0.5;
         padding: 12px;
         text-align: center;
@@ -1601,7 +1624,7 @@
 
       .app-dialog-title {
         margin: 0;
-        font-size: 13px;
+        font-size: calc(13px * var(--font-scale, 1));
         font-weight: 700;
         text-transform: uppercase;
       }
@@ -1616,7 +1639,7 @@
         white-space: pre-wrap;
         word-break: break-word;
         line-height: 1.45;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
       }
 
       .app-dialog-actions {
@@ -1635,7 +1658,7 @@
         box-shadow: 3px 3px 0 0 var(--border-color);
         cursor: pointer;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         text-transform: uppercase;
       }
@@ -1826,7 +1849,7 @@
         border: var(--border-width) solid var(--border-color);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
         transition:
@@ -1850,7 +1873,7 @@
         font-style: italic;
         opacity: 0.6;
         padding: 4px 14px;
-        font-size: 13px;
+        font-size: calc(13px * var(--font-scale, 1));
         transition: color 0.2s;
       }
 
@@ -1866,7 +1889,7 @@
       }
       .thinking-details summary {
         cursor: pointer;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         font-weight: 700;
         color: var(--text-normal);
         opacity: 0.85;
@@ -1874,7 +1897,7 @@
       .thinking-details-body {
         margin-top: 8px;
         white-space: pre-wrap;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         line-height: 1.4;
         opacity: 0.9;
         word-break: break-word;
@@ -1912,7 +1935,7 @@
       .thinking-markdown h4,
       .thinking-markdown h5,
       .thinking-markdown h6 {
-        font-size: 13px;
+        font-size: calc(13px * var(--font-scale, 1));
         margin: 8px 0 4px;
       }
       .thinking-markdown ul,
@@ -1947,7 +1970,7 @@
         background: var(--bg-primary);
         color: var(--text-normal);
         font-family: inherit;
-        font-size: 14px;
+        font-size: calc(14px * var(--font-scale, 1));
         line-height: 1.4;
         resize: none;
         height: 42px;
@@ -2126,7 +2149,7 @@
         justify-content: space-between;
         align-items: center;
         gap: 10px;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 1px;
       }
@@ -2137,7 +2160,7 @@
         border: var(--border-width) solid var(--border-color);
         cursor: pointer;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
       }
       #bookFilterCloseBtn:hover {
@@ -2145,7 +2168,7 @@
         color: var(--text-inverse);
       }
       #bookFilterHelp {
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         opacity: 0.8;
         line-height: 1.4;
       }
@@ -2155,7 +2178,7 @@
         color: var(--text-normal);
         border: var(--border-width) solid var(--border-color);
         font-family: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         outline: none;
       }
       #bookFilterSearchInput:disabled {
@@ -2172,7 +2195,7 @@
         border-top: none;
         background: var(--bg-secondary);
         cursor: pointer;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         text-align: left;
         font-family: inherit;
         color: var(--text-normal);
@@ -2185,7 +2208,7 @@
         color: var(--text-inverse);
       }
       #bookFilterMaxWarning {
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         color: var(--accent);
         letter-spacing: 0.5px;
@@ -2199,7 +2222,7 @@
         min-height: 44px;
       }
       .book-filter-empty {
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         opacity: 0.7;
       }
       .book-filter-row {
@@ -2207,7 +2230,7 @@
         justify-content: space-between;
         align-items: center;
         gap: 8px;
-        font-size: 12px;
+        font-size: calc(12px * var(--font-scale, 1));
         border-bottom: 1px dashed var(--border-color);
         padding-bottom: 6px;
       }
@@ -2227,7 +2250,7 @@
         border: var(--border-width) solid var(--border-color);
         cursor: pointer;
         font-family: inherit;
-        font-size: 10px;
+        font-size: calc(10px * var(--font-scale, 1));
         font-weight: 700;
       }
       .book-filter-remove-btn:hover {
@@ -2248,7 +2271,7 @@
         border: var(--border-width) solid var(--border-color);
         cursor: pointer;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;
         letter-spacing: 0.5px;
       }
@@ -2265,7 +2288,7 @@
         gap: 6px;
       }
       .sources-label {
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         text-transform: uppercase;
         color: var(--accent);
         font-weight: bold;
@@ -2278,16 +2301,23 @@
       .source-pill {
         display: inline-block;
         padding: 4px 8px;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
         color: var(--text-normal);
         background-color: var(--bg-secondary);
         border: var(--border-width) solid var(--border-color);
         text-decoration: none;
         transition: all 0.2s;
       }
+      /* Hover: glow the border instead of flooding the pill with accent —
+         a filled pill made the label unreadable. Shared by web-search and
+         library (index) source pills so both render identically. */
       .source-pill:hover {
-        background-color: var(--accent);
-        color: var(--bg-inverse);
+        border-color: var(--accent);
+        /* Two layers: a tight halo plus a wide soft one, so the glow reads
+           clearly even with muted accent colors. */
+        box-shadow:
+          0 0 3px var(--accent),
+          0 0 10px var(--accent);
       }
       .library-sources-container {
         margin-top: 12px;
@@ -2329,20 +2359,13 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .web-source-pill:hover {
-        background-color: var(--accent);
-        color: var(--bg-inverse);
-      }
-      .web-source-pill:hover svg {
-        color: var(--bg-inverse);
-      }
       .custom-select-wrapper {
         position: relative;
         display: inline-block;
         user-select: none;
         width: 100%;
         font-family: inherit;
-        font-size: 11px;
+        font-size: calc(11px * var(--font-scale, 1));
       }
       .custom-select-trigger {
         background: var(--bg-primary);
@@ -2909,7 +2932,7 @@
                 color: var(--text-inverse);
                 border: var(--border-width) solid var(--text-inverse);
                 font-family: var(--ui-font);
-                font-size: 11px;
+                font-size: calc(11px * var(--font-scale, 1));
                 padding: 10px;
                 resize: vertical;
                 outline: none;
@@ -2948,7 +2971,7 @@
               <div
                 id="mcpStatus"
                 style="
-                  font-size: 10px;
+                  font-size: calc(10px * var(--font-scale, 1));
                   color: var(--text-inverse);
                   font-weight: bold;
                 "
@@ -3109,6 +3132,7 @@
             <div class="setting-help">Theme used in LM Studio mode.</div>
             <label>FONT FAMILY</label>
             <select id="lmStudioFontPreset">
+              <option value="marcellus">Marcellus (Default)</option>
               <option value="space-mono">Space Mono</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
@@ -3118,16 +3142,39 @@
               <option value="ibarra-real-nova">Ibarra Real Nova</option>
               <option value="lora">Lora</option>
               <option value="ia-writer-mono-s">iA Writer Mono S</option>
-              <option value="marcellus">Marcellus</option>
               <option value="custom">Custom…</option>
             </select>
             <input
               id="lmStudioFontCustom"
               type="text"
-              placeholder="Sen, sans-serif"
+              placeholder="Marcellus, serif"
               style="display: none"
             />
             <div class="setting-help">Font used in LM Studio mode.</div>
+            <label>FONT SIZE</label>
+            <div class="font-scale-controls">
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="lmstudio"
+                data-dir="down"
+                aria-label="Decrease font size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="lmstudio"
+                data-dir="up"
+                aria-label="Increase font size"
+              >
+                +
+              </button>
+            </div>
+            <div class="setting-help">
+              Scales every text in LM Studio mode only.
+            </div>
             <label>SAMPLING PARAMETERS</label>
             <div id="lmStudioParams" class="local-params"></div>
             <button
@@ -3203,6 +3250,30 @@
               style="display: none"
             />
             <div class="setting-help">Font used in llama.cpp mode.</div>
+            <label>FONT SIZE</label>
+            <div class="font-scale-controls">
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="llamacpp"
+                data-dir="down"
+                aria-label="Decrease font size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="llamacpp"
+                data-dir="up"
+                aria-label="Increase font size"
+              >
+                +
+              </button>
+            </div>
+            <div class="setting-help">
+              Scales every text in llama.cpp mode only.
+            </div>
             <label>SAMPLING PARAMETERS</label>
             <div id="llamaCppParams" class="local-params"></div>
             <button
@@ -3294,6 +3365,30 @@
               Font stack used only in `OLLAMA` mode. Presets use local embedded
               font-faces from this project.
             </div>
+            <label>FONT SIZE</label>
+            <div class="font-scale-controls">
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="ollama"
+                data-dir="down"
+                aria-label="Decrease font size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="ollama"
+                data-dir="up"
+                aria-label="Increase font size"
+              >
+                +
+              </button>
+            </div>
+            <div class="setting-help">
+              Scales every text in Ollama mode only.
+            </div>
           </div>
           <div id="ollamaGenGroup" class="setting-group">
             <label>OLLAMA GENERATION</label>
@@ -3303,7 +3398,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">TEMPERATURE</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >TEMPERATURE</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaTemperatureInput"
@@ -3338,7 +3435,9 @@
                 <div class="setting-help">Default: 0.3</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">TOP P</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >TOP P</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaTopPInput"
@@ -3375,7 +3474,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">TOP K</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >TOP K</label
+                >
                 <div class="setting-number">
                   <input id="ollamaTopKInput" type="number" min="1" step="1" />
                   <div class="setting-number-controls">
@@ -3403,7 +3504,9 @@
                 <div class="setting-help">Default: 20</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">NUM PREDICT</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >NUM PREDICT</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaNumPredictInput"
@@ -3438,7 +3541,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">NUM CTX</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >NUM CTX</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaNumCtxInput"
@@ -3472,7 +3577,9 @@
                 <div class="setting-help">Default: 32768</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">SEED</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >SEED</label
+                >
                 <div class="setting-number">
                   <input id="ollamaSeedInput" type="number" step="1" />
                   <div class="setting-number-controls">
@@ -3503,7 +3610,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">REPEAT PENALTY</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >REPEAT PENALTY</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaRepeatPenaltyInput"
@@ -3537,7 +3646,9 @@
                 <div class="setting-help">Default: 1.15</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">REPEAT LAST N</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >REPEAT LAST N</label
+                >
                 <div class="setting-number">
                   <input
                     id="ollamaRepeatLastNInput"
@@ -3572,7 +3683,7 @@
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px"
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
                 >STOP SEQUENCES (`||` OR NEW LINE SEPARATED)</label
               >
               <textarea
@@ -3621,18 +3732,22 @@
               selected provider.
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">DATABASE FILE</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >DATABASE FILE</label
+              >
               <input id="databasePathInput" type="text" />
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
                 <input id="librarySearchEnabledInput" type="checkbox" />
                 ENABLE DATABASE CONTEXT
               </label>
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">CHAT PASSAGES</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >CHAT PASSAGES</label
+                >
                 <div class="setting-number">
                   <input
                     id="libraryLimitInput"
@@ -3662,7 +3777,9 @@
                 </div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">CONTEXT CHARS</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >CONTEXT CHARS</label
+                >
                 <div class="setting-number">
                   <input
                     id="libraryMaxContextInput"
@@ -3693,19 +3810,19 @@
               </div>
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
                 <input id="libraryIncludePathsInput" type="checkbox" />
                 INCLUDE SOURCE PATHS IN SOURCE BOXES
               </label>
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
                 <input id="databaseSemanticEnabledInput" type="checkbox" />
                 ENABLE SEMANTIC VECTOR SEARCH
               </label>
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
                 <input id="databaseKeywordEnabledInput" type="checkbox" />
                 ENABLE KEYWORD FTS INDEX
               </label>
@@ -3715,7 +3832,9 @@
               exact-term fallback search.
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">EMBEDDING MODEL</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >EMBEDDING MODEL</label
+              >
               <select id="databaseEmbeddingModelSelect"></select>
               <input
                 id="databaseEmbeddingModelCustomInput"
@@ -3725,7 +3844,9 @@
               />
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">EMBEDDING SERVER URL</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >EMBEDDING SERVER URL</label
+              >
               <input id="databaseEmbeddingBaseUrlInput" type="text" />
               <div class="setting-help">
                 Ollama (http://127.0.0.1:11434) or LM Studio
@@ -3736,7 +3857,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">BATCH SIZE</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >BATCH SIZE</label
+                >
                 <div class="setting-number">
                   <input
                     id="databaseEmbeddingBatchInput"
@@ -3766,7 +3889,9 @@
                 </div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">VECTOR DIMS</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >VECTOR DIMS</label
+                >
                 <div class="setting-number">
                   <input
                     id="databaseEmbeddingDimensionsInput"
@@ -3796,7 +3921,9 @@
                 </div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">DEFAULT SEARCH LIMIT</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >DEFAULT SEARCH LIMIT</label
+                >
                 <div class="setting-number">
                   <input
                     id="databaseDefaultLimitInput"
@@ -3827,7 +3954,9 @@
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">VECTOR STORAGE</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >VECTOR STORAGE</label
+              >
               <select id="databaseEmbeddingQuantizationSelect">
                 <option value="int8">Int8 compact</option>
                 <option value="float32">Float32 compatibility</option>
@@ -3838,7 +3967,9 @@
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">SQLITE-VEC EXTENSION PATH</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >SQLITE-VEC EXTENSION PATH</label
+              >
               <input
                 id="databaseSqliteVecPathInput"
                 type="text"
@@ -3852,13 +3983,17 @@
             <div class="setting-row search-algorithm-settings">
               <div class="search-algorithm-header">
                 <label
-                  style="font-size: 10px; opacity: 0.8; letter-spacing: 0.5px"
+                  style="
+                    font-size: calc(10px * var(--font-scale, 1));
+                    opacity: 0.8;
+                    letter-spacing: 0.5px;
+                  "
                   >SEARCH ALGORITHM SETTINGS</label
                 >
                 <span
                   id="searchAlgoSaveStatus"
                   style="
-                    font-size: 9px;
+                    font-size: calc(9px * var(--font-scale, 1));
                     opacity: 0.7;
                     margin-left: auto;
                     margin-right: 8px;
@@ -3870,7 +4005,7 @@
                   class="settings-action-btn"
                   style="
                     padding: 2px 6px;
-                    font-size: 9px;
+                    font-size: calc(9px * var(--font-scale, 1));
                     min-width: auto;
                     height: auto;
                   "
@@ -3924,7 +4059,7 @@
                 every mode. Reset Defaults resets the selected mode.
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >RRF k (1-100) (Default: 60)</label
                 >
                 <div class="setting-range">
@@ -3943,7 +4078,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >CONTENT KEYWORD BONUS (0-1) (Default: 0.16)</label
                 >
                 <div class="setting-range">
@@ -3962,7 +4097,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >METADATA KEYWORD BONUS (0-1) (Default: 0.06)</label
                 >
                 <div class="setting-range">
@@ -3981,7 +4116,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >SEMANTIC WEIGHT (0-3) (Default: 1.0)</label
                 >
                 <div class="setting-range">
@@ -4000,7 +4135,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >KEYWORD (FTS) WEIGHT (0-3) (Default: 1.1)</label
                 >
                 <div class="setting-range">
@@ -4019,7 +4154,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >METADATA SEARCH WEIGHT (0-3) (Default: 0.8)</label
                 >
                 <div class="setting-range">
@@ -4037,7 +4172,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >SOURCE PATH WEIGHT (0-3) (Default: 1.2)</label
                 >
                 <div class="setting-range">
@@ -4056,7 +4191,7 @@
                 </div>
               </div>
               <div class="search-algorithm-control">
-                <label style="font-size: 10px"
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
                   >MAX PASSAGES PER SOURCE (1-20) (Default: 5)</label
                 >
                 <div class="setting-range">
@@ -4076,7 +4211,9 @@
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">SOURCE FOLDERS</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >SOURCE FOLDERS</label
+              >
               <div id="databaseSourcesList"></div>
               <div class="setting-row-inline" style="margin-top: 6px">
                 <button id="addDatabaseSourceBtn" class="settings-action-btn">
@@ -4440,6 +4577,28 @@
               Font stack used only in `PI` mode. Presets use local embedded
               font-faces from this project.
             </div>
+            <label>FONT SIZE</label>
+            <div class="font-scale-controls">
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="pi"
+                data-dir="down"
+                aria-label="Decrease font size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="pi"
+                data-dir="up"
+                aria-label="Increase font size"
+              >
+                +
+              </button>
+            </div>
+            <div class="setting-help">Scales every text in Pi mode only.</div>
           </div>
           <div id="cloudFontGroup" class="setting-group" style="display: none">
             <label>CLOUD FONT FAMILY</label>
@@ -4466,6 +4625,30 @@
               Font stack used only in `Cloud` mode. Presets use local embedded
               font-faces from this project.
             </div>
+            <label>FONT SIZE</label>
+            <div class="font-scale-controls">
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="cloud"
+                data-dir="down"
+                aria-label="Decrease font size"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                class="font-scale-btn"
+                data-font-scale-mode="cloud"
+                data-dir="up"
+                aria-label="Increase font size"
+              >
+                +
+              </button>
+            </div>
+            <div class="setting-help">
+              Scales every text in Cloud mode only.
+            </div>
           </div>
           <div id="piSettingsGroup" class="setting-group" style="display: none">
             <label>PI EXECUTION</label>
@@ -4474,7 +4657,9 @@
               prompts behave in Pi mode.
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">PI COMMAND PATH (OPTIONAL)</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >PI COMMAND PATH (OPTIONAL)</label
+              >
               <input
                 id="piCommandPathInput"
                 type="text"
@@ -4487,7 +4672,9 @@
               <div id="piCommandPathDefault" class="setting-help"></div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">PI WORKING DIRECTORY</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >PI WORKING DIRECTORY</label
+              >
               <input id="piWorkingDirInput" type="text" />
               <div class="setting-help">
                 Default folder where Pi commands execute (for clone, build, file
@@ -4496,7 +4683,9 @@
               <div id="piWorkingDirDefault" class="setting-help"></div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">SERVER PORT</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >SERVER PORT</label
+              >
               <div class="setting-number">
                 <input
                   id="piServerPortInput"
@@ -4533,7 +4722,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">PI TIMEOUT (MS)</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >PI TIMEOUT (MS)</label
+                >
                 <div class="setting-number">
                   <input
                     id="piTimeoutMsInput"
@@ -4566,7 +4757,9 @@
                 <div class="setting-help">Default: 300000 ms (5 minutes).</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">TRACE BUFFER CHARS</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >TRACE BUFFER CHARS</label
+                >
                 <div class="setting-number">
                   <input
                     id="piTraceLimitInput"
@@ -4602,7 +4795,9 @@
             </div>
             <div class="setting-row-inline">
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">PERMISSION POLICY</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >PERMISSION POLICY</label
+                >
                 <select id="piPermissionPolicySelect">
                   <option value="normal">Normal</option>
                   <option value="strict">Strict</option>
@@ -4614,7 +4809,9 @@
                 <div class="setting-help">Default: Normal.</div>
               </div>
               <div class="setting-row" style="flex: 1">
-                <label style="font-size: 10px">TIMEOUT DEFAULT ACTION</label>
+                <label style="font-size: calc(10px * var(--font-scale, 1))"
+                  >TIMEOUT DEFAULT ACTION</label
+                >
                 <select id="piPermissionDefaultActionSelect">
                   <option value="deny">Deny</option>
                   <option value="allow">Allow</option>
@@ -4626,7 +4823,7 @@
               </div>
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px"
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
                 >AUTO-OPEN PERMISSION DIALOGS</label
               >
               <input id="piPermissionAutoOpenInput" type="checkbox" />
@@ -4637,7 +4834,7 @@
             </div>
             <div class="setting-help">Default: Enabled.</div>
             <div class="setting-row">
-              <label style="font-size: 10px"
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
                 >PERMISSION DECISION TIMEOUT (MS, 0 = DISABLED)</label
               >
               <div class="setting-number">
@@ -4674,7 +4871,7 @@
               <div class="setting-help">Default: 45000 ms.</div>
             </div>
             <div class="setting-row-inline">
-              <label style="font-size: 10px"
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
                 >EXPAND THINKING PANEL BY DEFAULT</label
               >
               <input id="piThinkingExpandedInput" type="checkbox" />
@@ -4701,7 +4898,11 @@
               config from server.
             </div>
             <div id="piRuntimeSummary"></div>
-            <label style="font-size: 10px; margin-top: 2px"
+            <label
+              style="
+                font-size: calc(10px * var(--font-scale, 1));
+                margin-top: 2px;
+              "
               >DIVE DATA FOLDER</label
             >
             <div id="ollamaPiChatFolderPath"></div>
@@ -4729,7 +4930,9 @@
               chat mode.
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">PROVIDER</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >PROVIDER</label
+              >
               <select id="cloudProviderSelect">
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic Claude</option>
@@ -4738,7 +4941,9 @@
               </select>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">API KEY</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >API KEY</label
+              >
               <input
                 id="cloudApiKeyInput"
                 type="password"
@@ -4748,14 +4953,18 @@
               <div id="cloudApiKeyStatus" class="setting-help"></div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">MODEL</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >MODEL</label
+              >
               <input id="cloudModelInput" type="text" />
               <div class="setting-help">
                 Enter the exact model id available to your provider account.
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">BASE URL</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >BASE URL</label
+              >
               <input id="cloudBaseUrlInput" type="text" />
               <div class="setting-help">
                 Use the provider default unless you are targeting a compatible
@@ -4763,7 +4972,9 @@
               </div>
             </div>
             <div class="setting-row">
-              <label style="font-size: 10px">MAX OUTPUT TOKENS</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >MAX OUTPUT TOKENS</label
+              >
               <div class="setting-number">
                 <input
                   id="cloudMaxTokensInput"
@@ -4834,7 +5045,9 @@
                 gap: 8px;
               "
             >
-              <label style="font-size: 10px">PROMPT NAME</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >PROMPT NAME</label
+              >
               <input
                 type="text"
                 id="promptName"
@@ -4845,11 +5058,13 @@
                   color: var(--text-inverse);
                   border: 2px solid var(--text-inverse);
                   font-family: inherit;
-                  font-size: 12px;
+                  font-size: calc(12px * var(--font-scale, 1));
                   outline: none;
                 "
               />
-              <label style="font-size: 10px">SYSTEM INSTRUCTIONS</label>
+              <label style="font-size: calc(10px * var(--font-scale, 1))"
+                >SYSTEM INSTRUCTIONS</label
+              >
               <textarea
                 id="promptContent"
                 placeholder="Write instructions..."
@@ -4860,7 +5075,7 @@
                   color: var(--text-inverse);
                   border: 2px solid var(--text-inverse);
                   font-family: inherit;
-                  font-size: 12px;
+                  font-size: calc(12px * var(--font-scale, 1));
                   resize: none;
                   outline: none;
                 "
@@ -5014,7 +5229,7 @@
                   width: 100%;
                   min-height: 180px;
                   font-family: monospace;
-                  font-size: 10px;
+                  font-size: calc(10px * var(--font-scale, 1));
                   white-space: pre;
                   overflow: auto;
                 "
@@ -5096,7 +5311,7 @@
         <h2
           id="piPermissionTitle"
           style="
-            font-size: 14px;
+            font-size: calc(14px * var(--font-scale, 1));
             font-weight: bold;
             margin: 0;
             font-family: inherit;
@@ -5115,7 +5330,7 @@
             border: var(--border-width) solid var(--text-inverse);
             white-space: pre-wrap;
             word-break: break-word;
-            font-size: 11px;
+            font-size: calc(11px * var(--font-scale, 1));
             font-family: inherit;
           "
         ></pre>
@@ -5128,7 +5343,7 @@
             background: var(--bg-inverse);
             color: var(--text-inverse);
             font-family: inherit;
-            font-size: 12px;
+            font-size: calc(12px * var(--font-scale, 1));
             outline: none;
           "
         />
@@ -5144,7 +5359,7 @@
             background: var(--bg-inverse);
             color: var(--text-inverse);
             font-family: inherit;
-            font-size: 12px;
+            font-size: calc(12px * var(--font-scale, 1));
             outline: none;
           "
         ></textarea>
@@ -5205,11 +5420,13 @@
       // Registry of selectable chat modes. Each entry drives the top-left mode
       // switcher and the "Enabled Modes" settings checkboxes. New modes are
       // added here (and given their button in the .toggle block).
+      // Registry order matches the topbar toggle: LM Studio is the first mode,
+      // so "First enabled" and normalizeEnabledModes resolve to it by default.
       const MODE_DEFS = [
+        { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
         { id: "ollama", label: "Ollama", btnId: "btnOllama" },
         { id: "pi", label: "Pi", btnId: "btnPi" },
         { id: "cloud", label: "Cloud", btnId: "btnCloud" },
-        { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
         { id: "llamacpp", label: "llama.cpp", btnId: "btnLlamaCpp" },
       ];
       const DEFAULT_ENABLED_MODES = ["lmstudio", "pi", "cloud"];
@@ -5283,6 +5500,43 @@
       let cloudPalette = "calmblue";
       let lmstudioPalette = "carbon";
       let llamacppPalette = "forest";
+      // Per-mode font-size multiplier (1 = designed sizes). Every font-size in
+      // the UI is calc(Npx * var(--font-scale)), so nudging the scale resizes
+      // all text — chat, settings, notes — while keeping their proportions.
+      const FONT_SCALE_MIN = 0.7;
+      const FONT_SCALE_MAX = 1.6;
+      const FONT_SCALE_STEP = 0.05;
+      const fontScales = {
+        ollama: 1,
+        pi: 1,
+        cloud: 1,
+        lmstudio: 1,
+        llamacpp: 1,
+      };
+      function normalizeFontScale(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 1;
+        return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n));
+      }
+      function applyFontScale(scale) {
+        document.documentElement.style.setProperty(
+          "--font-scale",
+          String(normalizeFontScale(scale)),
+        );
+      }
+      function nudgeFontScale(modeId, direction) {
+        if (!(modeId in fontScales)) return;
+        const next = normalizeFontScale(
+          fontScales[modeId] + direction * FONT_SCALE_STEP,
+        );
+        fontScales[modeId] = Math.round(next * 100) / 100;
+        localStorage.setItem(
+          `ollama-pi-chat-${modeId}-font-scale`,
+          String(fontScales[modeId]),
+        );
+        if (mode === modeId) applyFontScale(fontScales[modeId]);
+        saveUiSettingsSoon();
+      }
       let ollamaTokenState = { used: null, total: null };
       let piTokenState = { used: null, total: null };
       let cloudTokenState = { used: null, total: null };
@@ -5297,7 +5551,7 @@
           min: 0,
           max: 2,
           step: 0.05,
-          def: 0.8,
+          def: 0.3,
           help: "Controls randomness. Lower = more focused and deterministic, higher = more creative.",
         },
         {
@@ -6432,6 +6686,7 @@ Output rules (absolute):
             lmstudio: lmstudioFont,
             llamacpp: llamacppFont,
           },
+          fontScales: { ...fontScales },
           enabledModes: [...enabledModes],
           defaultMode: defaultLaunchMode,
         };
@@ -6659,6 +6914,21 @@ Output rules (absolute):
             localStorage.getItem("ollama-pi-chat-llamacpp-font") ||
             "Montserrat, sans-serif",
         );
+
+        const storedScales = settings.fontScales || {};
+        for (const id of Object.keys(fontScales)) {
+          const raw =
+            useServer && storedScales[id] !== undefined
+              ? storedScales[id]
+              : localStorage.getItem(`ollama-pi-chat-${id}-font-scale`);
+          if (raw !== null && raw !== undefined && raw !== "") {
+            fontScales[id] = normalizeFontScale(raw);
+          }
+          localStorage.setItem(
+            `ollama-pi-chat-${id}-font-scale`,
+            String(fontScales[id]),
+          );
+        }
 
         localStorage.setItem("ollama-pi-chat-ollama-palette", ollamaPalette);
         localStorage.setItem("ollama-pi-chat-pi-palette", piPalette);
@@ -7149,17 +7419,16 @@ Output rules (absolute):
             })
             .catch(() => {});
         }
+        // Only models the servers actually report as installed: Ollama's
+        // downloaded models plus LM Studio / llama.cpp embedding models. A
+        // saved model that no server reports falls back to the Custom input
+        // instead of being listed as if it existed.
         const models = [
           ...new Set(
             [
-              "nomic-embed-text-v2-moe:latest",
               ...availableOllamaModels,
-              // LM Studio / llama.cpp embedding models (e.g. LM Studio's
-              // bundled text-embedding-nomic-embed-text-v1.5), so the library
-              // works without Ollama installed at all.
               ...(localEmbeddingModelsCache.lmstudio || []),
               ...(localEmbeddingModelsCache.llamacpp || []),
-              currentModel,
             ].filter(Boolean),
           ),
         ];
@@ -7182,6 +7451,41 @@ Output rules (absolute):
           customInput.value = currentKnown ? "" : currentModel || "";
         }
         refreshCustomSelectUi(select);
+        if (currentKnown) syncEmbeddingBaseUrlToModel(currentModel);
+      }
+
+      // Embedding requests must go to the server that actually hosts the
+      // selected model: an LM Studio model has to hit LM Studio's port (1234),
+      // not Ollama's 11434 — otherwise indexing fails with "model not found".
+      function embeddingBaseUrlForModel(modelName) {
+        if (!modelName || modelName === "__custom__") return "";
+        const stripVersion = (url) =>
+          String(url || "")
+            .replace(/\/+$/, "")
+            .replace(/\/v\d+$/, "");
+        if (
+          (localEmbeddingModelsCache.lmstudio || []).includes(modelName) ||
+          (localModelsCache.lmstudio || []).includes(modelName)
+        ) {
+          return stripVersion(localModelConfig.lmstudio.baseUrl);
+        }
+        if (
+          (localEmbeddingModelsCache.llamacpp || []).includes(modelName) ||
+          (localModelsCache.llamacpp || []).includes(modelName)
+        ) {
+          return stripVersion(localModelConfig.llamacpp.baseUrl);
+        }
+        if (availableOllamaModels.includes(modelName)) {
+          return "http://127.0.0.1:11434";
+        }
+        return "";
+      }
+
+      function syncEmbeddingBaseUrlToModel(modelName) {
+        const input = document.getElementById("databaseEmbeddingBaseUrlInput");
+        if (!input) return;
+        const routed = embeddingBaseUrlForModel(modelName);
+        if (routed && input.value.trim() !== routed) input.value = routed;
       }
 
       function renderDatabaseSources(sources) {
@@ -7206,7 +7510,7 @@ Output rules (absolute):
           const nameWrap = document.createElement("div");
           nameWrap.className = "setting-row";
           const nameLabel = document.createElement("label");
-          nameLabel.style.fontSize = "10px";
+          nameLabel.style.fontSize = "calc(10px * var(--font-scale, 1))";
           nameLabel.textContent = "NAME";
           const nameInput = document.createElement("input");
           nameInput.type = "text";
@@ -7217,7 +7521,7 @@ Output rules (absolute):
           const typeWrap = document.createElement("div");
           typeWrap.className = "setting-row";
           const typeLabel = document.createElement("label");
-          typeLabel.style.fontSize = "10px";
+          typeLabel.style.fontSize = "calc(10px * var(--font-scale, 1))";
           typeLabel.textContent = "TYPE";
           const typeSelect = document.createElement("select");
           typeSelect.className = "database-source-type";
@@ -7240,7 +7544,7 @@ Output rules (absolute):
           const pathWrap = document.createElement("div");
           pathWrap.className = "setting-row";
           const pathLabel = document.createElement("label");
-          pathLabel.style.fontSize = "10px";
+          pathLabel.style.fontSize = "calc(10px * var(--font-scale, 1))";
           pathLabel.textContent = "FOLDER PATH";
           const pathInput = document.createElement("input");
           pathInput.type = "text";
@@ -7251,7 +7555,7 @@ Output rules (absolute):
           const extensionsWrap = document.createElement("div");
           extensionsWrap.className = "setting-row";
           const extensionsLabel = document.createElement("label");
-          extensionsLabel.style.fontSize = "10px";
+          extensionsLabel.style.fontSize = "calc(10px * var(--font-scale, 1))";
           extensionsLabel.textContent = "EXTENSIONS";
           const extensionsInput = document.createElement("input");
           extensionsInput.type = "text";
@@ -7333,7 +7637,11 @@ Output rules (absolute):
         }
         renderEmbeddingModelSelect(databaseConfig.embedding.model);
         if (baseUrlInput) {
-          baseUrlInput.value = databaseConfig.embedding.ollamaBaseUrl;
+          // Prefer the URL of the server that reports the saved model; a stale
+          // saved URL (e.g. Ollama's) would misroute LM Studio embeddings.
+          baseUrlInput.value =
+            embeddingBaseUrlForModel(databaseConfig.embedding.model) ||
+            databaseConfig.embedding.ollamaBaseUrl;
         }
         if (batchInput) {
           batchInput.value = String(databaseConfig.embedding.batchSize);
@@ -7624,11 +7932,7 @@ Output rules (absolute):
           "databaseEmbeddingModelCustomInput",
         );
         if (select?.value === "__custom__") {
-          return (
-            customInput?.value.trim() ||
-            databaseConfig.embedding.model ||
-            "nomic-embed-text-v2-moe:latest"
-          );
+          return customInput?.value.trim() || databaseConfig.embedding.model;
         }
         return select?.value || databaseConfig.embedding.model;
       }
@@ -8926,10 +9230,7 @@ Output rules (absolute):
           }
         } else if (LOCAL_MODE_IDS.includes(mode)) {
           const list = localModelsCache[mode] || [];
-          addOpt(
-            "",
-            list.length ? "(auto / server default)" : "(no models — Refresh)",
-          );
+          addOpt("", list.length ? "Automatic" : "(no models — Refresh)");
           list.forEach((m) => addOpt(m, m));
           modelSelect.value = localModelConfig[mode].model || "";
         } else if (mode === "cloud") {
@@ -9101,6 +9402,7 @@ Output rules (absolute):
                   ? llamacppFont
                   : cloudFont,
         );
+        applyFontScale(fontScales[m] || 1);
 
         document.documentElement.setAttribute("data-mode", m); // Switches the CSS colors
 
@@ -9308,7 +9610,7 @@ Output rules (absolute):
           btn.style.cursor = "pointer";
           btn.style.fontFamily = "inherit";
           btn.style.fontWeight = "bold";
-          btn.style.fontSize = "11px";
+          btn.style.fontSize = "calc(11px * var(--font-scale, 1))";
           btn.onclick = onClick;
           optionsEl.appendChild(btn);
         };
@@ -10017,7 +10319,7 @@ Output rules (absolute):
           cell.style.flex = "1";
 
           const label = document.createElement("label");
-          label.style.fontSize = "10px";
+          label.style.fontSize = "calc(10px * var(--font-scale, 1))";
           label.textContent = def.label.toUpperCase();
 
           const numWrap = document.createElement("div");
@@ -10076,7 +10378,7 @@ Output rules (absolute):
         els.select.innerHTML = "";
         const optAuto = document.createElement("option");
         optAuto.value = "";
-        optAuto.textContent = "(auto / server default)";
+        optAuto.textContent = "Automatic";
         els.select.appendChild(optAuto);
         for (const m of list) {
           const o = document.createElement("option");
@@ -10085,6 +10387,9 @@ Output rules (absolute):
           els.select.appendChild(o);
         }
         els.select.value = current;
+        // The visible dropdown is a custom-select widget built from the native
+        // select's options at startup; rebuild it so new models show up.
+        refreshCustomSelectUi(els.select);
       }
 
       async function loadLocalModeSettings() {
@@ -10114,7 +10419,12 @@ Output rules (absolute):
         for (const id of LOCAL_MODE_IDS) {
           const els = localModeEls(id);
           if (els.base) els.base.value = localModelConfig[id].baseUrl;
-          if (els.palette) els.palette.value = localPaletteVar(id);
+          if (els.palette) {
+            els.palette.value = localPaletteVar(id);
+            // Rebuild the custom-select widget so its trigger shows the saved
+            // palette instead of the first option.
+            refreshCustomSelectUi(els.palette);
+          }
           renderLocalModelOptions(id);
           renderLocalParams(id);
         }
@@ -10767,7 +11077,7 @@ Output rules (absolute):
             btn.style.top = "5px";
             btn.style.right = "5px";
             btn.style.padding = "3px 6px";
-            btn.style.fontSize = "9px";
+            btn.style.fontSize = "calc(9px * var(--font-scale, 1))";
             btn.style.background = "var(--bg-secondary)";
             btn.style.color = "var(--text-normal)";
             btn.style.border = "var(--border-width) solid var(--border-color)";
@@ -10878,7 +11188,7 @@ Output rules (absolute):
         debugBody.style.whiteSpace = "pre-wrap";
         debugBody.style.maxHeight = "220px";
         debugBody.style.overflow = "auto";
-        debugBody.style.fontSize = "11px";
+        debugBody.style.fontSize = "calc(11px * var(--font-scale, 1))";
         debugDetails.appendChild(debugSummary);
         debugDetails.appendChild(debugBody);
 
@@ -10892,7 +11202,7 @@ Output rules (absolute):
         passagesBody.className = "thinking-details-body";
         passagesBody.style.maxHeight = "300px";
         passagesBody.style.overflow = "auto";
-        passagesBody.style.fontSize = "12px";
+        passagesBody.style.fontSize = "calc(12px * var(--font-scale, 1))";
         passagesDetails.appendChild(passagesSummary);
         passagesDetails.appendChild(passagesBody);
 
@@ -11640,7 +11950,7 @@ Output rules (absolute):
             <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: 4px;">
               <div>
                 <strong>${skill}</strong>
-                <div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">${info.desc}</div>
+                <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${info.desc}</div>
               </div>
               <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${skill}" ${enabled ? "checked" : ""} >
             </div>
@@ -11882,7 +12192,7 @@ Output rules (absolute):
         const modePrompts = promptsForMode(mode);
         if (!modePrompts.length) {
           list.innerHTML =
-            '<div style="font-size:10px; opacity:0.5; text-align:center;">No prompts saved</div>';
+            '<div style="font-size: calc(10px * var(--font-scale, 1)); opacity:0.5; text-align:center;">No prompts saved</div>';
           return;
         }
         modePrompts.forEach((p) => {
@@ -13282,6 +13592,14 @@ Output rules (absolute):
         if (!inputEl) return;
         stepNumberInput(inputEl, direction);
       });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest(".font-scale-btn");
+        if (!button) return;
+        nudgeFontScale(
+          button.getAttribute("data-font-scale-mode"),
+          button.getAttribute("data-dir") === "down" ? -1 : 1,
+        );
+      });
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
@@ -13590,29 +13908,29 @@ Output rules (absolute):
                   badge.textContent = `${name.toUpperCase()} · ${status.toolCount} TOOLS`;
                   badge.title = (status.tools || []).join(", ");
                   badge.style.cssText =
-                    "background: var(--accent); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                    "background: var(--accent); color: var(--bg-inverse); padding: 4px 8px; font-size: calc(10px * var(--font-scale, 1)); font-weight: bold; border-radius: 2px;";
                 } else if (status && !status.ok) {
                   badge.textContent = `${name.toUpperCase()} · FAILED`;
                   badge.title = status.error || "Unknown error";
                   badge.style.cssText =
-                    "background: #ff4444; color: #fff; padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                    "background: #ff4444; color: #fff; padding: 4px 8px; font-size: calc(10px * var(--font-scale, 1)); font-weight: bold; border-radius: 2px;";
                   const err = document.createElement("div");
                   err.textContent = status.error || "Unknown error";
                   err.style.cssText =
-                    "flex-basis: 100%; font-size: 9px; color: #ff4444; margin: -2px 0 4px;";
+                    "flex-basis: 100%; font-size: calc(9px * var(--font-scale, 1)); color: #ff4444; margin: -2px 0 4px;";
                   listDiv.appendChild(badge);
                   listDiv.appendChild(err);
                   return;
                 } else {
                   badge.textContent = name.toUpperCase();
                   badge.style.cssText =
-                    "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: 10px; font-weight: bold; border-radius: 2px;";
+                    "background: var(--text-inverse); color: var(--bg-inverse); padding: 4px 8px; font-size: calc(10px * var(--font-scale, 1)); font-weight: bold; border-radius: 2px;";
                 }
                 listDiv.appendChild(badge);
               });
             } else {
               listDiv.innerHTML =
-                "<span style='font-size: 10px; opacity: 0.5;'>No active servers</span>";
+                "<span style='font-size: calc(10px * var(--font-scale, 1)); opacity: 0.5;'>No active servers</span>";
             }
           }
         } catch (e) {
@@ -13847,13 +14165,11 @@ Output rules (absolute):
         // Library status runs SQLite counts that can take many seconds on a big
         // library — run it in the background so it never blocks startup.
         __timed("pollLibraryIndexJob", pollLibraryIndexJob).catch(() => {});
-        // Open in the user's chosen default mode (falling back to the first
-        // enabled mode). setMode applies that mode's palette and font.
+        // Open in the user's chosen default mode. "First enabled" ("") always
+        // means the leftmost enabled mode — never a stale initial value.
         mode = enabledModes.includes(defaultLaunchMode)
           ? defaultLaunchMode
-          : enabledModes.includes(mode)
-            ? mode
-            : enabledModes[0] || "lmstudio";
+          : enabledModes[0] || "lmstudio";
         applyPalette(
           mode === "ollama"
             ? ollamaPalette
@@ -13998,7 +14314,7 @@ Output rules (absolute):
 
         const iconSpan = document.createElement("span");
         iconSpan.innerHTML = "▼";
-        iconSpan.style.fontSize = "8px";
+        iconSpan.style.fontSize = "calc(8px * var(--font-scale, 1))";
         iconSpan.style.marginLeft = "auto";
         iconSpan.style.paddingLeft = "4px";
 
@@ -14176,6 +14492,7 @@ Output rules (absolute):
                 e.target.value === "__custom__" ? "" : "none";
               if (e.target.value === "__custom__") customInput.focus();
             }
+            syncEmbeddingBaseUrlToModel(e.target.value);
           }
         });
 
