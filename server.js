@@ -1371,6 +1371,7 @@ async function streamLocalOpenAiCompletion({
   onDelta,
   onUsage,
   onReasoning,
+  onToolCall,
 }) {
   const request = buildLocalOpenAiRequest(
     baseUrl,
@@ -1440,6 +1441,11 @@ async function streamLocalOpenAiCompletion({
       onReasoning(reasoning);
     }
     if (Array.isArray(d.tool_calls)) {
+      if (toolCallsByIndex.size === 0 && typeof onToolCall === "function") {
+        // First tool-call fragment of this round: the caller can stop
+        // streaming interim text to the reply bubble.
+        onToolCall();
+      }
       for (const fragment of d.tool_calls) {
         if (!fragment || typeof fragment !== "object") continue;
         const index = typeof fragment.index === "number" ? fragment.index : 0;
@@ -1802,6 +1808,19 @@ async function handleLocalModeStream(modeId, req, res, send) {
     }
 
     const seenSkillCalls = new Set();
+    // Text the model wrote in a round that ended with a tool call is interim
+    // (plan, notes, false starts) — it belongs in the thinking stream, never
+    // in the reply bubble.
+    const moveInterimTextToThinking = () => {
+      if (!output.trim()) return;
+      if (!emittedThinkingStart) {
+        emittedThinkingStart = true;
+        emit({ type: "thinking_start" });
+      }
+      const interim = `\n\n[Interim notes]\n${output.trim()}\n`;
+      thinking += interim;
+      emit({ type: "thinking_delta", delta: interim, thinking });
+    };
     // When the budget runs out, end with an answer instead of an error: stop
     // offering tools and tell the model to write its final reply.
     const exhaustToolBudget = () => {
@@ -1882,6 +1901,9 @@ async function handleLocalModeStream(modeId, req, res, send) {
 
     let round = 0;
     for (;;) {
+      // Once a native tool call starts streaming, everything the model wrote
+      // this round is interim — stop mirroring it to the reply bubble.
+      let sawToolCallThisRound = false;
       let streamResult;
       try {
         streamResult = await streamLocalOpenAiCompletion({
@@ -1893,8 +1915,14 @@ async function handleLocalModeStream(modeId, req, res, send) {
           params,
           tools: nativeToolsEnabled ? nativeTools : undefined,
           signal: abortController.signal,
+          onToolCall: () => {
+            if (sawToolCallThisRound) return;
+            sawToolCallThisRound = true;
+            emit({ type: "delta", delta: "", response: "" });
+          },
           onDelta: (delta) => {
             output += delta;
+            if (sawToolCallThisRound) return;
             if (output.includes("<call:")) return;
             // Send the raw output (including any trailing partial "<call") so the
             // client can hide it and show the animated drum icon, matching Ollama.
@@ -1975,7 +2003,8 @@ async function handleLocalModeStream(modeId, req, res, send) {
           ];
         }
         // Reset the accumulated text so the final reply is ONLY what the model
-        // writes after the tool results.
+        // writes after the tool results; anything interim goes to thinking.
+        moveInterimTextToThinking();
         output = "";
         emit({ type: "delta", delta: "", response: output });
         continue;
@@ -2016,6 +2045,7 @@ async function handleLocalModeStream(modeId, req, res, send) {
       // Reset the accumulated text so the final reply is ONLY what the model
       // writes after seeing the skill result. Otherwise any answer it produced
       // BEFORE calling the skill stays prepended and the reply looks duplicated.
+      moveInterimTextToThinking();
       output = "";
       emit({ type: "delta", delta: "", response: output });
     }
@@ -2424,10 +2454,11 @@ function getCloudSkillsPolicyPrompt(options = {}) {
     lines.push(
       `AGENT WORKFLOW (up to ${agentMaxRounds} tool calls for this request):`,
       "For any task that needs multiple steps (research, comparing sources, gathering material, writing notes):",
-      "1. FIRST write a short numbered plan of the steps you intend to take. Keep it to one line per step.",
-      "2. Execute the plan one tool call at a time. After each result, note in one sentence what it gave you and whether the plan still holds; revise the plan if a step failed or a result changed the picture.",
+      "1. FIRST think through a short numbered plan of the steps you intend to take. Keep it to one line per step.",
+      "2. Execute the plan one tool call at a time. After each result, decide whether the plan still holds; revise it if a step failed or a result changed the picture.",
       "3. Never repeat a call that already failed with the same arguments — change the approach instead.",
       "4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.",
+      "CRITICAL — WHERE TO WRITE WHAT: the plan and your notes between steps belong in your reasoning/thinking, NEVER in the reply text. While you still intend to call more tools, output NOTHING as reply text — no plan, no progress notes, no partial answers. The ONLY prose you ever write as reply text is the single final answer, after your last tool call.",
       "AMBIGUITY: If a name or term is ambiguous, resolve it with ONE clarifying lookup or answer for the most prominent match and note the assumption in one sentence.",
       "",
     );
@@ -5568,6 +5599,16 @@ const server = http.createServer(async (req, res) => {
         // Reset the accumulated text so the final reply is ONLY what the model
         // writes after seeing the skill result. Otherwise any answer it produced
         // BEFORE calling the skill stays prepended and the reply looks duplicated.
+        // Anything interim (plan, notes) belongs in the thinking stream.
+        if (output.trim()) {
+          if (!emittedThinkingStart) {
+            emittedThinkingStart = true;
+            emit({ type: "thinking_start" });
+          }
+          const interim = `\n\n[Interim notes]\n${output.trim()}\n`;
+          thinking += interim;
+          emit({ type: "thinking_delta", delta: interim, thinking });
+        }
         output = "";
         emit({ type: "delta", delta: "", response: output });
       }
@@ -5922,6 +5963,20 @@ const server = http.createServer(async (req, res) => {
 
                 if (outputToolCalls.length > 0) {
                   messages.push({ role: "assistant", content: output });
+                  // Text written before a tool call is interim (plan, notes)
+                  // — move it to the thinking stream and clear the bubble so
+                  // it never prefixes the final answer.
+                  if (output.trim()) {
+                    if (!emittedThinkingStart) {
+                      emittedThinkingStart = true;
+                      emit({ type: "thinking_start" });
+                    }
+                    const interim = `\n\n[Interim notes]\n${output.trim()}\n`;
+                    thinking += interim;
+                    emit({ type: "thinking_delta", delta: interim, thinking });
+                  }
+                  output = "";
+                  emit({ type: "delta", delta: "", response: output });
                   (async () => {
                     for (const tc of outputToolCalls) {
                       if (!emittedThinkingStart) {
