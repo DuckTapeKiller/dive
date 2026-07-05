@@ -1913,6 +1913,62 @@
         word-break: break-word;
         overflow-wrap: anywhere;
       }
+      /* Agent step timeline: one row per tool call, visible in the chat flow
+         instead of buried in the thinking stream. */
+      .agent-timeline {
+        margin: 4px 0 8px 0;
+        border: var(--border-width) solid var(--border-color);
+        background: var(--bg-secondary);
+        padding: 6px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .agent-timeline-title {
+        font-size: calc(11px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 1px;
+        color: var(--text-normal);
+        opacity: 0.85;
+      }
+      .agent-timeline-step {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font-size: calc(12px * var(--font-scale, 1));
+        color: var(--text-normal);
+      }
+      .agent-timeline-num {
+        opacity: 0.6;
+        min-width: 18px;
+        text-align: right;
+      }
+      .agent-timeline-label {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .agent-timeline-status {
+        font-weight: 700;
+      }
+      .agent-timeline-step.pending .agent-timeline-status {
+        animation: agent-step-pulse 1s infinite;
+      }
+      .agent-timeline-step.ok .agent-timeline-status {
+        color: var(--accent);
+      }
+      .agent-timeline-step.fail .agent-timeline-status {
+        color: #ff4444;
+      }
+      .agent-timeline-step.stopped {
+        opacity: 0.6;
+      }
+      @keyframes agent-step-pulse {
+        50% {
+          opacity: 0.2;
+        }
+      }
       .thinking-details-body table {
         display: block;
         max-width: 100%;
@@ -3118,6 +3174,61 @@
               Pick a loaded model. Click refresh after loading a model in LM
               Studio.
             </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="lmStudioNativeToolsInput" type="checkbox" />
+                NATIVE TOOL CALLING (OPENAI SCHEMA)
+              </label>
+            </div>
+            <div class="setting-help">
+              Send skills and MCP tools as structured function schemas — far
+              more reliable with tool-trained models (Gemma, Qwen, Hermes, Llama
+              3). Disable to force the legacy XML skill-call prompt.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="lmStudioAgentModeInput" type="checkbox" />
+                AGENT MODE
+              </label>
+            </div>
+            <div class="setting-help">
+              Plan-first prompting and a larger tool budget for multi-step
+              tasks. Tool calls appear as a step timeline in the chat.
+            </div>
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >AGENT TOOL BUDGET</label
+            >
+            <div class="setting-number">
+              <input
+                id="lmStudioAgentRoundsInput"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+              />
+              <div class="setting-number-controls">
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="lmStudioAgentRoundsInput"
+                  data-dir="up"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="lmStudioAgentRoundsInput"
+                  data-dir="down"
+                >
+                  −
+                </button>
+              </div>
+            </div>
+            <div class="setting-help">
+              Maximum tool calls per request in Agent Mode. Default: 25. Without
+              Agent Mode the budget is 6.
+            </div>
             <label>COLOR PALETTE</label>
             <select id="lmStudioPaletteSelect">
               <option value="orange">Cyber Orange</option>
@@ -3216,6 +3327,61 @@
             <div class="setting-help">
               llama.cpp serves the model it was launched with; refreshing lists
               whatever `/v1/models` reports.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="llamaCppNativeToolsInput" type="checkbox" />
+                NATIVE TOOL CALLING (OPENAI SCHEMA)
+              </label>
+            </div>
+            <div class="setting-help">
+              Send skills and MCP tools as structured function schemas (requires
+              llama-server started with --jinja). If the server rejects them,
+              the request falls back to the XML skill prompt.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="llamaCppAgentModeInput" type="checkbox" />
+                AGENT MODE
+              </label>
+            </div>
+            <div class="setting-help">
+              Plan-first prompting and a larger tool budget for multi-step
+              tasks. Tool calls appear as a step timeline in the chat.
+            </div>
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >AGENT TOOL BUDGET</label
+            >
+            <div class="setting-number">
+              <input
+                id="llamaCppAgentRoundsInput"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+              />
+              <div class="setting-number-controls">
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="llamaCppAgentRoundsInput"
+                  data-dir="up"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="llamaCppAgentRoundsInput"
+                  data-dir="down"
+                >
+                  −
+                </button>
+              </div>
+            </div>
+            <div class="setting-help">
+              Maximum tool calls per request in Agent Mode. Default: 25. Without
+              Agent Mode the budget is 6.
             </div>
             <label>COLOR PALETTE</label>
             <select id="llamaCppPaletteSelect">
@@ -5638,11 +5804,17 @@
           baseUrl: "http://127.0.0.1:1234/v1",
           model: "",
           params: defaultLocalParams(),
+          nativeTools: true,
+          agentMode: false,
+          agentMaxRounds: 25,
         },
         llamacpp: {
           baseUrl: "http://127.0.0.1:8080/v1",
           model: "",
           params: defaultLocalParams(),
+          nativeTools: true,
+          agentMode: false,
+          agentMaxRounds: 25,
         },
       };
       const DEFAULT_UI_FONTS = Object.freeze({
@@ -5838,6 +6010,9 @@
       };
       let lastIndexedFilesExportPath = "";
       let availableOllamaModels = [];
+      // True when /api/models reported Ollama as unreachable (normal for
+      // LM Studio-only setups); shown in the topbar instead of an error.
+      let ollamaOffline = false;
       let libraryIndexPollTimer = null;
       let promptsList = [];
       let activePromptId = "";
@@ -9182,9 +9357,18 @@ Output rules (absolute):
 
       // MODELS AND MODE
       async function loadModels() {
+        // Ollama's model list is only useful when Ollama mode can be used at
+        // all — don't ping a server the user never enabled.
+        if (!enabledModes.includes("ollama")) {
+          availableOllamaModels = [];
+          return;
+        }
         try {
           const res = await fetch(apiUrl("/api/models"));
-          const models = await readJsonResponse(res, "Load models");
+          const payload = await readJsonResponse(res, "Load models");
+          // New shape: { models, offline }. Legacy shape: bare array.
+          const models = Array.isArray(payload) ? payload : payload?.models;
+          ollamaOffline = payload?.offline === true;
           availableOllamaModels = Array.isArray(models) ? models : [];
           const savedModel = localStorage.getItem(MODEL_STORAGE_KEY) || "";
           if (!savedModel || !availableOllamaModels.includes(savedModel)) {
@@ -9222,6 +9406,9 @@ Output rules (absolute):
         };
         if (mode === "ollama") {
           const saved = localStorage.getItem(MODEL_STORAGE_KEY) || "";
+          if (!availableOllamaModels.length) {
+            addOpt("", ollamaOffline ? "(Ollama offline)" : "(no models)");
+          }
           availableOllamaModels.forEach((m) => addOpt(m, m));
           if (saved && availableOllamaModels.includes(saved)) {
             modelSelect.value = saved;
@@ -10278,6 +10465,9 @@ Output rules (absolute):
             palette: document.getElementById("lmStudioPaletteSelect"),
             params: document.getElementById("lmStudioParams"),
             reset: document.getElementById("lmStudioParamsReset"),
+            nativeTools: document.getElementById("lmStudioNativeToolsInput"),
+            agentMode: document.getElementById("lmStudioAgentModeInput"),
+            agentRounds: document.getElementById("lmStudioAgentRoundsInput"),
           };
         }
         return {
@@ -10286,6 +10476,9 @@ Output rules (absolute):
           palette: document.getElementById("llamaCppPaletteSelect"),
           params: document.getElementById("llamaCppParams"),
           reset: document.getElementById("llamaCppParamsReset"),
+          nativeTools: document.getElementById("llamaCppNativeToolsInput"),
+          agentMode: document.getElementById("llamaCppAgentModeInput"),
+          agentRounds: document.getElementById("llamaCppAgentRoundsInput"),
         };
       }
 
@@ -10409,6 +10602,11 @@ Output rules (absolute):
                       ? s.params
                       : {}),
                   },
+                  nativeTools: s.nativeTools !== false,
+                  agentMode: s.agentMode === true,
+                  agentMaxRounds: Number.isFinite(Number(s.agentMaxRounds))
+                    ? Math.min(50, Math.max(1, Math.round(s.agentMaxRounds)))
+                    : 25,
                 };
               }
             }
@@ -10424,6 +10622,18 @@ Output rules (absolute):
             // Rebuild the custom-select widget so its trigger shows the saved
             // palette instead of the first option.
             refreshCustomSelectUi(els.palette);
+          }
+          if (els.nativeTools) {
+            els.nativeTools.checked =
+              localModelConfig[id].nativeTools !== false;
+          }
+          if (els.agentMode) {
+            els.agentMode.checked = localModelConfig[id].agentMode === true;
+          }
+          if (els.agentRounds) {
+            els.agentRounds.value = String(
+              localModelConfig[id].agentMaxRounds || 25,
+            );
           }
           renderLocalModelOptions(id);
           renderLocalParams(id);
@@ -10511,6 +10721,28 @@ Output rules (absolute):
               localModelConfig[id].model = els.select.value;
               saveLocalModeSettings();
               if (mode === id) updateModeStatus();
+            });
+          }
+          if (els.nativeTools) {
+            els.nativeTools.addEventListener("change", () => {
+              localModelConfig[id].nativeTools = els.nativeTools.checked;
+              saveLocalModeSettings();
+            });
+          }
+          if (els.agentMode) {
+            els.agentMode.addEventListener("change", () => {
+              localModelConfig[id].agentMode = els.agentMode.checked;
+              saveLocalModeSettings();
+            });
+          }
+          if (els.agentRounds) {
+            els.agentRounds.addEventListener("change", () => {
+              let v = parseInt(els.agentRounds.value, 10);
+              if (!Number.isFinite(v)) v = 25;
+              v = Math.min(50, Math.max(1, v));
+              els.agentRounds.value = String(v);
+              localModelConfig[id].agentMaxRounds = v;
+              saveLocalModeSettings();
             });
           }
           if (els.palette) {
@@ -10657,7 +10889,7 @@ Output rules (absolute):
 
       async function deleteAllHistory() {
         const modeLabel =
-          mode === "pi" ? "Pi" : mode === "cloud" ? "Cloud" : "Ollama";
+          MODE_DEFS.find((def) => def.id === mode)?.label || mode;
         if (
           !(await appConfirm(`Delete all ${modeLabel} history?`, "History", {
             confirmLabel: "Delete",
@@ -11206,6 +11438,41 @@ Output rules (absolute):
         passagesDetails.appendChild(passagesSummary);
         passagesDetails.appendChild(passagesBody);
 
+        // Agent step timeline: one visible row per tool call, above the
+        // thinking stream. Hidden until the first tool runs.
+        const timeline = document.createElement("div");
+        timeline.className = "agent-timeline";
+        timeline.style.display = "none";
+        const timelineTitle = document.createElement("div");
+        timelineTitle.className = "agent-timeline-title";
+        timelineTitle.textContent = "STEPS";
+        timeline.appendChild(timelineTitle);
+        const timelineSteps = [];
+        const timelineArgsSummary = (argsPreview) => {
+          if (!argsPreview) return "";
+          try {
+            const parsed = JSON.parse(argsPreview);
+            if (parsed && typeof parsed === "object") {
+              const firstString = Object.values(parsed).find(
+                (v) => typeof v === "string" && v.trim(),
+              );
+              if (typeof firstString === "string") {
+                return firstString.slice(0, 70);
+              }
+              const firstArray = Object.values(parsed).find(
+                (v) => Array.isArray(v) && v.length,
+              );
+              if (firstArray) {
+                return firstArray.map(String).join(", ").slice(0, 70);
+              }
+            }
+          } catch (_e) {
+            // Not JSON (e.g. a shell command): show the raw preview.
+          }
+          return String(argsPreview).slice(0, 70);
+        };
+
+        wrap.appendChild(timeline);
         wrap.appendChild(plain);
         wrap.appendChild(details);
         wrap.appendChild(debugDetails);
@@ -11315,6 +11582,47 @@ Output rules (absolute):
             if (!evt || typeof evt !== "object") return;
             traceEvents.push({ ...evt });
           },
+          addTimelineStep(toolName, argsPreview) {
+            timeline.style.display = "flex";
+            const row = document.createElement("div");
+            row.className = "agent-timeline-step pending";
+            const num = document.createElement("span");
+            num.className = "agent-timeline-num";
+            num.textContent = `${timelineSteps.length + 1}.`;
+            const label = document.createElement("span");
+            label.className = "agent-timeline-label";
+            const argsSummary = timelineArgsSummary(argsPreview);
+            label.textContent = argsSummary
+              ? `${toolName} — ${argsSummary}`
+              : toolName;
+            label.title = label.textContent;
+            const status = document.createElement("span");
+            status.className = "agent-timeline-status";
+            status.textContent = "…";
+            row.append(num, label, status);
+            timeline.appendChild(row);
+            timelineSteps.push({ row, status, toolName, done: false });
+            scrollChatToBottom();
+          },
+          completeTimelineStep(toolName, isError) {
+            const step =
+              timelineSteps.find((s) => !s.done && s.toolName === toolName) ||
+              timelineSteps.find((s) => !s.done);
+            if (!step) return;
+            step.done = true;
+            step.row.classList.remove("pending");
+            step.row.classList.add(isError ? "fail" : "ok");
+            step.status.textContent = isError ? "✗" : "✓";
+          },
+          finalizeTimeline() {
+            for (const step of timelineSteps) {
+              if (step.done) continue;
+              step.done = true;
+              step.row.classList.remove("pending");
+              step.row.classList.add("stopped");
+              step.status.textContent = "⏹";
+            }
+          },
           markFailure(reason) {
             if (!reason) return;
             this.addTraceLine(`Failure: ${reason}`, { failure: true });
@@ -11344,6 +11652,24 @@ Output rules (absolute):
             return currentPassages.length > 0;
           },
         };
+        // Replay persisted tool events into the timeline (history and aborted
+        // runs re-render from their traceEvents snapshot).
+        if (traceEvents.length) {
+          for (const evt of traceEvents) {
+            if (evt.type === "tool_start") {
+              controller.addTimelineStep(
+                evt.toolName || "tool",
+                evt.argsPreview || "",
+              );
+            } else if (evt.type === "tool_end") {
+              controller.completeTimelineStep(
+                evt.toolName || "tool",
+                evt.isError === true,
+              );
+            }
+          }
+          controller.finalizeTimeline();
+        }
         if (hasReasoning) {
           plain.style.display = "none";
           details.style.display = "block";
@@ -12115,9 +12441,14 @@ Output rules (absolute):
       function checkHardModeTriggers(rawMessage) {
         const firefoxMatch = rawMessage.match(FIREFOX_PROOFREAD_TRIGGER);
         if (firefoxMatch) {
+          // Newer Firefox wraps the selection in <selection>…</selection>
+          // tags inside the quotes — the model must get ONLY the text itself.
+          let selected = firefoxMatch[1].trim();
+          const tagged = selected.match(/^<selection>([\s\S]*)<\/selection>$/i);
+          if (tagged) selected = tagged[1].trim();
           return {
             systemPrompt: PROOFREAD_HARD_MODE_PROMPT,
-            messageToSend: firefoxMatch[1].trim(),
+            messageToSend: selected,
           };
         }
         const proofreadMatch = rawMessage.match(PROOFREAD_TRIGGER);
@@ -12388,6 +12719,9 @@ Output rules (absolute):
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
           const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
+          if (typeof thinking.addTimelineStep === "function") {
+            thinking.addTimelineStep(tool, evt.argsPreview || "");
+          }
           thinking.addTraceLine(`Tool start: ${tool}${args}`);
           return;
         }
@@ -12407,6 +12741,9 @@ Output rules (absolute):
           const output = evt.outputPreview
             ? ` output=${evt.outputPreview}`
             : "";
+          if (typeof thinking.completeTimelineStep === "function") {
+            thinking.completeTimelineStep(tool, evt.isError === true);
+          }
           thinking.addTraceLine(`Tool end: ${tool}${suffix}${output}`, {
             failure: evt.isError === true,
           });
@@ -12459,7 +12796,18 @@ Output rules (absolute):
         }
 
         if (evt.type === "error") {
+          if (typeof thinking.finalizeTimeline === "function") {
+            thinking.finalizeTimeline();
+          }
           thinking.markFailure(evt.error || "Unknown error");
+        }
+
+        if (evt.type === "done") {
+          // Any step still marked running when the reply completes was
+          // interrupted (e.g. budget exhaustion mid-call) — close it out.
+          if (typeof thinking.finalizeTimeline === "function") {
+            thinking.finalizeTimeline();
+          }
         }
       }
 
@@ -12723,10 +13071,6 @@ Output rules (absolute):
           clearPendingFiles();
         }
 
-        addMessage(displayText, "user");
-        const thinking = addThinking();
-        runSession.thinkingController = thinking;
-
         // Prepare active system prompt context
         let requestHistory = [...history];
         let messageToSend = text;
@@ -12746,6 +13090,19 @@ Output rules (absolute):
             requestHistory = []; // context-blind: no conversation history
           }
         }
+        // Hard-mode triggers (proofread/translate, incl. Firefox's context
+        // menu): show the text actually being corrected, not the wrapper
+        // template around it.
+        if (!persistToHistory) {
+          displayText = messageToSend;
+        }
+        // Hard-mode exchanges are one-shot: never let the server save them as
+        // conversations either.
+        const saveConvId = persistToHistory ? runConvId : null;
+
+        addMessage(displayText, "user");
+        const thinking = addThinking();
+        runSession.thinkingController = thinking;
 
         lastSentMessage = messageToSend;
         runSession.history = [...history];
@@ -12773,7 +13130,7 @@ Output rules (absolute):
               messageToSend,
               modelSelect.value,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
@@ -12958,7 +13315,7 @@ Output rules (absolute):
               runMode,
               messageToSend,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
@@ -13028,7 +13385,7 @@ Output rules (absolute):
             response = await runCloudStreamConversation(
               messageToSend,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               (partialResponse) => {
@@ -13185,6 +13542,9 @@ Output rules (absolute):
             requestHistory = [];
           }
         }
+        // Hard-mode exchanges are one-shot: never let the server save them as
+        // conversations either.
+        const saveConvId = persistToHistory ? runConvId : null;
 
         const runAbortController = new AbortController();
         runSession.activeAbortController = runAbortController;
@@ -13253,7 +13613,7 @@ Output rules (absolute):
               messageToSend,
               modelSelect.value,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               handlePartial,
@@ -13337,7 +13697,7 @@ Output rules (absolute):
               runMode,
               messageToSend,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               handlePartial,
@@ -13383,7 +13743,7 @@ Output rules (absolute):
             response = await runCloudStreamConversation(
               messageToSend,
               requestHistory,
-              runConvId,
+              saveConvId,
               lastUserMessage.slice(0, 40),
               runAbortController.signal,
               handlePartial,
@@ -14239,11 +14599,12 @@ Output rules (absolute):
           );
         }
 
-        // 3. Handle optional one-shot query prompt
+        // 3. Handle optional one-shot query prompt (Firefox "Ask chatbot"
+        // context menu). Runs in the user's launch mode — never a hardcoded
+        // one; the app is not Ollama-only.
         const params = new URLSearchParams(window.location.search);
         const q = params.get("q");
         if (q) {
-          setMode("ollama");
           document.getElementById("input").value = q;
           autoResizeInput();
           sendMessage();
