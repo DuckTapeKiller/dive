@@ -1629,6 +1629,26 @@ function safeParseArgs(argStr) {
   }
 }
 
+// Skill web sources must survive into the saved conversation: merge them into
+// the librarySources persisted on the assistant message (deduped by URL) so
+// the source pills re-render when the chat is reopened from history.
+function mergeWebSourceResults(existing, incoming) {
+  const merged = Array.isArray(existing) ? [...existing] : [];
+  const seen = new Set(
+    merged
+      .map((item) => (item && item.url ? String(item.url) : ""))
+      .filter(Boolean),
+  );
+  for (const source of Array.isArray(incoming) ? incoming : []) {
+    if (!source) continue;
+    const url = source.url ? String(source.url) : "";
+    if (url && seen.has(url)) continue;
+    if (url) seen.add(url);
+    merged.push(source);
+  }
+  return merged;
+}
+
 async function handleLocalModeStream(modeId, req, res, send) {
   let finished = false;
   const abortController = new AbortController();
@@ -1891,6 +1911,10 @@ async function handleLocalModeStream(modeId, req, res, send) {
         result,
       );
       if (localSources.length) {
+        librarySourceResults = mergeWebSourceResults(
+          librarySourceResults,
+          localSources,
+        );
         emit({ type: "web_sources", sources: localSources });
       }
       const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
@@ -5577,6 +5601,10 @@ const server = http.createServer(async (req, res) => {
           result,
         );
         if (cloudSources.length) {
+          librarySourceResults = mergeWebSourceResults(
+            librarySourceResults,
+            cloudSources,
+          );
           emit({ type: "web_sources", sources: cloudSources });
         }
         const endMsg = `[Finished tool: ${toolCall.function.name}]\n`;
@@ -6025,6 +6053,10 @@ const server = http.createServer(async (req, res) => {
                         result,
                       );
                       if (ollamaSources.length) {
+                        librarySourceResults = mergeWebSourceResults(
+                          librarySourceResults,
+                          ollamaSources,
+                        );
                         emit({ type: "web_sources", sources: ollamaSources });
                       }
 
