@@ -3174,8 +3174,10 @@
               Refresh models
             </button>
             <div class="setting-help">
-              Pick a loaded model. Click refresh after loading a model in LM
-              Studio.
+              Pick the model to use. Dive loads it into LM Studio for you when
+              you send a message — no need to load it manually first.
+              "Automatic" uses whatever LLM is already loaded, or the first
+              available one. Click Refresh after downloading a new model.
             </div>
             <div class="setting-row-inline">
               <label style="font-size: calc(10px * var(--font-scale, 1))">
@@ -5708,6 +5710,7 @@
           draftAssistant: null,
           streamingAssistantDiv: null,
           thinkingController: null,
+          thinkingStartedAt: null,
           drumPending: false,
         };
       }
@@ -11631,21 +11634,24 @@ Output rules (absolute):
         chat.appendChild(wrap);
         scrollChatToBottom();
 
-        // Live elapsed counter on the thinking indicator. Only ticks for live
-        // runs — history replays pass a snapshot and stay static. Cleared on
-        // remove()/stopTimer() so no interval outlives its element.
-        const startedAt = Date.now();
+        // Live elapsed counter on the thinking indicator. Ticks only for a live
+        // run (initialSnapshot.live); history replays stay static. startedAt is
+        // carried across mode switches so the counter continues from the real
+        // run start instead of restarting when the transcript is re-rendered.
+        const startedAt = Number(initialSnapshot.startedAt) || Date.now();
         let timerInterval = null;
-        if (!assistantMetadataHasContent(initialSnapshot)) {
-          timerInterval = window.setInterval(() => {
-            const s = Math.floor((Date.now() - startedAt) / 1000);
-            const elapsed =
-              s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
-            if (plain.style.display !== "none") {
-              plain.textContent = `Thinking... ${elapsed}`;
-            }
-            summary.textContent = `Thinking... (${elapsed})`;
-          }, 1000);
+        const renderElapsed = () => {
+          const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+          const elapsed =
+            s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+          if (plain.style.display !== "none") {
+            plain.textContent = `Thinking... ${elapsed}`;
+          }
+          summary.textContent = `Thinking... (${elapsed})`;
+        };
+        if (initialSnapshot.live === true) {
+          renderElapsed();
+          timerInterval = window.setInterval(renderElapsed, 1000);
         }
 
         let reasoningText =
@@ -11878,10 +11884,18 @@ Output rules (absolute):
         );
       }
 
-      function renderAssistantHistoryMessage(message, session = null) {
+      function renderAssistantHistoryMessage(
+        message,
+        session = null,
+        liveOptions = {},
+      ) {
         const metadata = getAssistantMetadataFromMessage(message);
         if (assistantMetadataHasContent(metadata)) {
-          const thinking = addThinking(metadata);
+          const thinking = addThinking({
+            ...metadata,
+            live: liveOptions.live === true,
+            startedAt: liveOptions.startedAt,
+          });
           if (session) session.thinkingController = thinking;
         }
         const div = addMessage(message.content || "", "assistant", {
@@ -11892,9 +11906,13 @@ Output rules (absolute):
       }
 
       function renderSessionTranscript(session) {
-        chat.innerHTML = "";
         const activeThinkingSnapshot =
           session.thinkingController?.getSnapshot?.() || null;
+        // Stop the outgoing controller's elapsed-timer interval before the DOM
+        // is wiped, otherwise it keeps firing against detached nodes on every
+        // mode switch (a fresh controller is created below).
+        session.thinkingController?.stopTimer?.();
+        chat.innerHTML = "";
         session.streamingAssistantDiv = null;
         session.thinkingController = null;
         const sessionHistory = Array.isArray(session.history)
@@ -11931,16 +11949,21 @@ Output rules (absolute):
               },
             );
           }
-          renderAssistantHistoryMessage(session.draftAssistant, session);
+          renderAssistantHistoryMessage(session.draftAssistant, session, {
+            live: !!session.activeAbortController,
+            startedAt: session.thinkingStartedAt,
+          });
           // Restore the tool-call drum if this mode is still streaming a call,
           // so it stays visible across mode switches instead of vanishing.
           if (session.drumPending && session.activeAbortController) {
             appendDrumIcon(session.streamingAssistantDiv);
           }
         } else if (session.activeAbortController) {
-          session.thinkingController = addThinking(
-            activeThinkingSnapshot || {},
-          );
+          session.thinkingController = addThinking({
+            ...(activeThinkingSnapshot || {}),
+            live: true,
+            startedAt: session.thinkingStartedAt,
+          });
         }
       }
 
@@ -13298,7 +13321,13 @@ Output rules (absolute):
         const saveConvId = persistToHistory ? runConvId : null;
 
         addMessage(displayText, "user");
-        const thinking = addThinking();
+        // Real run start, kept on the session so the elapsed counter continues
+        // from here across mode switches instead of restarting.
+        runSession.thinkingStartedAt = Date.now();
+        const thinking = addThinking({
+          live: true,
+          startedAt: runSession.thinkingStartedAt,
+        });
         runSession.thinkingController = thinking;
 
         lastSentMessage = messageToSend;
@@ -13715,7 +13744,11 @@ Output rules (absolute):
         }
         runSession.history = [...history];
         runSession.draftAssistant = null;
-        const thinking = addThinking();
+        runSession.thinkingStartedAt = Date.now();
+        const thinking = addThinking({
+          live: true,
+          startedAt: runSession.thinkingStartedAt,
+        });
         runSession.thinkingController = thinking;
 
         let requestHistory = [...history];

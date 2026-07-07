@@ -1551,6 +1551,100 @@ async function fetchLocalModels(modeId) {
   return { models, embeddingModels, contextLength };
 }
 
+// Resolve "Automatic" (empty model) to a concrete model id for a local server.
+// Ollama JIT-loads on any request, but LM Studio returns 400 "No models
+// loaded" when asked to chat with no model specified and none loaded. So when
+// the user picked Automatic we name a model explicitly: prefer one that is
+// already loaded (no reload cost), else the first non-embedding model the
+// server reports (LM Studio JIT-loads it). Returns "" if none can be found, in
+// which case the request proceeds as before (llama.cpp serves its loaded model).
+async function resolveAutomaticLocalModel(modeId, baseUrl) {
+  const root = baseUrl.replace(/\/v\d+$/, "");
+  // 1) An already-loaded model (LM Studio's native endpoint reports state).
+  try {
+    const r = await fetch(root + "/api/v0/models", { method: "GET" });
+    if (r.ok) {
+      const d = await r.json().catch(() => null);
+      const list = Array.isArray(d?.data) ? d.data : [];
+      const loaded = list.find(
+        (m) => m && m.state === "loaded" && !/embed/i.test(m.id || ""),
+      );
+      if (loaded && loaded.id) return loaded.id;
+    }
+  } catch (_e) {
+    // best-effort; fall through to the OpenAI-compatible list
+  }
+  // 2) First non-embedding model the server has available to load.
+  try {
+    const { models } = await fetchLocalModels(modeId);
+    if (Array.isArray(models) && models.length) return models[0];
+  } catch (_e) {
+    // leave unresolved
+  }
+  return "";
+}
+
+// Is a given model already loaded on the server? (LM Studio native endpoint.)
+async function lmStudioModelIsLoaded(baseUrl, model) {
+  const root = baseUrl.replace(/\/v\d+$/, "");
+  try {
+    const r = await fetch(root + "/api/v0/models", {
+      method: "GET",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null; // endpoint absent -> unknown
+    const d = await r.json().catch(() => null);
+    const list = Array.isArray(d?.data) ? d.data : [];
+    return list.some((m) => m && m.id === model && m.state === "loaded");
+  } catch (_e) {
+    return null;
+  }
+}
+
+// Explicitly load a model into LM Studio. JIT loading is unreliable / can be
+// disabled, so we don't depend on it: the REST load endpoint deterministically
+// loads the model (and does NOT evict an already-loaded embedding model, so
+// library indexing keeps working). Best-effort: returns true on success, false
+// if the endpoint is unavailable or the load fails, in which case the caller
+// proceeds and lets the chat request surface any real error.
+async function loadLmStudioModel(baseUrl, model) {
+  if (!model) return false;
+  const root = baseUrl.replace(/\/v\d+$/, "");
+  // v1 is the current endpoint; fall back to the legacy v0 path.
+  for (const path of ["/api/v1/models/load", "/api/v0/models/load"]) {
+    try {
+      const r = await fetch(root + path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+        // Loading a large model can take a while; allow up to 10 minutes.
+        signal: AbortSignal.timeout(600000),
+      });
+      if (r.ok) {
+        const d = await r.json().catch(() => null);
+        if (!d || d.status === "loaded" || d.instance_id || d.type) return true;
+      }
+      // 404 -> try the next path; other non-OK -> give up on this path.
+      if (r.status !== 404) break;
+    } catch (_e) {
+      // network error: stop trying, let the chat request report it
+      break;
+    }
+  }
+  return false;
+}
+
+// For LM Studio: make sure the chosen chat model is loaded before we send the
+// chat request, so the user never has to load one manually (their indexer may
+// have loaded only an embedding model). No-op for llama.cpp (it always serves
+// the model it was started with) and when there is no concrete model to load.
+async function ensureLocalChatModelLoaded(modeId, baseUrl, model, onStatus) {
+  if (modeId !== "lmstudio" || !model) return;
+  if ((await lmStudioModelIsLoaded(baseUrl, model)) === true) return;
+  if (typeof onStatus === "function") onStatus(model);
+  await loadLmStudioModel(baseUrl, model);
+}
+
 // Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
 // Remove any skill-call syntax that survived the streaming loop so it can never
 // reach the chat bubble. Covers three cases the local models produce that Ollama
@@ -1673,12 +1767,19 @@ async function handleLocalModeStream(modeId, req, res, send) {
     // Client sends explicit "" when "Automatic" is selected.
     // Prefer the client's explicit choice; fall back to server saved setting only
     // when the client sent nothing (undefined), not when it sent empty string.
-    const model =
+    let model =
       body.model !== undefined
         ? typeof body.model === "string"
           ? body.model.trim()
           : ""
         : conf.model || "";
+    // "Automatic" (empty model): name a concrete model so LM Studio can load
+    // it, instead of erroring with "No models loaded". llama.cpp is unaffected
+    // (it serves whatever it was started with), and if nothing resolves we
+    // leave it empty and proceed as before.
+    if (!model) {
+      model = await resolveAutomaticLocalModel(modeId, baseUrl);
+    }
     // Prefer params from the request; fall back to the saved per-mode config.
     const params = sanitizeLocalParams(body.params || conf.params);
     const { history = [], saveConv, convTitle, library } = body;
@@ -1922,6 +2023,19 @@ async function handleLocalModeStream(modeId, req, res, send) {
       emit({ type: "thinking_delta", delta: endMsg, thinking });
       return result;
     };
+
+    // Load the chosen model if LM Studio doesn't have it in memory yet, so the
+    // user never gets "No models loaded" after the indexer loaded only an
+    // embedder. Surfaced as a thinking line during the (one-time) load.
+    await ensureLocalChatModelLoaded(modeId, baseUrl, model, (loadingModel) => {
+      if (!emittedThinkingStart) {
+        emittedThinkingStart = true;
+        emit({ type: "thinking_start" });
+      }
+      const note = `\n\n[Loading model ${loadingModel} into ${modeId}…]\n`;
+      thinking += note;
+      emit({ type: "thinking_delta", delta: note, thinking });
+    });
 
     let round = 0;
     for (;;) {
