@@ -33,9 +33,18 @@
         --text-normal: #3c3c3c;
         --text-inverse: #c5c5c5;
         --accent: #ff3333;
-        --shadow-offset: 4px;
-        --shadow-hover: 6px;
-        --border-width: 2px;
+        /* Brutalist flat renewal: no borders, no offset shadows anywhere.
+           Every border/shadow in the app derives from these, so zeroing them
+           strips the chrome in one place (same idea as the Obsidian theme's
+           --background-modifier-border: transparent). */
+        --shadow-offset: 0px;
+        --shadow-hover: 0px;
+        --border-width: 0px;
+        /* Flat surface washes used where a border used to carry visibility
+           (form fields, action buttons, metric tiles). currentColor makes the
+           wash adapt to whichever surface/text context it sits on. */
+        --flat-fill: color-mix(in srgb, currentColor 8%, transparent);
+        --flat-fill-strong: color-mix(in srgb, currentColor 16%, transparent);
       }
       [data-theme="dark"],
       [data-theme="dark"][data-palette="grey"] {
@@ -308,8 +317,10 @@
         border: var(--border-width) solid var(--border-color);
       }
       /* MCP tools are Ollama-only in this app. */
-      [data-mode="pi"] #mcpBtn,
-      [data-mode="cloud"] #mcpBtn {
+      [data-mode="pi"] #sideMcpBtn,
+      [data-mode="cloud"] #sideMcpBtn,
+      [data-mode="pi"] #railMcpBtn,
+      [data-mode="cloud"] #railMcpBtn {
         display: none !important;
       }
       #windowDragBar {
@@ -423,11 +434,7 @@
         outline: none;
         border-color: var(--text-inverse);
       }
-      #historyBtn,
-      #clearBtn,
-      #notesBtn,
-      #settingsBtn,
-      #mcpBtn {
+      #clearBtn {
         padding: 5px 10px;
         background: transparent;
         color: var(--text-inverse);
@@ -443,11 +450,7 @@
           border-color 0.2s;
         flex-shrink: 0;
       }
-      #historyBtn:hover,
-      #clearBtn:hover,
-      #notesBtn:hover,
-      #settingsBtn:hover,
-      #mcpBtn:hover {
+      #clearBtn:hover {
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
@@ -533,6 +536,234 @@
       #settingsResizer:hover,
       #mcpResizer:hover {
         background: var(--bg-inverse);
+      }
+
+      /* SIDE PANEL (permanent, collapsible). Boxes use --border-color, the
+         same variable as the other panels' borders and the input shadow.
+         Background matches the titlebar (--bg-inverse); no divider lines. */
+      #sidePanel {
+        width: 280px;
+        flex-shrink: 0;
+        background: var(--bg-inverse);
+        display: flex;
+        flex-direction: column;
+        transition:
+          background 0.2s,
+          border-color 0.2s;
+      }
+      #sidePanel svg,
+      #sideRail svg {
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+      }
+      #sidePanelTop {
+        display: flex;
+        justify-content: flex-end;
+        padding: 8px 10px 0;
+      }
+      #sidePanelTop button,
+      #sideRail button {
+        background: transparent;
+        border: none;
+        color: var(--text-inverse);
+        cursor: pointer;
+        padding: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #sidePanelTop button:hover,
+      #sideRail button:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .side-sect {
+        padding: 10px 12px;
+      }
+      .side-label {
+        font-size: calc(10px * var(--font-scale, 1));
+        letter-spacing: 1.5px;
+        font-weight: 700;
+        color: var(--text-inverse);
+        opacity: 0.6;
+        margin-bottom: 7px;
+      }
+      .side-box {
+        border: var(--border-width) solid var(--border-color);
+      }
+      .side-model-row {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+      /* The model dropdown is the same #modelSelect widget the top bar used;
+         only let it fill the row instead of the top bar's max-width. */
+      #sidePanel .custom-select-wrapper[data-for="modelSelect"] {
+        flex: 1;
+        min-width: 0;
+        max-width: none;
+      }
+      .side-icon-btn {
+        width: 30px;
+        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        color: var(--text-inverse);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .side-icon-btn:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .side-db-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .side-db-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: calc(12px * var(--font-scale, 1));
+        font-weight: 700;
+        color: var(--text-inverse);
+      }
+      #sideDbState {
+        font-size: calc(9px * var(--font-scale, 1));
+        letter-spacing: 1px;
+        color: var(--accent);
+        margin-top: 2px;
+      }
+      #sideDbCompletion {
+        font-size: calc(9px * var(--font-scale, 1));
+        letter-spacing: 1px;
+        color: var(--text-inverse);
+        opacity: 0.6;
+        margin-top: 2px;
+      }
+      #sideRecent {
+        flex: 1;
+        padding: 10px 12px;
+        overflow-y: auto;
+        min-height: 0;
+      }
+      .side-conv {
+        padding: 6px 8px;
+        margin-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        color: var(--text-inverse);
+        transition:
+          background 0.1s,
+          color 0.1s,
+          border-color 0.1s;
+      }
+      .side-conv:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      .side-conv.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--bg-primary);
+      }
+      .side-conv-title {
+        font-size: calc(11px * var(--font-scale, 1));
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .side-conv-date {
+        font-size: calc(9px * var(--font-scale, 1));
+        opacity: 0.65;
+        flex-shrink: 0;
+      }
+      .side-recent-empty {
+        font-size: calc(10px * var(--font-scale, 1));
+        color: var(--text-inverse);
+        opacity: 0.5;
+      }
+      .side-wide-btn {
+        width: 100%;
+        padding: 7px;
+        background: transparent;
+        color: var(--text-inverse);
+        font-family: inherit;
+        font-size: calc(10px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 1px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition:
+          background 0.1s,
+          color 0.1s;
+      }
+      .side-wide-btn:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      #sideFoot {
+        display: flex;
+        gap: 8px;
+        padding: 10px 12px;
+      }
+      .side-nav-btn {
+        flex: 1;
+        padding: 8px 4px;
+        background: transparent;
+        color: var(--text-inverse);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition:
+          background 0.1s,
+          color 0.1s;
+      }
+      .side-nav-btn:hover {
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+      }
+      #sidePanelResizer {
+        width: 5px;
+        background: var(--bg-secondary);
+        cursor: col-resize;
+        flex-shrink: 0;
+        transition: background 0.1s;
+      }
+      #sidePanelResizer:hover {
+        background: var(--bg-inverse);
+      }
+      #sideRail {
+        width: 46px;
+        flex-shrink: 0;
+        background: var(--bg-inverse);
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        padding: 10px 0;
+        gap: 14px;
+        transition:
+          background 0.2s,
+          border-color 0.2s;
+      }
+      .side-rail-grow {
+        flex: 1;
+      }
+      #railDbBtn.on {
+        color: var(--accent);
       }
 
       /* NOTES PANEL */
@@ -742,7 +973,6 @@
         min-width: 0;
         background: transparent;
         border: none;
-        border-bottom: 1px dashed var(--text-inverse);
         color: var(--text-inverse);
         font-family: inherit;
         font-size: calc(11px * var(--font-scale, 1));
@@ -880,11 +1110,7 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
-        border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
         padding-bottom: 16px;
-      }
-      [data-theme="light"] .setting-group {
-        border-bottom: 1px dashed rgba(0, 0, 0, 0.15);
       }
       .setting-group:last-child {
         border-bottom: none;
@@ -911,9 +1137,9 @@
       }
       .setting-group select {
         padding: 6px 8px;
-        background: var(--bg-inverse);
         color: var(--text-inverse);
-        border: var(--border-width) solid var(--text-inverse);
+        background: var(--flat-fill);
+        border: none;
         font-family: inherit;
         font-size: calc(12px * var(--font-scale, 1));
         cursor: pointer;
@@ -923,9 +1149,9 @@
       .setting-group input[type="number"],
       .setting-group input[type="password"] {
         padding: 6px 8px;
-        background: var(--bg-inverse);
         color: var(--text-inverse);
-        border: var(--border-width) solid var(--text-inverse);
+        background: var(--flat-fill);
+        border: none;
         font-family: inherit;
         font-size: calc(12px * var(--font-scale, 1));
         outline: none;
@@ -936,9 +1162,8 @@
       .setting-group input[type="password"]:focus,
       .setting-group textarea:focus,
       .setting-group select:focus {
-        background: var(--bg-inverse);
+        background: var(--flat-fill-strong);
         color: var(--text-inverse);
-        border-color: var(--text-inverse);
         outline: none;
         box-shadow: none;
       }
@@ -952,9 +1177,9 @@
       }
       .setting-group textarea {
         padding: 6px 8px;
-        background: var(--bg-inverse);
         color: var(--text-inverse);
-        border: var(--border-width) solid var(--text-inverse);
+        background: var(--flat-fill);
+        border: none;
         font-family: inherit;
         font-size: calc(12px * var(--font-scale, 1));
         outline: none;
@@ -1035,12 +1260,11 @@
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
-        background: var(--bg-inverse);
+        background: var(--flat-fill);
         height: 26px;
         margin: 0;
         padding: 0 3px;
         cursor: pointer;
-        border: 1px solid var(--text-inverse);
         box-sizing: border-box;
       }
       input[type="range"]::-webkit-slider-runnable-track {
@@ -1058,23 +1282,17 @@
         border-radius: 0;
         background: var(--accent);
         margin-top: -6px;
-        border: 2px solid var(--text-inverse);
+        border: none;
       }
       input[type="range"]::-moz-range-thumb {
         height: 16px;
         width: 12px;
         border-radius: 0;
         background: var(--accent);
-        border: 2px solid var(--text-inverse);
+        border: none;
       }
       input[type="range"]:focus {
         outline: none;
-      }
-      input[type="range"]:focus::-webkit-slider-thumb {
-        box-shadow: 0 0 0 1px var(--text-inverse);
-      }
-      input[type="range"]:focus::-moz-range-thumb {
-        box-shadow: 0 0 0 1px var(--text-inverse);
       }
       .setting-range {
         display: flex;
@@ -1086,14 +1304,12 @@
         font-size: calc(10px * var(--font-scale, 1));
         color: var(--text-normal);
         background: var(--bg-primary);
-        border: 1px solid var(--text-inverse);
         min-width: 38px;
         padding: 3px 4px;
         text-align: right;
         font-family: inherit;
       }
       .search-algorithm-settings {
-        border: 1px dashed var(--text-inverse);
         padding: 12px 10px 10px;
         margin-top: 12px;
         gap: 8px;
@@ -1137,7 +1353,6 @@
         grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
         gap: 10px;
         align-items: center;
-        border-top: 1px solid var(--text-inverse);
         padding-top: 8px;
       }
       .search-algorithm-control label {
@@ -1163,8 +1378,8 @@
         margin: 0;
         appearance: none;
         -webkit-appearance: none;
-        border: 2px solid var(--text-inverse);
-        background: var(--bg-inverse);
+        color: var(--text-inverse);
+        background: var(--flat-fill-strong);
         border-radius: 0;
         display: inline-grid;
         place-content: center;
@@ -1274,7 +1489,7 @@
         flex-shrink: 0;
       }
       .database-source-row {
-        border: 1px dashed var(--text-inverse);
+        background: var(--flat-fill);
         padding: 8px;
         display: flex;
         flex-direction: column;
@@ -1295,7 +1510,6 @@
         gap: 8px;
       }
       .database-metrics-section {
-        border: 1px dashed var(--text-inverse);
         padding: 8px;
         display: flex;
         flex-direction: column;
@@ -1313,7 +1527,7 @@
         gap: 6px;
       }
       .database-metric {
-        border: 1px solid var(--text-inverse);
+        background: var(--flat-fill);
         min-width: 0;
         padding: 6px;
       }
@@ -1374,7 +1588,7 @@
       .settings-action-btn,
       .mcp-action-btn {
         padding: 5px 10px;
-        background: transparent;
+        background: var(--flat-fill);
         color: var(--text-inverse);
         border: var(--border-width) solid var(--text-inverse);
         cursor: pointer;
@@ -1421,7 +1635,6 @@
         align-items: center;
         margin-top: 10px;
         padding-top: 10px;
-        border-top: 1px dashed var(--bg-primary);
         text-align: left;
         font-style: normal;
         color: var(--text-inverse);
@@ -1627,8 +1840,6 @@
         padding: 16px;
         background: var(--bg-primary);
         color: var(--text-normal);
-        border: 3px solid var(--border-color);
-        box-shadow: 8px 8px 0 0 var(--border-color);
       }
 
       .app-dialog-title {
@@ -1663,8 +1874,6 @@
         padding: 8px 12px;
         background: var(--bg-primary);
         color: var(--text-normal);
-        border: var(--border-width) solid var(--border-color);
-        box-shadow: 3px 3px 0 0 var(--border-color);
         cursor: pointer;
         font-family: inherit;
         font-size: calc(11px * var(--font-scale, 1));
@@ -1691,9 +1900,7 @@
       }
 
       .app-dialog-btn.danger {
-        border-color: #ff4444;
         color: #ff4444;
-        box-shadow: 3px 3px 0 0 #ff4444;
       }
 
       .app-dialog-btn.danger:hover,
@@ -1775,14 +1982,12 @@
         text-decoration: underline;
         text-decoration-style: solid;
         text-decoration-thickness: 1px;
-        border: 2px solid transparent;
         transition: all 0.2s;
       }
       a:hover {
         color: var(--accent);
-        background-color: transparent;
+        background-color: var(--flat-fill);
         text-decoration: none;
-        border: 2px solid var(--accent);
       }
 
       .msg.assistant p {
@@ -2087,12 +2292,10 @@
         display: block;
       }
       #send:hover {
-        transform: translate(-2px, -2px);
         box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
           var(--border-color);
       }
       #send:active {
-        transform: translate(2px, 2px);
         box-shadow: none;
       }
       #send.stopping {
@@ -2126,12 +2329,10 @@
           border-color 0.2s;
       }
       #uploadBtn:hover {
-        transform: translate(-2px, -2px);
         box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
           var(--border-color);
       }
       #uploadBtn:active {
-        transform: translate(2px, 2px);
         box-shadow: none;
       }
       #uploadBtn svg {
@@ -2163,12 +2364,10 @@
           border-color 0.2s;
       }
       #bookFilterBtn:hover {
-        transform: translate(-2px, -2px);
         box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
           var(--border-color);
       }
       #bookFilterBtn:active {
-        transform: translate(2px, 2px);
         box-shadow: none;
       }
       #bookFilterBtn svg {
@@ -2299,7 +2498,6 @@
         align-items: center;
         gap: 8px;
         font-size: calc(12px * var(--font-scale, 1));
-        border-bottom: 1px dashed var(--border-color);
         padding-bottom: 6px;
       }
       .book-filter-row:last-child {
@@ -2350,7 +2548,6 @@
       .skill-sources-container {
         margin-top: 12px;
         padding-top: 12px;
-        border-top: 1px dashed var(--border-color);
         display: flex;
         flex-direction: column;
         gap: 6px;
@@ -2390,7 +2587,6 @@
       .library-sources-container {
         margin-top: 12px;
         padding-top: 12px;
-        border-top: 1px dashed var(--border-color);
         display: flex;
         flex-direction: column;
         gap: 6px;
@@ -2499,9 +2695,9 @@
       .custom-select-wrapper[data-for="modelSelect"] .custom-select-trigger,
       .custom-select-wrapper[data-for="topbarPromptSelect"]
         .custom-select-trigger {
-        background: var(--bg-inverse);
         color: var(--text-inverse);
-        border: var(--border-width) solid var(--text-inverse);
+        background: var(--flat-fill);
+        border: none;
       }
       .custom-select-wrapper[data-for="modelSelect"] .custom-select-options,
       .custom-select-wrapper[data-for="topbarPromptSelect"]
@@ -2655,7 +2851,6 @@
           </svg>
         </button>
       </div>
-      <select id="modelSelect"></select>
       <select id="topbarPromptSelect" title="Active System Prompt"></select>
       <span
         id="modeStatus"
@@ -2697,101 +2892,7 @@
           <path d="m8 22 1-4" />
         </svg>
       </button>
-      <button
-        id="historyBtn"
-        class="topbar-icon-btn"
-        title="History"
-        aria-label="History"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-          <path d="M3 3v5h5" />
-          <path d="M12 7v5l4 2" />
-        </svg>
-      </button>
-      <button
-        id="mcpBtn"
-        class="topbar-icon-btn"
-        title="MCP Servers"
-        aria-label="MCP"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="lucide lucide-plug-icon lucide-plug"
-        >
-          <path d="M12 22v-5" />
-          <path d="M15 8V2" />
-          <path
-            d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
-          />
-          <path d="M9 8V2" />
-        </svg>
-      </button>
-      <button
-        id="notesBtn"
-        class="topbar-icon-btn"
-        title="Notes"
-        aria-label="Notes"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M8 2v4" />
-          <path d="M12 2v4" />
-          <path d="M16 2v4" />
-          <rect width="16" height="18" x="4" y="4" rx="2" />
-          <path d="M8 10h6" />
-          <path d="M8 14h8" />
-          <path d="M8 18h5" />
-        </svg>
-      </button>
       <button id="piPermissionBtn" style="display: none">PERMISSION</button>
-      <button
-        id="settingsBtn"
-        class="topbar-icon-btn"
-        title="Settings"
-        aria-label="Settings"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <line x1="21" x2="14" y1="4" y2="4" />
-          <line x1="10" x2="3" y1="4" y2="4" />
-          <line x1="21" x2="12" y1="12" y2="12" />
-          <line x1="8" x2="3" y1="12" y2="12" />
-          <line x1="21" x2="16" y1="20" y2="20" />
-          <line x1="12" x2="3" y1="20" y2="20" />
-          <line x1="14" x2="14" y1="2" y2="6" />
-          <line x1="8" x2="8" y1="10" y2="14" />
-          <line x1="16" x2="16" y1="18" y2="22" />
-        </svg>
-      </button>
       <button id="themeBtn" title="Toggle light/dark mode">
         <svg
           id="iconSun"
@@ -2833,6 +2934,300 @@
       </button>
     </div>
     <div id="main">
+      <div id="sidePanel">
+        <div id="sidePanelTop">
+          <button
+            id="sidePanelCollapseBtn"
+            title="Collapse panel"
+            aria-label="Collapse side panel"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="m15 6-6 6 6 6" />
+            </svg>
+          </button>
+        </div>
+        <div class="side-sect">
+          <div class="side-label">MODEL</div>
+          <div class="side-model-row">
+            <select id="modelSelect"></select>
+            <button
+              class="side-icon-btn"
+              id="sideRefreshBtn"
+              title="Refresh models"
+              aria-label="Refresh models"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                <path d="M3 21v-5h5" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="side-sect">
+          <div class="side-db-row">
+            <div>
+              <div class="side-db-name">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <ellipse cx="12" cy="5" rx="9" ry="3" />
+                  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                  <path d="M3 12A9 3 0 0 0 21 12" />
+                </svg>
+                DATABASE
+              </div>
+              <div id="sideDbState">OFF</div>
+              <div
+                id="sideDbCompletion"
+                title="Database index completion"
+              ></div>
+            </div>
+            <input
+              id="sideDbToggle"
+              class="brutalist-toggle"
+              type="checkbox"
+              title="Enable / disable database context"
+            />
+          </div>
+        </div>
+        <div id="sideRecent">
+          <div class="side-label">RECENT · LAST 5</div>
+          <div id="sideRecentList"></div>
+          <button class="side-box side-wide-btn" id="sideHistoryBtn">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M12 7v5l4 2" />
+            </svg>
+            VIEW ALL HISTORY
+          </button>
+        </div>
+        <div id="sideFoot">
+          <button class="side-box side-nav-btn" id="sideSettingsBtn">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="21" x2="14" y1="4" y2="4" />
+              <line x1="10" x2="3" y1="4" y2="4" />
+              <line x1="21" x2="12" y1="12" y2="12" />
+              <line x1="8" x2="3" y1="12" y2="12" />
+              <line x1="21" x2="16" y1="20" y2="20" />
+              <line x1="12" x2="3" y1="20" y2="20" />
+              <line x1="14" x2="14" y1="2" y2="6" />
+              <line x1="8" x2="8" y1="10" y2="14" />
+              <line x1="16" x2="16" y1="18" y2="22" />
+            </svg>
+          </button>
+          <button class="side-box side-nav-btn" id="sideMcpBtn">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 22v-5" />
+              <path d="M15 8V2" />
+              <path
+                d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
+              />
+              <path d="M9 8V2" />
+            </svg>
+          </button>
+          <button class="side-box side-nav-btn" id="sideNotesBtn">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M8 2v4" />
+              <path d="M12 2v4" />
+              <path d="M16 2v4" />
+              <rect width="16" height="18" x="4" y="4" rx="2" />
+              <path d="M8 10h6" />
+              <path d="M8 14h8" />
+              <path d="M8 18h5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="sidePanelResizer"></div>
+      <div id="sideRail">
+        <button
+          id="railExpandBtn"
+          title="Expand panel"
+          aria-label="Expand side panel"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="m9 6 6 6-6 6" />
+          </svg>
+        </button>
+        <button
+          id="railRefreshBtn"
+          title="Refresh models"
+          aria-label="Refresh models"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+            <path d="M21 3v5h-5" />
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+            <path d="M3 21v-5h5" />
+          </svg>
+        </button>
+        <button
+          id="railDbBtn"
+          title="Database on/off"
+          aria-label="Toggle database context"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <ellipse cx="12" cy="5" rx="9" ry="3" />
+            <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+            <path d="M3 12A9 3 0 0 0 21 12" />
+          </svg>
+        </button>
+        <button id="railHistoryBtn" title="History" aria-label="History">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M12 7v5l4 2" />
+          </svg>
+        </button>
+        <div class="side-rail-grow"></div>
+        <button id="railSettingsBtn" title="Settings" aria-label="Settings">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="21" x2="14" y1="4" y2="4" />
+            <line x1="10" x2="3" y1="4" y2="4" />
+            <line x1="21" x2="12" y1="12" y2="12" />
+            <line x1="8" x2="3" y1="12" y2="12" />
+            <line x1="21" x2="16" y1="20" y2="20" />
+            <line x1="12" x2="3" y1="20" y2="20" />
+            <line x1="14" x2="14" y1="2" y2="6" />
+            <line x1="8" x2="8" y1="10" y2="14" />
+            <line x1="16" x2="16" y1="18" y2="22" />
+          </svg>
+        </button>
+        <button id="railMcpBtn" title="MCP Servers" aria-label="MCP">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 22v-5" />
+            <path d="M15 8V2" />
+            <path
+              d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
+            />
+            <path d="M9 8V2" />
+          </svg>
+        </button>
+        <button id="railNotesBtn" title="Notes" aria-label="Notes">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M8 2v4" />
+            <path d="M12 2v4" />
+            <path d="M16 2v4" />
+            <rect width="16" height="18" x="4" y="4" rx="2" />
+            <path d="M8 10h6" />
+            <path d="M8 14h8" />
+            <path d="M8 18h5" />
+          </svg>
+        </button>
+      </div>
       <div id="historyPanel">
         <div id="historyHeader">
           <span>HISTORY</span>
@@ -5346,7 +5741,6 @@
               id="promptEditor"
               style="
                 display: none;
-                border-top: 1px dashed var(--text-inverse);
                 padding-top: 12px;
                 margin-top: 12px;
                 flex-direction: column;
@@ -5362,9 +5756,9 @@
                 placeholder="e.g. Code Reviewer"
                 style="
                   padding: 6px;
-                  background: var(--bg-inverse);
                   color: var(--text-inverse);
-                  border: 2px solid var(--text-inverse);
+                  background: var(--flat-fill);
+                  border: none;
                   font-family: inherit;
                   font-size: calc(12px * var(--font-scale, 1));
                   outline: none;
@@ -5379,9 +5773,9 @@
                 style="
                   height: 100px;
                   padding: 6px;
-                  background: var(--bg-inverse);
                   color: var(--text-inverse);
-                  border: 2px solid var(--text-inverse);
+                  background: var(--flat-fill);
+                  border: none;
                   font-family: inherit;
                   font-size: calc(12px * var(--font-scale, 1));
                   resize: none;
@@ -5457,7 +5851,6 @@
                 flex-direction: column;
                 gap: 8px;
                 margin-top: 10px;
-                border: 1px dashed var(--text-inverse);
                 padding: 8px;
               "
             >
@@ -5606,11 +5999,9 @@
         style="
           background: var(--bg-inverse);
           color: var(--text-inverse);
-          border: 3px solid var(--text-inverse);
           width: 92%;
           max-width: 560px;
           padding: 18px;
-          box-shadow: 8px 8px 0 0 var(--text-inverse);
           display: flex;
           flex-direction: column;
           gap: 12px;
@@ -5647,9 +6038,9 @@
           style="
             display: none;
             padding: 8px;
-            border: 2px solid var(--text-inverse);
-            background: var(--bg-inverse);
+            border: none;
             color: var(--text-inverse);
+            background: var(--flat-fill);
             font-family: inherit;
             font-size: calc(12px * var(--font-scale, 1));
             outline: none;
@@ -5663,9 +6054,9 @@
             max-height: 260px;
             resize: vertical;
             padding: 8px;
-            border: 2px solid var(--text-inverse);
-            background: var(--bg-inverse);
+            border: none;
             color: var(--text-inverse);
+            background: var(--flat-fill);
             font-family: inherit;
             font-size: calc(12px * var(--font-scale, 1));
             outline: none;
@@ -8615,6 +9006,19 @@ Output rules (absolute):
           "libraryStatusEmbeddingsMissingValue",
           formatMetricNumber(missingCount),
         );
+        // Side panel: minimal database completion metric (ready embeddings out
+        // of all embedding rows; keyword-only databases count as complete).
+        const totalEmbedRows = readyCount + missingCount;
+        const completionPct =
+          totalEmbedRows > 0
+            ? Math.round((readyCount / totalEmbedRows) * 100)
+            : Number(status.chunks) > 0
+              ? 100
+              : null;
+        setElementText(
+          "sideDbCompletion",
+          completionPct === null ? "" : `INDEX ${completionPct}%`,
+        );
         setElementText(
           "libraryStatusSourcesValue",
           formatMetricNumber(sourceCount),
@@ -10006,6 +10410,7 @@ Output rules (absolute):
         syncSearchAlgorithmModeToChatMode();
         renderDatabaseConfigForm();
         updateBookFilterUi();
+        refreshSidePanel();
         updateTokenCounter();
         updateSendButtonState();
       }
@@ -11179,7 +11584,9 @@ Output rules (absolute):
         } else {
           updateModeStatus();
         }
-        toggleHistory();
+        // Only close the drawer when it is open — the side panel's recent list
+        // also loads conversations, without the drawer ever being open.
+        if (historyOpen) toggleHistory();
       }
 
       async function deleteConversation(convId) {
@@ -11191,6 +11598,163 @@ Output rules (absolute):
         );
         await readJsonResponse(res, "Delete conversation");
         loadHistoryPanel();
+        refreshSidePanelRecent();
+      }
+
+      // ---- PERMANENT SIDE PANEL (collapsible) ----
+      const SIDE_PANEL_COLLAPSED_KEY = "dive-side-panel-collapsed";
+
+      function sidePanelSetCollapsed(collapsed) {
+        const panel = document.getElementById("sidePanel");
+        const rail = document.getElementById("sideRail");
+        const resizerEl = document.getElementById("sidePanelResizer");
+        if (!panel || !rail) return;
+        panel.style.display = collapsed ? "none" : "flex";
+        rail.style.display = collapsed ? "flex" : "none";
+        if (resizerEl) resizerEl.style.display = collapsed ? "none" : "";
+        try {
+          localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, String(collapsed));
+        } catch (_e) {}
+      }
+
+      function updateSidePanelDb() {
+        const input = document.getElementById("librarySearchEnabledInput");
+        const enabled = input
+          ? input.checked === true
+          : librarySettings.enabled === true;
+        const toggle = document.getElementById("sideDbToggle");
+        if (toggle) toggle.checked = enabled;
+        const state = document.getElementById("sideDbState");
+        if (state) state.textContent = enabled ? "ON · LIBRARY SEARCH" : "OFF";
+        const railBtn = document.getElementById("railDbBtn");
+        if (railBtn) railBtn.classList.toggle("on", enabled);
+      }
+
+      async function sideDbSetEnabled(enabled) {
+        // Mirror into the Database tab's checkbox (the single source the rest
+        // of the app reads) and persist through the same per-mode save path.
+        const input = document.getElementById("librarySearchEnabledInput");
+        if (input && input.checked !== enabled) {
+          input.checked = enabled;
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        updateSidePanelDb();
+        if (typeof saveLibrarySettingsFromForm === "function") {
+          try {
+            await saveLibrarySettingsFromForm();
+          } catch (_e) {}
+        }
+        updateSidePanelDb();
+      }
+
+      function sideRefreshModels() {
+        if (mode === "ollama") {
+          if (typeof loadModels === "function") loadModels();
+        } else if (LOCAL_MODE_IDS.includes(mode)) {
+          refreshLocalModels(mode);
+        } else if (mode === "cloud") {
+          loadCloudSettings()
+            .then(() => {
+              if (mode === "cloud") populateTopbarModelSelect();
+            })
+            .catch(() => {});
+        }
+      }
+
+      function formatSideConvAge(ts) {
+        if (!ts) return "";
+        const minutes = Math.floor((Date.now() - ts) / 60000);
+        if (minutes < 1) return "now";
+        if (minutes < 60) return minutes + "m";
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + "h";
+        return Math.floor(hours / 24) + "d";
+      }
+
+      async function refreshSidePanelRecent() {
+        const list = document.getElementById("sideRecentList");
+        if (!list) return;
+        try {
+          const res = await fetch(apiUrl("/api/conversations"));
+          const convs = await readJsonResponse(res, "Load conversations");
+          const recent = (Array.isArray(convs) ? convs : [])
+            .filter((conv) => {
+              const convMode =
+                typeof conv.mode === "string" ? conv.mode : "ollama";
+              return convMode === mode;
+            })
+            .slice(0, 5);
+          list.innerHTML = "";
+          if (!recent.length) {
+            const empty = document.createElement("div");
+            empty.className = "side-recent-empty";
+            empty.textContent = "No conversations yet";
+            list.appendChild(empty);
+            return;
+          }
+          for (const conv of recent) {
+            const item = document.createElement("div");
+            item.className =
+              "side-box side-conv" +
+              (conv.id === currentConvId ? " active" : "");
+            const title = document.createElement("span");
+            title.className = "side-conv-title";
+            title.textContent = conv.title || "Conversation";
+            const date = document.createElement("span");
+            date.className = "side-conv-date";
+            date.textContent = formatSideConvAge(
+              conv.updatedAt || conv.createdAt,
+            );
+            item.title = conv.title || "";
+            item.appendChild(title);
+            item.appendChild(date);
+            item.onclick = () => {
+              loadConversation(conv);
+              refreshSidePanelRecent();
+            };
+            list.appendChild(item);
+          }
+        } catch (_e) {
+          // Server unavailable — leave the list as-is.
+        }
+      }
+
+      function refreshSidePanel() {
+        updateSidePanelDb();
+        refreshSidePanelRecent();
+      }
+
+      function wireSidePanel() {
+        const on = (id, event, handler) => {
+          const el = document.getElementById(id);
+          if (el) el.addEventListener(event, handler);
+        };
+        on("sidePanelCollapseBtn", "click", () => sidePanelSetCollapsed(true));
+        on("railExpandBtn", "click", () => sidePanelSetCollapsed(false));
+        on("sideRefreshBtn", "click", sideRefreshModels);
+        on("railRefreshBtn", "click", sideRefreshModels);
+        on("sideDbToggle", "change", () => {
+          const toggle = document.getElementById("sideDbToggle");
+          if (toggle) sideDbSetEnabled(toggle.checked);
+        });
+        on("railDbBtn", "click", () => {
+          const railBtn = document.getElementById("railDbBtn");
+          if (railBtn) sideDbSetEnabled(!railBtn.classList.contains("on"));
+        });
+        on("sideHistoryBtn", "click", () => toggleHistory());
+        on("railHistoryBtn", "click", () => toggleHistory());
+        on("sideSettingsBtn", "click", () => toggleSettings());
+        on("railSettingsBtn", "click", () => toggleSettings());
+        on("sideMcpBtn", "click", () => toggleMcp());
+        on("railMcpBtn", "click", () => toggleMcp());
+        on("sideNotesBtn", "click", () => toggleNotes());
+        on("railNotesBtn", "click", () => toggleNotes());
+        // Keep the side panel in sync with the Database tab checkbox.
+        on("librarySearchEnabledInput", "change", updateSidePanelDb);
+        sidePanelSetCollapsed(
+          localStorage.getItem(SIDE_PANEL_COLLAPSED_KEY) === "true",
+        );
+        refreshSidePanel();
       }
 
       async function deleteAllHistory() {
@@ -11212,6 +11776,7 @@ Output rules (absolute):
         );
         await readJsonResponse(res, "Delete history");
         loadHistoryPanel();
+        refreshSidePanelRecent();
       }
 
       // Remove every attachment for the current mode.
@@ -11850,7 +12415,7 @@ Output rules (absolute):
               const entry = document.createElement("div");
               entry.style.marginBottom = "12px";
               entry.style.paddingBottom = "12px";
-              entry.style.borderBottom = "1px solid rgba(255,255,255,0.1)";
+              entry.style.borderBottom = "none";
 
               const titleEl = document.createElement("div");
               titleEl.style.fontWeight = "bold";
@@ -13984,6 +14549,9 @@ Output rules (absolute):
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
+          // The server saves the conversation as the stream finishes; give it
+          // a moment, then refresh the side panel's recent list.
+          setTimeout(() => refreshSidePanelRecent(), 500);
         }
       }
 
@@ -14370,6 +14938,9 @@ Output rules (absolute):
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
+          // The server saves the conversation as the stream finishes; give it
+          // a moment, then refresh the side panel's recent list.
+          setTimeout(() => refreshSidePanelRecent(), 500);
         }
       }
 
@@ -15003,6 +15574,19 @@ Output rules (absolute):
         document.body.style.userSelect = "none";
       });
 
+      const sidePanelResizer = document.getElementById("sidePanelResizer");
+      const sidePanelEl = document.getElementById("sidePanel");
+      let isSidePanelResizing = false;
+
+      if (sidePanelResizer) {
+        sidePanelResizer.addEventListener("mousedown", (e) => {
+          if (sidePanelEl.style.display === "none") return;
+          isSidePanelResizing = true;
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+        });
+      }
+
       notesResizer.addEventListener("mousedown", (e) => {
         if (!notesOpen) return;
         isResizing = true;
@@ -15048,6 +15632,12 @@ Output rules (absolute):
           if (newWidth > 150 && newWidth < mainRect.width - 200) {
             historyPanelEl.style.width = newWidth + "px";
           }
+        } else if (isSidePanelResizing) {
+          // The side panel is docked on the LEFT edge of #main.
+          const newWidth = e.clientX - mainRect.left;
+          if (newWidth > 200 && newWidth < mainRect.width - 200) {
+            sidePanelEl.style.width = newWidth + "px";
+          }
         }
       });
 
@@ -15056,12 +15646,14 @@ Output rules (absolute):
           isResizing ||
           isSettingsResizing ||
           isMcpResizing ||
-          isHistoryResizing
+          isHistoryResizing ||
+          isSidePanelResizing
         ) {
           isResizing = false;
           isSettingsResizing = false;
           isMcpResizing = false;
           isHistoryResizing = false;
+          isSidePanelResizing = false;
           document.body.style.cursor = "";
           document.body.style.userSelect = "";
         }
@@ -15151,6 +15743,7 @@ Output rules (absolute):
         await __timed("loadLocalModeSettings", loadLocalModeSettings);
         wireLocalModeSettings();
         wireOllamaAgentSettings();
+        wireSidePanel();
         await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);
         __bootTimings.push({
           label: "__boot_total",
@@ -15482,34 +16075,6 @@ Output rules (absolute):
         if (btn_clearBtn) {
           btn_clearBtn.addEventListener("click", function (event) {
             clearChat();
-          });
-        }
-
-        const btn_historyBtn = document.getElementById("historyBtn");
-        if (btn_historyBtn) {
-          btn_historyBtn.addEventListener("click", function (event) {
-            toggleHistory();
-          });
-        }
-
-        const btn_mcpBtn = document.getElementById("mcpBtn");
-        if (btn_mcpBtn) {
-          btn_mcpBtn.addEventListener("click", function (event) {
-            toggleMcp();
-          });
-        }
-
-        const btn_notesBtn = document.getElementById("notesBtn");
-        if (btn_notesBtn) {
-          btn_notesBtn.addEventListener("click", function (event) {
-            toggleNotes();
-          });
-        }
-
-        const btn_settingsBtn = document.getElementById("settingsBtn");
-        if (btn_settingsBtn) {
-          btn_settingsBtn.addEventListener("click", function (event) {
-            toggleSettings();
           });
         }
 

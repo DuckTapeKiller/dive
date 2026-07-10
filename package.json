@@ -1,6 +1,6 @@
 {
   "name": "dive-desktop",
-  "version": "3.0.4",
+  "version": "3.0.5",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
