@@ -5272,6 +5272,7 @@ async function getLibraryStatus() {
   (SELECT COALESCE(SUM(LENGTH(text_compressed)), 0) FROM library_chunks) AS compressedBytes;`,
     );
     status.files = Number(rows[0]?.files || 0);
+    status.totalFiles = collectSourceFiles(config).length;
     status.chunks = Number(rows[0]?.chunks || 0);
     status.embeddings = Number(rows[0]?.embeddings || 0);
     status.textBytes = Number(rows[0]?.textBytes || 0);

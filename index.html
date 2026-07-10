@@ -262,7 +262,7 @@
       ::-webkit-scrollbar-thumb {
         -webkit-appearance: none;
         background: var(--bg-inverse);
-        border: var(--border-width) solid var(--bg-primary);
+        border: none;
         border-radius: 0 !important;
       }
       ::-webkit-scrollbar-thumb:hover {
@@ -685,9 +685,9 @@
         color: var(--bg-inverse);
       }
       .side-conv.active {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: var(--bg-primary);
+        background: var(--bg-primary);
+        border-color: var(--bg-primary);
+        color: var(--text-normal);
       }
       .side-conv-title {
         font-size: calc(11px * var(--font-scale, 1));
@@ -2096,9 +2096,9 @@
       }
 
       .thinking {
+        background: var(--bg-primary);
         color: var(--text-normal);
         font-style: italic;
-        opacity: 0.6;
         padding: 4px 14px;
         font-size: calc(13px * var(--font-scale, 1));
         transition: color 0.2s;
@@ -2109,7 +2109,8 @@
         border: var(--border-width) solid var(--border-color);
         border-radius: 0;
         padding: 6px 10px;
-        background: var(--bg-secondary);
+        background: var(--bg-primary);
+        color: var(--text-normal);
         min-width: 0;
         max-width: 100%;
         overflow: hidden;
@@ -2126,7 +2127,7 @@
         white-space: pre-wrap;
         font-size: calc(12px * var(--font-scale, 1));
         line-height: 1.4;
-        opacity: 0.9;
+        color: var(--text-normal);
         word-break: break-word;
         overflow-wrap: anywhere;
       }
@@ -2208,6 +2209,8 @@
          supplies its own block spacing, so disable inherited pre-wrap. */
       .thinking-markdown {
         white-space: normal;
+        background: var(--bg-primary);
+        color: var(--text-normal);
       }
       .thinking-markdown p {
         margin: 0 0 8px;
@@ -9019,18 +9022,17 @@ Output rules (absolute):
           "libraryStatusEmbeddingsMissingValue",
           formatMetricNumber(missingCount),
         );
-        // Side panel: minimal database completion metric (ready embeddings out
-        // of all embedding rows; keyword-only databases count as complete).
-        const totalEmbedRows = readyCount + missingCount;
+        // Side panel: minimal database completion metric (actual indexed files
+        // relative to total files found on disk).
+        const totalFiles = status.totalFiles || 0;
+        const indexedFiles = status.files || 0;
         const completionPct =
-          totalEmbedRows > 0
-            ? Math.round((readyCount / totalEmbedRows) * 100)
-            : Number(status.chunks) > 0
-              ? 100
-              : null;
+          totalFiles > 0 ? Math.round((indexedFiles / totalFiles) * 100) : null;
         setElementText(
           "sideDbCompletion",
-          completionPct === null ? "" : `INDEX ${completionPct}%`,
+          completionPct === null
+            ? ""
+            : `${indexedFiles} / ${totalFiles} (${completionPct}%)`,
         );
         setElementText(
           "libraryStatusSourcesValue",
@@ -15641,7 +15643,8 @@ Output rules (absolute):
           }
         } else if (isHistoryResizing) {
           // History is docked on the LEFT, so its width grows to the right.
-          const newWidth = e.clientX - mainRect.left;
+          const newWidth =
+            e.clientX - historyPanelEl.getBoundingClientRect().left;
           if (newWidth > 150 && newWidth < mainRect.width - 200) {
             historyPanelEl.style.width = newWidth + "px";
           }
