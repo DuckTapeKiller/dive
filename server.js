@@ -1555,7 +1555,11 @@ async function fetchLocalModels(modeId) {
   );
   let res;
   try {
-    res = await fetch(buildCloudEndpoint(baseUrl, "/models"), {
+    const endpoint =
+      modeId === "lmstudio"
+        ? baseUrl.replace(/\/v1$/, "") + "/api/v1/models"
+        : buildCloudEndpoint(baseUrl, "/models");
+    res = await fetch(endpoint, {
       method: "GET",
     });
   } catch (e) {
@@ -1568,34 +1572,30 @@ async function fetchLocalModels(modeId) {
     throw createHttpError(res.status, `Model list failed (${res.status}).`);
   }
   const data = await res.json().catch(() => null);
-  const allIds = Array.isArray(data?.data)
-    ? data.data.map((m) => m && m.id).filter(Boolean)
-    : [];
+  const modelsList = Array.isArray(data?.models)
+    ? data.models
+    : Array.isArray(data?.data)
+      ? data.data
+      : [];
+  const allIds = modelsList.map((m) => m?.key || m?.id).filter(Boolean);
   // Embedding models (e.g. LM Studio's bundled
   // text-embedding-nomic-embed-text-v1.5) are listed by /v1/models but cannot
   // chat — keep them out of the chat dropdown and report them separately so
   // the Database settings can offer them as embedding backends.
   const models = allIds.filter((id) => !/embed/i.test(id));
   const embeddingModels = allIds.filter((id) => /embed/i.test(id));
-  // The OpenAI-compat /v1/models does not report context length. Get the real
-  // loaded context window from LM Studio's native API (/api/v0/models) or from
-  // llama.cpp's /props, best-effort, so the UI can show "used / context".
+  // The OpenAI-compat /v1/models list is used for model IDs, but we extract the
+  // actual loaded context window from the v1 loaded_instances config (or
+  // llama.cpp's /props), so the UI can show "used / context".
   const root = baseUrl.replace(/\/v\d+$/, "");
   let contextLength = null;
   try {
     if (modeId === "lmstudio") {
-      const r = await fetch(root + "/api/v0/models", { method: "GET" });
-      if (r.ok) {
-        const d = await r.json().catch(() => null);
-        const loaded = Array.isArray(d?.data)
-          ? d.data.find(
-              (m) =>
-                m &&
-                m.state === "loaded" &&
-                typeof m.loaded_context_length === "number",
-            )
-          : null;
-        if (loaded) contextLength = loaded.loaded_context_length;
+      const loadedModel = modelsList.find(
+        (m) => m && m.loaded_instances?.length > 0,
+      );
+      if (loadedModel) {
+        contextLength = loadedModel.loaded_instances[0].config?.context_length;
       }
     } else {
       const r = await fetch(root + "/props", { method: "GET" });
@@ -4872,6 +4872,10 @@ const server = http.createServer(async (req, res) => {
       status = await getLibraryStatus();
     } catch (error) {
       status = { error: error.message };
+    }
+    // Sync lastLibraryIndexJob from disk to ensure accuracy
+    if (!activeLibraryIndexJob) {
+      lastLibraryIndexJob = readLibraryIndexJobFile();
     }
     send(200, {
       running: !!activeLibraryIndexJob,
