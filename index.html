@@ -657,7 +657,6 @@
         font-size: calc(9px * var(--font-scale, 1));
         letter-spacing: 1px;
         color: var(--text-inverse);
-        opacity: 0.6;
         margin-top: 2px;
       }
       #sideRecent {
@@ -2102,6 +2101,11 @@
         padding: 4px 14px;
         font-size: calc(13px * var(--font-scale, 1));
         transition: color 0.2s;
+      }
+      .thinking.loading {
+        background: transparent;
+        font-size: calc(11px * var(--font-scale, 1));
+        padding: 4px 0;
       }
 
       .thinking-details {
@@ -9024,16 +9028,24 @@ Output rules (absolute):
         );
         // Side panel: minimal database completion metric (actual indexed files
         // relative to total files found on disk).
-        const totalFiles = status.totalFiles || 0;
-        const indexedFiles = status.files || 0;
-        const completionPct =
-          totalFiles > 0 ? Math.round((indexedFiles / totalFiles) * 100) : null;
-        setElementText(
-          "sideDbCompletion",
-          completionPct === null
-            ? ""
-            : `${indexedFiles} / ${totalFiles} (${completionPct}%)`,
-        );
+        // If a job is active/paused, the job poll already updates this.
+        // Only update if we are absolutely sure no job is active.
+        if (!window.activeLibraryIndexJob) {
+          const totalFiles = status.totalFiles || 0;
+          const indexedFiles = status.files || 0;
+          const completionPct =
+            totalFiles > 0
+              ? Math.round((indexedFiles / totalFiles) * 100)
+              : null;
+          const sideDbEl = document.getElementById("sideDbCompletion");
+          if (sideDbEl) {
+            sideDbEl.textContent =
+              completionPct === null
+                ? ""
+                : `${indexedFiles} / ${totalFiles} (${completionPct}%)`;
+            sideDbEl.style.color = "";
+          }
+        }
         setElementText(
           "libraryStatusSourcesValue",
           formatMetricNumber(sourceCount),
@@ -9396,10 +9408,6 @@ Output rules (absolute):
       function renderLibraryIndexJob(payload) {
         const statusEl = document.getElementById("libraryIndexStatusText");
         if (!statusEl) return;
-        const savedStatus = payload?.status || null;
-        if (savedStatus && !savedStatus.error) {
-          renderSavedDatabaseStatus(savedStatus);
-        }
         const job = payload?.job || null;
         if (!job) {
           statusEl.textContent = "No active index job.";
@@ -9408,6 +9416,7 @@ Output rules (absolute):
           renderIndexJobGrid();
           return;
         }
+
         const progress = job.progress || {};
         const stats = job.stats || {};
         const percent =
@@ -9418,6 +9427,16 @@ Output rules (absolute):
               : 0;
         const processed = progress.processed ?? stats.processed ?? 0;
         const scanned = progress.scanned ?? stats.scanned ?? 0;
+
+        // Mirror the exactly reported progress to the side panel.
+        // This overrides the snapshot if a job (active or paused) exists.
+        const sideDbEl = document.getElementById("sideDbCompletion");
+        if (sideDbEl) {
+          sideDbEl.textContent = `${processed} / ${scanned} (${Math.round(percent)}%)`;
+          sideDbEl.style.color =
+            job.status === "running" ? "var(--accent)" : "";
+        }
+
         const chunks = progress.chunks ?? stats.chunks ?? 0;
         const embedded = progress.embedded ?? stats.embedded ?? 0;
         const estimatedFinalBytes =
@@ -9590,6 +9609,8 @@ Output rules (absolute):
         try {
           const res = await fetch(apiUrl("/api/library/index"));
           const payload = await readJsonResponse(res, "Load index job");
+          // Track if a job is present globally to prevent snapshot from overwriting it
+          window.activeLibraryIndexJob = payload?.job || null;
           renderLibraryIndexJob(payload);
           if (payload?.running) {
             libraryIndexPollTimer = window.setTimeout(
@@ -11158,9 +11179,8 @@ Output rules (absolute):
                   evt.usage.total,
                   localContextCache[modeId] || null,
                 );
-                // Context was unknown at start — re-fetch model list so the
-                // token counter gets the real limit (LM Studio may not have
-                // had a model loaded when the app first fetched /models).
+                // Context was unknown at start — fetch it now so the
+                // token counter replaces '?' with the real limit.
                 if (!localContextCache[modeId]) {
                   fetchLocalModelList(modeId).catch(() => {});
                 }
@@ -11640,7 +11660,11 @@ Output rules (absolute):
         const toggle = document.getElementById("sideDbToggle");
         if (toggle) toggle.checked = enabled;
         const state = document.getElementById("sideDbState");
-        if (state) state.textContent = enabled ? "ON · LIBRARY SEARCH" : "OFF";
+        if (state) {
+          state.textContent = enabled ? "ON · LIBRARY SEARCH" : "OFF";
+          state.style.color = enabled ? "var(--accent)" : "";
+          state.style.opacity = enabled ? "1" : "0.6";
+        }
         const railBtn = document.getElementById("railDbBtn");
         if (railBtn) railBtn.classList.toggle("on", enabled);
       }
@@ -12277,8 +12301,8 @@ Output rules (absolute):
         wrap.className = "thinking-wrap";
 
         const plain = document.createElement("div");
-        plain.className = "thinking";
-        plain.textContent = "Thinking...";
+        plain.className = "thinking loading";
+        plain.textContent = "Loading...";
 
         const details = document.createElement("details");
         details.className = "thinking-details";
@@ -12379,7 +12403,7 @@ Output rules (absolute):
           const elapsed =
             s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
           if (plain.style.display !== "none") {
-            plain.textContent = `Thinking... ${elapsed}`;
+            plain.textContent = `Loading... ${elapsed}`;
           }
           summary.textContent = `Thinking... (${elapsed})`;
         };
