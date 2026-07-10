@@ -518,6 +518,7 @@
       }
 
       /* RESIZERS */
+      #historyResizer,
       #notesResizer,
       #settingsResizer,
       #mcpResizer {
@@ -527,6 +528,7 @@
         flex-shrink: 0;
         transition: background 0.1s;
       }
+      #historyResizer:hover,
       #notesResizer:hover,
       #settingsResizer:hover,
       #mcpResizer:hover {
@@ -795,6 +797,7 @@
         letter-spacing: 1px;
         transition: color 0.2s;
       }
+      #closeHistoryBtn,
       #closeSettingsBtn,
       #closeMcpBtn {
         padding: 4px 10px;
@@ -810,11 +813,17 @@
           color 0.1s,
           border-color 0.2s;
       }
+      #closeHistoryBtn:hover,
       #closeSettingsBtn:hover,
       #closeMcpBtn:hover {
         background: #ff4444;
         border-color: #ff4444;
         color: #fff;
+      }
+      #historyActions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
       #settingsBody,
       #mcpBody {
@@ -2827,10 +2836,14 @@
       <div id="historyPanel">
         <div id="historyHeader">
           <span>HISTORY</span>
-          <button id="deleteAllBtn">DELETE ALL</button>
+          <div id="historyActions">
+            <button id="deleteAllBtn">DELETE ALL</button>
+            <button id="closeHistoryBtn">✕</button>
+          </div>
         </div>
         <div id="historyList"></div>
       </div>
+      <div id="historyResizer" style="display: none"></div>
       <div id="chatWrap">
         <div id="chat"></div>
         <div id="bottom">
@@ -3459,22 +3472,6 @@
               penalties, seed, max tokens).
             </div>
           </div>
-          <div id="ollamaPaletteGroup" class="setting-group">
-            <label>OLLAMA COLOR PALETTE</label>
-            <select id="settingOllamaPalette">
-              <option value="orange">Cyber Orange</option>
-              <option value="grey">Brutalist Slate</option>
-              <option value="solarised">Solarised Everforest</option>
-              <option value="forest">Forest Sage</option>
-              <option value="calmblue">Gentle Blue</option>
-              <option value="retro">Retro Amber</option>
-              <option value="nordic">Nordic Light</option>
-              <option value="carbon">Carbon (Default)</option>
-            </select>
-            <div class="setting-help">
-              Theme used when chat mode is set to `OLLAMA`.
-            </div>
-          </div>
           <div id="piPaletteGroup" class="setting-group">
             <label>PI COLOR PALETTE</label>
             <select id="settingPiPalette">
@@ -3512,6 +3509,100 @@
             </div>
           </div>
           <div id="ollamaFontGroup" class="setting-group">
+            <label>OLLAMA SERVER URL</label>
+            <input
+              id="ollamaBaseUrl"
+              type="text"
+              placeholder="http://127.0.0.1:11434"
+            />
+            <div class="setting-help">
+              Base URL of the Ollama server (default port 11434). Point this at
+              a remote or non-default Ollama instance; chat, model listing and
+              model info all use it.
+            </div>
+            <label>MODEL</label>
+            <select id="ollamaModelSelect"></select>
+            <button
+              id="ollamaRefreshModels"
+              type="button"
+              class="settings-action-btn"
+            >
+              Refresh models
+            </button>
+            <div class="setting-help">
+              Pick the Ollama model to use — kept in sync with the top-bar model
+              dropdown. Click Refresh after changing the server URL or pulling a
+              new model with `ollama pull`.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="ollamaNativeToolsInput" type="checkbox" />
+                NATIVE TOOL CALLING (OPENAI SCHEMA)
+              </label>
+            </div>
+            <div class="setting-help">
+              Send skills and MCP tools as structured function schemas — far
+              more reliable with tool-trained models (Gemma, Qwen, Llama 3).
+              Disable to force the legacy XML skill-call prompt.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="ollamaAgentModeInput" type="checkbox" />
+                AGENT MODE
+              </label>
+            </div>
+            <div class="setting-help">
+              Plan-first prompting and a larger tool budget for multi-step
+              tasks. Tool calls appear as a step timeline in the chat.
+            </div>
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >AGENT TOOL BUDGET</label
+            >
+            <div class="setting-number">
+              <input
+                id="ollamaAgentRoundsInput"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+              />
+              <div class="setting-number-controls">
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="ollamaAgentRoundsInput"
+                  data-dir="up"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  class="setting-number-btn"
+                  data-target="ollamaAgentRoundsInput"
+                  data-dir="down"
+                >
+                  −
+                </button>
+              </div>
+            </div>
+            <div class="setting-help">
+              Maximum tool calls per request in Agent Mode. Default: 25. Without
+              Agent Mode the budget is 10.
+            </div>
+            <label>OLLAMA COLOR PALETTE</label>
+            <select id="settingOllamaPalette">
+              <option value="orange">Cyber Orange</option>
+              <option value="grey">Brutalist Slate</option>
+              <option value="solarised">Solarised Everforest</option>
+              <option value="forest">Forest Sage</option>
+              <option value="calmblue">Gentle Blue</option>
+              <option value="retro">Retro Amber</option>
+              <option value="nordic">Nordic Light</option>
+              <option value="carbon">Carbon (Default)</option>
+            </select>
+            <div class="setting-help">
+              Theme used when chat mode is set to `OLLAMA`.
+            </div>
             <label>OLLAMA FONT FAMILY</label>
             <select id="settingOllamaFontPreset">
               <option value="space-mono">Space Mono (Default)</option>
@@ -3559,50 +3650,6 @@
             </div>
             <div class="setting-help">
               Scales every text in Ollama mode only.
-            </div>
-            <div class="setting-row-inline">
-              <label style="font-size: calc(10px * var(--font-scale, 1))">
-                <input id="ollamaAgentModeInput" type="checkbox" />
-                AGENT MODE
-              </label>
-            </div>
-            <div class="setting-help">
-              Plan-first prompting and a larger tool budget for multi-step
-              tasks. Tool calls appear as a step timeline in the chat.
-            </div>
-            <label style="font-size: calc(10px * var(--font-scale, 1))"
-              >AGENT TOOL BUDGET</label
-            >
-            <div class="setting-number">
-              <input
-                id="ollamaAgentRoundsInput"
-                type="number"
-                min="1"
-                max="50"
-                step="1"
-              />
-              <div class="setting-number-controls">
-                <button
-                  type="button"
-                  class="setting-number-btn"
-                  data-target="ollamaAgentRoundsInput"
-                  data-dir="up"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  class="setting-number-btn"
-                  data-target="ollamaAgentRoundsInput"
-                  data-dir="down"
-                >
-                  −
-                </button>
-              </div>
-            </div>
-            <div class="setting-help">
-              Maximum tool calls per request in Agent Mode. Default: 25. Without
-              Agent Mode the budget is 10.
             </div>
           </div>
           <div id="ollamaGenGroup" class="setting-group">
@@ -5382,7 +5429,7 @@
               style="
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 0;
                 margin-top: 8px;
               "
             >
@@ -6166,8 +6213,14 @@
       // here, so the toggle and budget live in localStorage like its options).
       const OLLAMA_AGENT_MODE_KEY = "ollama-pi-chat-ollama-agent-mode";
       const OLLAMA_AGENT_ROUNDS_KEY = "ollama-pi-chat-ollama-agent-rounds";
+      const OLLAMA_NATIVE_TOOLS_KEY = "ollama-pi-chat-ollama-native-tools";
       let ollamaAgentMode =
         localStorage.getItem(OLLAMA_AGENT_MODE_KEY) === "true";
+      // Native tool calling (OpenAI schema) is on by default, matching the
+      // LM Studio / llama.cpp default and the server's `body.nativeTools`
+      // fallback. Disable to force the legacy XML skill-call prompt.
+      let ollamaNativeTools =
+        localStorage.getItem(OLLAMA_NATIVE_TOOLS_KEY) !== "false";
       let ollamaAgentMaxRounds = (() => {
         const v = parseInt(
           localStorage.getItem(OLLAMA_AGENT_ROUNDS_KEY) || "25",
@@ -6197,6 +6250,71 @@
             rounds.value = String(v);
             ollamaAgentMaxRounds = v;
             localStorage.setItem(OLLAMA_AGENT_ROUNDS_KEY, String(v));
+          });
+        }
+        const nativeCb = document.getElementById("ollamaNativeToolsInput");
+        if (nativeCb) {
+          nativeCb.checked = ollamaNativeTools;
+          nativeCb.addEventListener("change", () => {
+            ollamaNativeTools = nativeCb.checked;
+            localStorage.setItem(
+              OLLAMA_NATIVE_TOOLS_KEY,
+              String(ollamaNativeTools),
+            );
+          });
+        }
+        const baseUrlInput = document.getElementById("ollamaBaseUrl");
+        if (baseUrlInput) {
+          // The Ollama server URL is persisted on the backend (every Ollama
+          // request derives its host/port from it), so load it from there and
+          // save changes back — mirroring the LM Studio / llama.cpp pattern.
+          fetch(apiUrl("/api/ollama/settings"))
+            .then((r) => r.json())
+            .then((d) => {
+              if (d && typeof d.baseUrl === "string" && !baseUrlInput.value) {
+                baseUrlInput.value = d.baseUrl;
+              }
+            })
+            .catch(() => {});
+          baseUrlInput.addEventListener("change", async () => {
+            try {
+              const res = await fetch(apiUrl("/api/ollama/settings"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ baseUrl: baseUrlInput.value.trim() }),
+              });
+              const d = await res.json();
+              if (d && typeof d.baseUrl === "string") {
+                baseUrlInput.value = d.baseUrl;
+              }
+            } catch (_e) {}
+            // Re-list models from the (possibly new) server.
+            if (typeof loadModels === "function") loadModels();
+          });
+        }
+        const refreshBtn = document.getElementById("ollamaRefreshModels");
+        if (refreshBtn) {
+          refreshBtn.addEventListener("click", () => {
+            if (typeof loadModels === "function") loadModels();
+          });
+        }
+        const modelSel = document.getElementById("ollamaModelSelect");
+        if (modelSel) {
+          renderOllamaModelSelect();
+          modelSel.addEventListener("change", () => {
+            const val = modelSel.value;
+            if (val) localStorage.setItem(MODEL_STORAGE_KEY, val);
+            // Keep the shared top-bar picker in sync when Ollama is active.
+            if (modelSelect && mode === "ollama") {
+              modelSelect.value = val;
+              if (typeof syncCustomSelect === "function") {
+                syncCustomSelect(modelSelect);
+              }
+            }
+            if (typeof refreshOllamaModelContext === "function") {
+              refreshOllamaModelContext();
+            }
+            if (typeof updateModeStatus === "function") updateModeStatus();
           });
         }
       }
@@ -6824,7 +6942,6 @@ Output rules (absolute):
       const input = document.getElementById("input");
       const modelSelect = document.getElementById("modelSelect");
       const topbarPromptSelect = document.getElementById("topbarPromptSelect");
-      const ollamaPaletteGroup = document.getElementById("ollamaPaletteGroup");
       const piPaletteGroup = document.getElementById("piPaletteGroup");
       const cloudPaletteGroup = document.getElementById("cloudPaletteGroup");
       const ollamaFontGroup = document.getElementById("ollamaFontGroup");
@@ -9536,6 +9653,7 @@ Output rules (absolute):
             if (typeof syncCustomSelect === "function")
               syncCustomSelect(modelSelect);
           }
+          renderOllamaModelSelect();
           renderDatabaseConfigForm();
           await refreshOllamaModelContext();
         } catch (e) {
@@ -9593,10 +9711,42 @@ Output rules (absolute):
           syncCustomSelect(modelSelect);
       }
 
+      // Ollama's Settings model dropdown mirrors the top-bar picker: both read
+      // and write the same MODEL_STORAGE_KEY, so changing either updates the
+      // other. Populated from the same availableOllamaModels list.
+      function renderOllamaModelSelect() {
+        const sel = document.getElementById("ollamaModelSelect");
+        if (!sel) return;
+        const saved = localStorage.getItem(MODEL_STORAGE_KEY) || "";
+        sel.innerHTML = "";
+        const addOpt = (value, label) => {
+          const o = document.createElement("option");
+          o.value = value;
+          o.textContent = label;
+          sel.appendChild(o);
+        };
+        if (!availableOllamaModels.length) {
+          addOpt(
+            "",
+            ollamaOffline ? "(Ollama offline)" : "(no models — Refresh)",
+          );
+        }
+        availableOllamaModels.forEach((m) => addOpt(m, m));
+        if (saved && availableOllamaModels.includes(saved)) {
+          sel.value = saved;
+        } else if (availableOllamaModels.length) {
+          sel.value = availableOllamaModels[0];
+        }
+        if (typeof refreshCustomSelectUi === "function") {
+          refreshCustomSelectUi(sel);
+        }
+      }
+
       async function onTopbarModelChange() {
         const val = modelSelect.value;
         if (mode === "ollama") {
           if (val) localStorage.setItem(MODEL_STORAGE_KEY, val);
+          renderOllamaModelSelect();
           await refreshOllamaModelContext();
         } else if (LOCAL_MODE_IDS.includes(mode)) {
           localModelConfig[mode].model = val;
@@ -9786,7 +9936,6 @@ Output rules (absolute):
           isCloudMode,
           isLocalMode,
         });
-        ollamaPaletteGroup.style.display = isOllamaMode ? "" : "none";
         piPaletteGroup.style.display = isPiMode ? "" : "none";
         cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
         ollamaGenGroup.style.display = isOllamaMode ? "" : "none";
@@ -9811,7 +9960,8 @@ Output rules (absolute):
             isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
         }
         if (customSkillsGroup) {
-          customSkillsGroup.style.display = isOllamaMode ? "" : "none";
+          customSkillsGroup.style.display =
+            isOllamaMode || isLocalMode ? "" : "none";
         }
         piSettingsGroup.style.display = isPiMode ? "" : "none";
         cloudSettingsGroup.style.display = isCloudMode ? "" : "none";
@@ -10248,6 +10398,7 @@ Output rules (absolute):
             images: images || undefined,
             agentMode: ollamaAgentMode || undefined,
             agentMaxRounds: ollamaAgentMode ? ollamaAgentMaxRounds : undefined,
+            nativeTools: ollamaNativeTools,
           }),
           signal,
         });
@@ -10928,14 +11079,17 @@ Output rules (absolute):
       function toggleHistory() {
         historyOpen = !historyOpen;
         const panel = document.getElementById("historyPanel");
+        const resizerEl = document.getElementById("historyResizer");
         if (historyOpen) {
           if (settingsOpen) toggleSettings();
           if (notesOpen) toggleNotes();
           if (mcpOpen) toggleMcp();
           panel.classList.add("open");
+          if (resizerEl) resizerEl.style.display = "block";
           loadHistoryPanel();
         } else {
           panel.classList.remove("open");
+          if (resizerEl) resizerEl.style.display = "none";
         }
       }
 
@@ -11985,6 +12139,33 @@ Output rules (absolute):
           div.insertAdjacentHTML("beforeend", DRUM_ICON_HTML);
         }
       }
+      function removeDrumIcon(div) {
+        if (!div) return;
+        div.querySelector(".lucide-drum")?.parentElement?.remove();
+      }
+
+      // Drive the tool-execution drum from explicit tool_start/tool_end trace
+      // events. This makes it reliable for native (OpenAI-schema) tool calls
+      // too, which carry no "<call:" text for the display-strip heuristic to
+      // catch. drumPending is stored on the session so it is restored when the
+      // mode's transcript is re-rendered (see renderSessionTranscript).
+      function setToolExecutingDrum(session, executing, isActive) {
+        if (!session) return;
+        session.drumPending = executing;
+        if (!isActive) return;
+        if (executing) {
+          if (
+            !session.streamingAssistantDiv ||
+            !session.streamingAssistantDiv.isConnected
+          ) {
+            session.streamingAssistantDiv = addMessage("", "assistant");
+          }
+          appendDrumIcon(session.streamingAssistantDiv);
+          scrollChatToBottom();
+        } else {
+          removeDrumIcon(session.streamingAssistantDiv);
+        }
+      }
 
       function setDraftAssistant(modeName, content, librarySources, metadata) {
         const session = getActiveModeSession(modeName);
@@ -12130,6 +12311,8 @@ Output rules (absolute):
               : {}),
           },
           maxTokens: clampInteger(source.maxTokens, 2048, 1, 128000),
+          agentMode: source.agentMode === true,
+          agentMaxRounds: clampInteger(source.agentMaxRounds, 25, 1, 50),
           hasApiKey: {
             openai: !!source.hasApiKey?.openai,
             anthropic: !!source.hasApiKey?.anthropic,
@@ -12491,7 +12674,7 @@ Output rules (absolute):
         for (const [skill, info] of Object.entries(ALL_BUILTIN_SKILLS_INFO)) {
           const enabled = builtinSkillsConfig[skill] !== false;
           html += `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
               <div>
                 <strong>${skill}</strong>
                 <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${info.desc}</div>
@@ -13245,6 +13428,31 @@ Output rules (absolute):
         }
       }
 
+      // Persist a conversation snapshot to disk (conversations.json). Used when
+      // a turn is interrupted: the server's normal "done" save never fires on
+      // abort, so the client posts its in-memory history so the interrupted
+      // exchange survives in the History panel and across reloads. Every mode
+      // uses the same in-memory history shape, so this is mode-agnostic.
+      // Fire-and-forget.
+      function persistConversationSnapshot(
+        convId,
+        modeName,
+        historyArr,
+        title,
+      ) {
+        if (!convId || !Array.isArray(historyArr) || !historyArr.length) return;
+        fetch(apiUrl("/api/conversations"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: convId,
+            mode: modeName,
+            title: title || "",
+            messages: historyArr,
+          }),
+        }).catch(() => {});
+      }
+
       // CHAT SEND / LOGIC
       async function sendMessage() {
         const runMode = mode;
@@ -13347,6 +13555,12 @@ Output rules (absolute):
             evt,
             runSession.thinkingController || thinking,
           );
+          const drumActive = mode === runMode && currentConvId === runConvId;
+          if (evt.type === "tool_start") {
+            setToolExecutingDrum(runSession, true, drumActive);
+          } else if (evt.type === "tool_end" || evt.type === "done") {
+            setToolExecutingDrum(runSession, false, drumActive);
+          }
         };
 
         try {
@@ -13687,8 +13901,27 @@ Output rules (absolute):
             cloudStreamState = "IDLE";
             if (mode === runMode) updateModeStatus();
           }
-          if (e.name === "AbortError") {
-            if (thinking && thinking.isConnected) thinking.remove();
+          if (e.name === "AbortError" || runAbortController.signal.aborted) {
+            // Keep the thinking / steps / trace box visible on interrupt —
+            // only drop it when it is empty, matching the success path. Freeze
+            // its timer and mark any in-progress tool steps as stopped instead
+            // of removing the whole box (it also lives in the saved history).
+            if (thinking) {
+              if (typeof thinking.finalizeTimeline === "function") {
+                thinking.finalizeTimeline();
+              }
+              if (typeof thinking.stopTimer === "function") {
+                thinking.stopTimer();
+              }
+              if (
+                thinking.isConnected &&
+                !thinking.hadReasoning &&
+                !thinking.hadTrace &&
+                !thinking.hadPassages
+              ) {
+                thinking.remove();
+              }
+            }
             const prior = runSession.draftAssistant?.content || "";
             const cancelled =
               prior && prior.trim()
@@ -13703,6 +13936,34 @@ Output rules (absolute):
                 status: "aborted",
               },
             );
+            // Preserve the interrupted turn: commit the partial (plus the
+            // cancellation note) to history and clear the streaming refs, so it
+            // survives re-render and the next response is appended below it
+            // instead of overwriting this bubble.
+            const abortedAssistant = finalizeDraftAssistant(
+              runMode,
+              cancelled,
+              activeLibrarySources.results,
+            );
+            if (persistToHistory) {
+              runSession.history = [
+                ...requestHistory,
+                { role: "user", content: messageToSend },
+                abortedAssistant,
+              ];
+              if (mode === runMode && currentConvId === runConvId) {
+                history = [...runSession.history];
+              }
+              // Save the interrupted conversation to disk so it appears in the
+              // History panel and survives a reload (the stream "done" save
+              // never runs on abort).
+              persistConversationSnapshot(
+                runConvId,
+                runMode,
+                runSession.history,
+                lastUserMessage.slice(0, 40),
+              );
+            }
           } else {
             if (thinking && thinking.isConnected) {
               thinking.markFailure(e.message || String(e));
@@ -13786,6 +14047,12 @@ Output rules (absolute):
             evt,
             runSession.thinkingController || thinking,
           );
+          const drumActive = mode === runMode && currentConvId === runConvId;
+          if (evt.type === "tool_start") {
+            setToolExecutingDrum(runSession, true, drumActive);
+          } else if (evt.type === "tool_end" || evt.type === "done") {
+            setToolExecutingDrum(runSession, false, drumActive);
+          }
         };
         const handlePartial = (partialResponse) => {
           if (
@@ -14020,8 +14287,27 @@ Output rules (absolute):
             cloudStreamState = "IDLE";
             if (mode === runMode) updateModeStatus();
           }
-          if (e.name === "AbortError") {
-            if (thinking && thinking.isConnected) thinking.remove();
+          if (e.name === "AbortError" || runAbortController.signal.aborted) {
+            // Keep the thinking / steps / trace box visible on interrupt —
+            // only drop it when it is empty, matching the success path. Freeze
+            // its timer and mark any in-progress tool steps as stopped instead
+            // of removing the whole box (it also lives in the saved history).
+            if (thinking) {
+              if (typeof thinking.finalizeTimeline === "function") {
+                thinking.finalizeTimeline();
+              }
+              if (typeof thinking.stopTimer === "function") {
+                thinking.stopTimer();
+              }
+              if (
+                thinking.isConnected &&
+                !thinking.hadReasoning &&
+                !thinking.hadTrace &&
+                !thinking.hadPassages
+              ) {
+                thinking.remove();
+              }
+            }
             const prior = runSession.draftAssistant?.content || "";
             const cancelled =
               prior && prior.trim()
@@ -14036,6 +14322,34 @@ Output rules (absolute):
                 status: "aborted",
               },
             );
+            // Preserve the interrupted turn: commit the partial (plus the
+            // cancellation note) to history and clear the streaming refs, so it
+            // survives re-render and the next response is appended below it
+            // instead of overwriting this bubble.
+            const abortedAssistant = finalizeDraftAssistant(
+              runMode,
+              cancelled,
+              activeLibrarySources.results,
+            );
+            if (persistToHistory) {
+              runSession.history = [
+                ...requestHistory,
+                { role: "user", content: messageToSend },
+                abortedAssistant,
+              ];
+              if (mode === runMode && currentConvId === runConvId) {
+                history = [...runSession.history];
+              }
+              // Save the interrupted conversation to disk so it appears in the
+              // History panel and survives a reload (the stream "done" save
+              // never runs on abort).
+              persistConversationSnapshot(
+                runConvId,
+                runMode,
+                runSession.history,
+                lastUserMessage.slice(0, 40),
+              );
+            }
           } else {
             if (thinking && thinking.isConnected) {
               thinking.markFailure(e.message || String(e));
@@ -14403,7 +14717,6 @@ Output rules (absolute):
         // MAIN tab holds every mode's config, each shown only for its active
         // mode (same pattern as Ollama/Pi/Cloud).
         appendSettingsGroups("settingsTabMain", [
-          "ollamaPaletteGroup",
           "piPaletteGroup",
           "cloudPaletteGroup",
           "ollamaFontGroup",
@@ -14679,6 +14992,17 @@ Output rules (absolute):
       const mcpPanelEl = document.getElementById("mcpPanel");
       let isMcpResizing = false;
 
+      const historyResizer = document.getElementById("historyResizer");
+      const historyPanelEl = document.getElementById("historyPanel");
+      let isHistoryResizing = false;
+
+      historyResizer.addEventListener("mousedown", (e) => {
+        if (!historyOpen) return;
+        isHistoryResizing = true;
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      });
+
       notesResizer.addEventListener("mousedown", (e) => {
         if (!notesOpen) return;
         isResizing = true;
@@ -14718,14 +15042,26 @@ Output rules (absolute):
           if (newWidth > 300 && newWidth < mainRect.width - 200) {
             mcpPanelEl.style.width = newWidth + "px";
           }
+        } else if (isHistoryResizing) {
+          // History is docked on the LEFT, so its width grows to the right.
+          const newWidth = e.clientX - mainRect.left;
+          if (newWidth > 150 && newWidth < mainRect.width - 200) {
+            historyPanelEl.style.width = newWidth + "px";
+          }
         }
       });
 
       document.addEventListener("mouseup", () => {
-        if (isResizing || isSettingsResizing || isMcpResizing) {
+        if (
+          isResizing ||
+          isSettingsResizing ||
+          isMcpResizing ||
+          isHistoryResizing
+        ) {
           isResizing = false;
           isSettingsResizing = false;
           isMcpResizing = false;
+          isHistoryResizing = false;
           document.body.style.cursor = "";
           document.body.style.userSelect = "";
         }
@@ -15202,6 +15538,13 @@ Output rules (absolute):
         if (btn_saveNotesBtn) {
           btn_saveNotesBtn.addEventListener("click", function (event) {
             saveNotes();
+          });
+        }
+
+        const btn_closeHistoryBtn = document.getElementById("closeHistoryBtn");
+        if (btn_closeHistoryBtn) {
+          btn_closeHistoryBtn.addEventListener("click", function (event) {
+            if (historyOpen) toggleHistory();
           });
         }
 

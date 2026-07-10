@@ -87,6 +87,7 @@ const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
+const OLLAMA_SETTINGS_FILE = path.join(DATA_DIR, "ollama-settings.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
 const LIBRARY_INDEX_ERROR_FILE = path.join(
@@ -410,6 +411,65 @@ function upsertConversation(
       title,
       mode,
       history: newHistory,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    if (convs.length > MAX_CONVERSATIONS) convs.splice(MAX_CONVERSATIONS);
+  }
+  saveConversations(convs);
+}
+
+// Upsert a full conversation supplied by the client. Used to persist an
+// interrupted turn: the normal stream "done" save never fires on abort, so the
+// client posts the in-memory history (user + partial assistant) here so it
+// survives in the History panel and across reloads, for every mode.
+function saveClientConversation(id, title, mode, rawMessages) {
+  if (!id || !Array.isArray(rawMessages)) return;
+  const allowedRoles = new Set(["system", "user", "assistant", "tool"]);
+  const history = rawMessages
+    .filter(
+      (m) =>
+        m &&
+        typeof m === "object" &&
+        allowedRoles.has(m.role) &&
+        typeof m.content === "string",
+    )
+    .map((m) => {
+      const item = { role: m.role, content: m.content };
+      if (Array.isArray(m.librarySources) && m.librarySources.length)
+        item.librarySources = m.librarySources;
+      if (Array.isArray(m.passages) && m.passages.length)
+        item.passages = m.passages;
+      if (typeof m.thinking === "string" && m.thinking.trim())
+        item.thinking = m.thinking;
+      if (Array.isArray(m.traceEvents) && m.traceEvents.length)
+        item.traceEvents = m.traceEvents;
+      if (Array.isArray(m.traceLines) && m.traceLines.length)
+        item.traceLines = m.traceLines;
+      if (typeof m.status === "string" && m.status.trim())
+        item.status = m.status.trim().slice(0, 80);
+      return item;
+    });
+  if (!history.length) return;
+  if (history.length > MAX_HISTORY_MESSAGES) {
+    history.splice(0, history.length - MAX_HISTORY_MESSAGES);
+  }
+  const convs = loadConversations();
+  const firstUser = history.find((m) => m.role === "user");
+  const finalTitle =
+    (typeof title === "string" && title.trim()) ||
+    (firstUser ? firstUser.content.slice(0, 40) : "Conversation");
+  const existing = convs.findIndex((c) => c.id === id);
+  if (existing >= 0) {
+    convs[existing].history = history;
+    convs[existing].updatedAt = Date.now();
+    convs[existing].mode = mode;
+  } else {
+    convs.unshift({
+      id,
+      title: finalTitle,
+      mode,
+      history,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
@@ -3318,6 +3378,46 @@ async function streamCloudCompletion({
   return latestUsage;
 }
 
+// Some models (Gemma via the Google endpoint, DeepSeek-R1, QwQ, …) put their
+// chain-of-thought in a <thought>…</thought> (or <think>…</think>) block at the
+// very start of the reply content. Split that leading block off so it can be
+// routed to the collapsed thinking box instead of the answer bubble, matching
+// every other mode. Only a block at the very start is treated as reasoning; a
+// tag appearing later in the answer is left untouched.
+function splitLeadingThought(raw) {
+  const open = /^\s*<(thought|think)>/i.exec(raw);
+  if (!open) {
+    // The opener may still be arriving one character at a time — hold the
+    // answer back until we know whether this is a reasoning block.
+    const lead = raw.replace(/^\s*/, "").toLowerCase();
+    if (
+      lead &&
+      lead.length < 9 &&
+      ("<thought>".startsWith(lead) || "<think>".startsWith(lead))
+    ) {
+      return { thought: "", answer: "", opened: false, closed: false };
+    }
+    return { thought: "", answer: raw, opened: false, closed: false };
+  }
+  const close = `</${open[1].toLowerCase()}>`;
+  const openEnd = open[0].length;
+  const closeIdx = raw.toLowerCase().indexOf(close, openEnd);
+  if (closeIdx === -1) {
+    return {
+      thought: raw.slice(openEnd),
+      answer: "",
+      opened: true,
+      closed: false,
+    };
+  }
+  return {
+    thought: raw.slice(openEnd, closeIdx),
+    answer: raw.slice(closeIdx + close.length),
+    opened: true,
+    closed: true,
+  };
+}
+
 // clampOllamaNumber and clampOllamaInteger are kept as thin wrappers for
 // call-site compatibility. They differ from clampNumber in that they do not
 // round to integer (Number) vs parseInt respectively.
@@ -3360,6 +3460,48 @@ function sanitizeOllamaOptions(raw) {
   return options;
 }
 
+// Configurable Ollama server URL (persisted like the Cloud settings). Every
+// Ollama HTTP request derives its host/port from ollamaConn() so the four
+// call sites (chat/stream, ollamaChat, /api/tags, /api/models/info) stay in
+// sync with whatever the user set in Settings.
+const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+function loadOllamaBaseUrl() {
+  try {
+    if (fs.existsSync(OLLAMA_SETTINGS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(OLLAMA_SETTINGS_FILE, "utf8"));
+      if (raw && typeof raw.baseUrl === "string" && raw.baseUrl.trim()) {
+        return raw.baseUrl.trim();
+      }
+    }
+  } catch (_e) {}
+  return DEFAULT_OLLAMA_BASE_URL;
+}
+let ollamaBaseUrl = loadOllamaBaseUrl();
+function saveOllamaBaseUrl(url) {
+  ollamaBaseUrl =
+    typeof url === "string" && url.trim()
+      ? url.trim()
+      : DEFAULT_OLLAMA_BASE_URL;
+  try {
+    fs.writeFileSync(
+      OLLAMA_SETTINGS_FILE,
+      JSON.stringify({ baseUrl: ollamaBaseUrl }, null, 2),
+    );
+  } catch (_e) {}
+  return ollamaBaseUrl;
+}
+function ollamaConn() {
+  try {
+    const u = new URL(ollamaBaseUrl);
+    return {
+      hostname: u.hostname || "localhost",
+      port: u.port ? Number(u.port) : 11434,
+    };
+  } catch (_e) {
+    return { hostname: "localhost", port: 11434 };
+  }
+}
+
 function ollamaChat(model, messages, options, tools = null) {
   let clientReq = null;
   const promise = new Promise((resolve, reject) => {
@@ -3384,8 +3526,7 @@ function ollamaChat(model, messages, options, tools = null) {
 
     const payload = JSON.stringify(payloadObject);
     const opts = {
-      hostname: "localhost",
-      port: 11434,
+      ...ollamaConn(),
       path: "/api/chat",
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3418,8 +3559,7 @@ function ollamaChat(model, messages, options, tools = null) {
 function getModels() {
   return new Promise((resolve, reject) => {
     const opts = {
-      hostname: "localhost",
-      port: 11434,
+      ...ollamaConn(),
       path: "/api/tags",
       method: "GET",
     };
@@ -4973,6 +5113,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && urlPath === "/api/conversations") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Conversation body required" });
+        return;
+      }
+      const id = typeof body.id === "string" ? body.id : "";
+      if (!id) {
+        send(400, { error: "Conversation id required" });
+        return;
+      }
+      saveClientConversation(
+        id,
+        body.title,
+        typeof body.mode === "string" ? body.mode : "ollama",
+        body.messages,
+      );
+      send(200, { ok: true });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
   const deleteModeMatch =
     req.method === "DELETE" &&
     urlPath.match(/^\/api\/conversations\/mode\/([^/]+)$/);
@@ -5181,6 +5346,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath === "/api/ollama/settings") {
+    send(200, { baseUrl: ollamaBaseUrl });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/ollama/settings") {
+    try {
+      const body = await parseJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        send(400, { error: "Settings object is required" });
+        return;
+      }
+      const saved = saveOllamaBaseUrl(body.baseUrl);
+      send(200, { ok: true, baseUrl: saved });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/ollama/skills/settings") {
     try {
       const body = await parseJsonBody(req);
@@ -5323,8 +5508,7 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const opts = {
-        hostname: "localhost",
-        port: 11434,
+        ...ollamaConn(),
         path: "/api/show",
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -5610,6 +5794,12 @@ const server = http.createServer(async (req, res) => {
           : 6;
       const seenSkillCalls = new Set();
       for (let round = 0; ; round += 1) {
+        // Per-round parser state: peel a leading <thought>/<think> reasoning
+        // block off this round's content stream and route it to the thinking
+        // box; only the answer text flows into `output`.
+        let roundRaw = "";
+        let roundThoughtLen = 0;
+        let roundAnswerLen = 0;
         usage = await streamCloudCompletion({
           provider,
           settings,
@@ -5619,7 +5809,33 @@ const server = http.createServer(async (req, res) => {
           images: round === 0 ? body.images : undefined,
           signal: abortController.signal,
           onDelta: (delta) => {
-            output += delta;
+            roundRaw += delta;
+            const split = splitLeadingThought(roundRaw);
+            // Stream the reasoning into the collapsed thinking box. While the
+            // block is still open, hold back a short tail that might be a
+            // partial closing tag so it never leaks into the thinking text.
+            let safeThought = split.thought;
+            if (split.opened && !split.closed) {
+              safeThought = safeThought.slice(
+                0,
+                Math.max(0, safeThought.length - 10),
+              );
+            }
+            if (safeThought.length > roundThoughtLen) {
+              const chunk = safeThought.slice(roundThoughtLen);
+              roundThoughtLen = safeThought.length;
+              if (!emittedThinkingStart) {
+                emittedThinkingStart = true;
+                emit({ type: "thinking_start" });
+              }
+              thinking += chunk;
+              emit({ type: "thinking_delta", delta: chunk, thinking });
+            }
+            // Forward only the answer text (after </thought>) to the bubble.
+            const answerDelta = split.answer.slice(roundAnswerLen);
+            roundAnswerLen = split.answer.length;
+            if (!answerDelta) return;
+            output += answerDelta;
             // Stop streaming visible text once a skill call starts; the
             // call block is excised below and streaming resumes next round.
             if (output.includes("<call:")) return;
@@ -5627,7 +5843,7 @@ const server = http.createServer(async (req, res) => {
             // client can hide it and show the animated drum icon, matching Ollama.
             emit({
               type: "delta",
-              delta,
+              delta: answerDelta,
               response: output,
             });
           },
@@ -5886,8 +6102,7 @@ const server = http.createServer(async (req, res) => {
       });
 
       const opts = {
-        hostname: "localhost",
-        port: 11434,
+        ...ollamaConn(),
         path: "/api/chat",
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -6016,9 +6231,20 @@ const server = http.createServer(async (req, res) => {
           !isDatabaseSlashCommand(slashCommand) &&
           !databasePriorityForLibraryTurn
         ) {
-          const mcpTools = getMcpOllamaTools();
-          if (mcpTools.length > 0) {
-            payloadObject.tools = mcpTools;
+          // Native tool calling (OpenAI schema): when enabled, send skills +
+          // custom skills + MCP as structured function schemas so tool-trained
+          // models (Gemma, Qwen, Llama 3) can call them directly. The parse /
+          // execute loop below already handles the resulting `tool_calls`
+          // (that is how MCP tools already worked). The client-built XML skill
+          // prompt stays in the messages as a fallback for models that ignore
+          // `tools`. When disabled, only MCP tools are offered natively (legacy
+          // behaviour) and skills go through the XML prompt.
+          const nativeTools =
+            body.nativeTools !== false
+              ? getLocalNativeTools()
+              : getMcpOllamaTools();
+          if (nativeTools.length > 0) {
+            payloadObject.tools = nativeTools;
           }
         }
 

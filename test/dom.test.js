@@ -329,8 +329,16 @@ test("frontend boots without network fetch crashes", async () => {
     5,
   );
   assert.strictEqual(
-    dom.window.document.getElementById("ollamaPaletteGroup").parentElement.id,
+    dom.window.document.getElementById("ollamaFontGroup").parentElement.id,
     "settingsTabMain",
+  );
+  // The Ollama colour palette now lives inside ollamaFontGroup (ordered to
+  // match LM Studio: tools -> palette -> font), not a standalone group.
+  assert.strictEqual(
+    dom.window.document
+      .getElementById("settingOllamaPalette")
+      .closest(".setting-group").id,
+    "ollamaFontGroup",
   );
   assert.strictEqual(
     dom.window.document.getElementById("databaseSettingsGroup").parentElement
