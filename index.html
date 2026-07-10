@@ -238,6 +238,19 @@
           color 0.2s;
       }
 
+      /* Flat theme base: never let the browser's native button/input chrome
+         (rounded corners, gradient shine, 3D borders) leak through where a
+         rule sets no border of its own. Lowest specificity — every author
+         rule still wins. */
+      button,
+      input,
+      select,
+      textarea {
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
       /* SCROLLBAR FOR CHROME/SAFARI */
       ::-webkit-scrollbar {
         width: 8px;
