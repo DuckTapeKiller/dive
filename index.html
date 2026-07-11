@@ -2974,31 +2974,25 @@
             </svg>
           </button>
         </div>
-        <div class="side-sect">
+        <div class="side-sect" id="sideModelSect">
           <div class="side-label">MODEL</div>
           <div class="side-model-row">
             <select id="modelSelect"></select>
-            <button
-              class="side-icon-btn"
-              id="sideRefreshBtn"
-              title="Refresh models"
-              aria-label="Refresh models"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                <path d="M3 21v-5h5" />
-              </svg>
-            </button>
+          </div>
+        </div>
+        <div class="side-sect" id="sidePiStatusSect" style="display: none">
+          <div class="side-label">PI STATUS</div>
+          <div
+            id="sidePiStatus"
+            style="
+              font-size: 14px;
+              line-height: 1.4;
+              color: var(--text-inverse);
+            "
+          >
+            Model: <span id="sidePiModel">--</span><br />
+            Think: <span id="sidePiThink">--</span><br />
+            Local: <span id="sidePiLocal">--</span>
           </div>
         </div>
         <div class="side-sect">
@@ -10223,6 +10217,14 @@ Output rules (absolute):
       function updateModeStatus() {
         const statusEl = document.getElementById("modeStatus");
         if (!statusEl) return;
+        const piSect = document.getElementById("sidePiStatusSect");
+        const modelSect = document.getElementById("sideModelSect");
+        if (piSect) {
+          piSect.style.display = mode === "pi" ? "block" : "none";
+        }
+        if (modelSect) {
+          modelSect.style.display = mode === "pi" ? "none" : "block";
+        }
         if (mode === "ollama") {
           statusEl.textContent = "";
           statusEl.title = "";
@@ -10241,8 +10243,8 @@ Output rules (absolute):
           const think = piStatusInfo?.thinkingLevel
             ? formatTitleCase(piStatusInfo.thinkingLevel)
             : "?";
-          statusEl.textContent = `Pi: ${modelName} | ${state} | ${cost} | Think: ${think}`;
-          statusEl.title = statusEl.textContent;
+          statusEl.textContent = "";
+          statusEl.title = "";
           return;
         }
         const provider = cloudSettings.provider || "openai";
@@ -10272,6 +10274,22 @@ Output rules (absolute):
           }
           const payload = await res.json();
           piStatusInfo = payload?.status || piStatusInfo;
+
+          // Update sidebar status elements
+          const modelEl = document.getElementById("sidePiModel");
+          const thinkEl = document.getElementById("sidePiThink");
+          const localEl = document.getElementById("sidePiLocal");
+          if (modelEl) modelEl.textContent = piStatusInfo?.model || "Model ?";
+          if (thinkEl)
+            thinkEl.textContent = piStatusInfo?.thinkingLevel
+              ? formatTitleCase(piStatusInfo.thinkingLevel)
+              : "?";
+          if (localEl) {
+            localEl.textContent = piStatusInfo?.isLocal === true ? "Yes" : "No";
+            localEl.style.color =
+              piStatusInfo?.isLocal === true ? "var(--accent)" : "";
+          }
+
           if (piStatusInfo?.contextUsage) {
             piTokenState = {
               used: piStatusInfo.contextUsage.used || 0,
@@ -10738,7 +10756,8 @@ Output rules (absolute):
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
-              evt.type === "slash_command"
+              evt.type === "slash_command" ||
+              evt.type === "heartbeat"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -10891,7 +10910,8 @@ Output rules (absolute):
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
-              evt.type === "slash_command"
+              evt.type === "slash_command" ||
+              evt.type === "heartbeat"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -11012,7 +11032,8 @@ Output rules (absolute):
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
-              evt.type === "slash_command"
+              evt.type === "slash_command" ||
+              evt.type === "heartbeat"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -11147,7 +11168,8 @@ Output rules (absolute):
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
               evt.type === "library_error" ||
-              evt.type === "slash_command"
+              evt.type === "slash_command" ||
+              evt.type === "heartbeat"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
