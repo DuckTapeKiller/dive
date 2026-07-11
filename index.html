@@ -619,6 +619,7 @@
       }
       .side-icon-btn {
         width: 30px;
+        height: 30px;
         flex-shrink: 0;
         background: transparent;
         border: none;
@@ -2975,13 +2976,63 @@
           </button>
         </div>
         <div class="side-sect" id="sideModelSect">
-          <div class="side-label">MODEL</div>
+          <div class="side-db-row" style="margin-bottom: 8px">
+            <div>
+              <div class="side-db-name">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="lucide lucide-bot-icon lucide-bot"
+                >
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+                MODEL
+              </div>
+            </div>
+          </div>
           <div class="side-model-row">
             <select id="modelSelect"></select>
           </div>
         </div>
         <div class="side-sect" id="sidePiStatusSect" style="display: none">
-          <div class="side-label">PI STATUS</div>
+          <div class="side-db-row" style="margin-bottom: 8px">
+            <div>
+              <div class="side-db-name">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="lucide lucide-bot-icon lucide-bot"
+                >
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+                PI
+              </div>
+            </div>
+          </div>
           <div
             id="sidePiStatus"
             style="
@@ -3029,24 +3080,57 @@
           </div>
         </div>
         <div id="sideRecent">
-          <div class="side-label">RECENT · LAST 5</div>
-          <div id="sideRecentList"></div>
-          <button class="side-box side-wide-btn" id="sideHistoryBtn">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+          <div class="side-db-row" style="margin-bottom: 8px">
+            <div>
+              <div class="side-db-name">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="lucide lucide-landmark-icon lucide-landmark"
+                >
+                  <path d="M10 18v-7" />
+                  <path
+                    d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"
+                  />
+                  <path d="M14 18v-7" />
+                  <path d="M18 18v-7" />
+                  <path d="M3 22h18" />
+                  <path d="M6 18v-7" />
+                </svg>
+                HISTORY
+              </div>
+            </div>
+            <button
+              class="side-icon-btn"
+              id="sideHistoryBtn"
+              title="View all history"
             >
-              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-              <path d="M3 3v5h5" />
-              <path d="M12 7v5l4 2" />
-            </svg>
-            VIEW ALL HISTORY
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-history-icon lucide-history"
+              >
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+                <path d="M12 7v5l4 2" />
+              </svg>
+            </button>
+          </div>
+          <div id="sideRecentList"></div>
         </div>
         <div id="sideFoot">
           <button class="side-box side-nav-btn" id="sideSettingsBtn">
