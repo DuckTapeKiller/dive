@@ -3913,6 +3913,40 @@ function createPiSessionId() {
   return `pi_${randomUUID()}`;
 }
 
+function isPiConvProcBusy(convProc) {
+  return !!convProc.activeRequestId;
+}
+
+function dispatchPiPrompt(convProc, session, message) {
+  convProc.activeRequestId = session.id;
+  if (convProc.proc.stdin && convProc.proc.stdin.writable) {
+    convProc.proc.stdin.write(
+      JSON.stringify({ type: "prompt", message }) + "\n",
+    );
+    convProc.lastActivityAt = Date.now();
+  } else {
+    session.error = new Error("Pi process stdin is not writable.");
+    cleanupPiSession(session.id, "stdin_not_writable");
+  }
+}
+
+function advancePiQueue(convProc) {
+  if (!convProc.queue || convProc.queue.length === 0) {
+    convProc.activeRequestId = null;
+    return;
+  }
+
+  const next = convProc.queue.shift();
+  const session = piRpcSessions.get(next.id);
+  if (!session) {
+    advancePiQueue(convProc);
+    return;
+  }
+
+  session.queued = false;
+  dispatchPiPrompt(convProc, session, next.message);
+}
+
 function buildPiEnv() {
   const env = { ...process.env };
   env.PATH = buildExecutablePath(env.PATH || "");
@@ -3985,11 +4019,23 @@ function cleanupPiSession(sessionId, reason = "session_closed") {
   const session = piRpcSessions.get(sessionId);
   if (!session) return;
 
+  const wasQueued = session.queued;
+  const convProc = session.convProc;
+
   if (!session.done && !session.error) {
     session.error = new Error(reason);
   }
   notifyPiSession(session);
   piRpcSessions.delete(sessionId);
+
+  if (convProc) {
+    if (wasQueued && convProc.queue) {
+      const idx = convProc.queue.findIndex((q) => q.id === sessionId);
+      if (idx !== -1) convProc.queue.splice(idx, 1);
+    } else if (convProc.activeRequestId === sessionId) {
+      advancePiQueue(convProc);
+    }
+  }
 
   appendSecurityEvent("pi_session_cleanup", {
     sessionId,
@@ -4039,6 +4085,15 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
   const proc = spawn(cmd, ["--mode", "rpc"], {
     cwd: settings.workingDirectory || DATA_DIR,
     env: buildPiEnv(),
+  });
+
+  proc.on("exit", (code, signal) => {
+    convProc.closed = true;
+    appendSecurityEvent("pi_process_exit", {
+      convId,
+      code,
+      signal,
+    });
   });
 
   const convProc = {
@@ -4397,6 +4452,16 @@ function summarizePiStatus(state, stats = null) {
   const model =
     state?.model && typeof state.model === "object" ? state.model : {};
   const provider = typeof model.provider === "string" ? model.provider : "";
+  const cloudProviders = [
+    "openai",
+    "anthropic",
+    "google",
+    "mistral",
+    "deepseek",
+    "perplexity",
+  ];
+  const isCloud = cloudProviders.includes(provider.toLowerCase());
+
   const zeroCost =
     model.cost &&
     typeof model.cost === "object" &&
@@ -4408,16 +4473,23 @@ function summarizePiStatus(state, stats = null) {
     stats && typeof stats.cost === "number" && Number.isFinite(stats.cost)
       ? stats.cost
       : null;
-  const cost =
-    provider === "ollama" || zeroCost || statsCost === 0
-      ? "Local"
-      : statsCost != null
-        ? `$${statsCost.toFixed(4)}`
-        : null;
+
+  const isLocal =
+    !isCloud &&
+    (provider === "ollama" ||
+      zeroCost ||
+      (statsCost !== null && statsCost === 0));
+
+  const cost = isLocal
+    ? "Local"
+    : statsCost != null
+      ? `$${statsCost.toFixed(4)}`
+      : null;
 
   return {
     model: model.id || model.name || null,
     provider: provider || null,
+    isLocal,
     state: state?.isCompacting
       ? "COMPACTING"
       : state?.isStreaming
@@ -4433,11 +4505,11 @@ function summarizePiStatus(state, stats = null) {
 
 function sendPiPrompt(convProc, message, source = "manual") {
   const id = createPiSessionId();
-  convProc.activeRequestId = id;
 
   const session = {
     id,
     proc: convProc.proc,
+    convProc,
     response: "",
     thinking: "",
     buffer: "",
@@ -4453,14 +4525,20 @@ function sendPiPrompt(convProc, message, source = "manual") {
     uiSettings: convProc.settings.permissionUx,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
+    queued: false,
   };
 
   piRpcSessions.set(id, session);
-  appendSecurityEvent("pi_prompt_received", { sessionId: id, source });
 
-  convProc.proc.stdin.write(JSON.stringify({ type: "prompt", message }) + "\n");
-  convProc.lastActivityAt = Date.now();
+  if (isPiConvProcBusy(convProc)) {
+    session.queued = true;
+    if (!convProc.queue) convProc.queue = [];
+    convProc.queue.push({ id, message });
+    emitPiSessionEvent(session, { type: "queued", sessionId: id });
+    return session;
+  }
 
+  dispatchPiPrompt(convProc, session, message);
   return session;
 }
 
@@ -6826,6 +6904,7 @@ const server = http.createServer(async (req, res) => {
             );
           }
           if (typeof unsubscribe === "function") unsubscribe();
+          if (heartbeatInterval) clearInterval(heartbeatInterval);
           if (!res.writableEnded) res.end();
           cleanupPiSession(
             session.id,
@@ -6833,6 +6912,15 @@ const server = http.createServer(async (req, res) => {
           );
         }
       });
+
+      const heartbeatInterval = setInterval(() => {
+        if (!res.writableEnded) {
+          if (session) session.lastActivityAt = Date.now();
+          writeStreamEvent({ type: "heartbeat" });
+        } else {
+          clearInterval(heartbeatInterval);
+        }
+      }, 2000);
 
       if (session.pendingDialog) {
         writeStreamEvent({
@@ -6844,6 +6932,7 @@ const server = http.createServer(async (req, res) => {
 
       res.on("close", () => {
         if (typeof unsubscribe === "function") unsubscribe();
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
         if (session && piRpcSessions.has(session.id)) {
           cleanupPiSession(session.id, "stream_client_disconnected");
         }
