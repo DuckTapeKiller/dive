@@ -403,6 +403,32 @@ function expandHome(value) {
   return value;
 }
 
+// Dive ships the official sqlite-vec loadable extension for the current
+// platform (assets/ is asar-unpacked, so this is a real on-disk path in the
+// packaged app). An explicit, existing configured path always wins; the
+// bundled copy is the zero-setup fallback.
+const BUNDLED_VEC_EXTENSION = path.join(
+  __dirname,
+  "..",
+  "assets",
+  "sqlite-vec",
+  `${process.platform}-${process.arch}`,
+  process.platform === "win32"
+    ? "vec0.dll"
+    : process.platform === "darwin"
+      ? "vec0.dylib"
+      : "vec0.so",
+);
+
+function resolveVecExtensionPath(configured) {
+  const explicit = expandHome(String(configured || "").trim());
+  try {
+    if (explicit && fs.existsSync(explicit)) return explicit;
+    if (fs.existsSync(BUNDLED_VEC_EXTENSION)) return BUNDLED_VEC_EXTENSION;
+  } catch (_e) {}
+  return explicit;
+}
+
 function clampNumber(value, min, max, fallback) {
   if (value === "" || value === null || value === undefined) return fallback;
   const parsed = Number(value);
@@ -693,8 +719,8 @@ function normalizeConfig(rawConfig) {
     batchSize: clampNumber(merged.embedding?.batchSize, 1, 64, 16),
     dimensions: clampNumber(merged.embedding?.dimensions, 0, 4096, 0),
     quantization: normalizeVectorQuantization(merged.embedding?.quantization),
-    sqliteVecExtensionPath: expandHome(
-      String(merged.embedding?.sqliteVecExtensionPath || "").trim(),
+    sqliteVecExtensionPath: resolveVecExtensionPath(
+      merged.embedding?.sqliteVecExtensionPath,
     ),
   };
   const watch = {
@@ -767,6 +793,33 @@ function saveLibraryChatSettings(rawSettings) {
   return saveLibraryConfig({ ...current, chatIntegration });
 }
 
+// Dive bundles the official sqlite.org shell (extension loading enabled) so
+// vector indexing works with zero setup. It sits right after the explicit
+// SQLITE3_PATH override; a Homebrew/system install remains a fallback.
+const BUNDLED_SQLITE_CLI = path.join(
+  __dirname,
+  "..",
+  "assets",
+  "sqlite-tools",
+  `${process.platform}-${process.arch}`,
+  process.platform === "win32" ? "sqlite3.exe" : "sqlite3",
+);
+
+function bundledSqliteCandidate() {
+  try {
+    if (!fs.existsSync(BUNDLED_SQLITE_CLI)) return null;
+    // Archive/packaging steps can drop the executable bit — restore it.
+    try {
+      fs.accessSync(BUNDLED_SQLITE_CLI, fs.constants.X_OK);
+    } catch (_e) {
+      fs.chmodSync(BUNDLED_SQLITE_CLI, 0o755);
+    }
+    return BUNDLED_SQLITE_CLI;
+  } catch (_e) {
+    return null;
+  }
+}
+
 function sqliteCandidatePaths() {
   const platformCandidates =
     process.platform === "darwin"
@@ -786,9 +839,11 @@ function sqliteCandidatePaths() {
             "/bin/sqlite3",
             "sqlite3",
           ];
-  const candidates = [process.env.SQLITE3_PATH, ...platformCandidates].filter(
-    Boolean,
-  );
+  const candidates = [
+    process.env.SQLITE3_PATH,
+    bundledSqliteCandidate(),
+    ...platformCandidates,
+  ].filter(Boolean);
   return Array.from(new Set(candidates));
 }
 

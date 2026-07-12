@@ -21,6 +21,8 @@ const COMMANDS = {
   factcheck: { type: "skill", skillName: "fact_check", label: "fact check" },
   fact_check: { type: "skill", skillName: "fact_check", label: "fact check" },
   notes: { type: "skill", skillName: "local_notes", label: "local notes" },
+  book: { type: "skill", skillName: "book_search", label: "book search" },
+  isbn: { type: "skill", skillName: "book_search", label: "book search" },
   shell: { type: "skill", skillName: "shell_command", label: "shell" },
 };
 

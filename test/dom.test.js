@@ -237,6 +237,11 @@ function waitFor(predicate, timeoutMs = 1000) {
   });
 }
 
+// Every created window must be closed when the suite ends: the app registers
+// repeating timers (e.g. the Pi history poller) that otherwise keep Node's
+// event loop alive forever and hang `node --test`.
+const openDoms = [];
+
 function createDom() {
   const errors = [];
   const virtualConsole = new VirtualConsole();
@@ -252,8 +257,19 @@ function createDom() {
     },
   });
 
+  openDoms.push(dom);
   return { dom, errors };
 }
+
+test.after(() => {
+  for (const dom of openDoms) {
+    try {
+      dom.window.close();
+    } catch (_e) {
+      // window already gone
+    }
+  }
+});
 
 test("frontend boots without network fetch crashes", async () => {
   const { dom, errors } = createDom();
