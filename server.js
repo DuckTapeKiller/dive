@@ -349,6 +349,51 @@ function saveConversations(convs) {
   });
 }
 
+function persistAsyncWakeTurn(convId, response, metadata = {}) {
+  if (!convId || !response) return;
+  try {
+    const convs = loadConversations();
+    const idx = convs.findIndex((c) => c.id === convId);
+    if (idx === -1) return; // nothing to attach this turn to
+
+    const history = Array.isArray(convs[idx].history)
+      ? convs[idx].history.slice()
+      : [];
+    const lastIdx = history.length - 1;
+    const lastMsg = lastIdx >= 0 ? history[lastIdx] : null;
+
+    // Merge if the last message is an empty assistant response (likely a failed attempt)
+    if (
+      lastMsg &&
+      lastMsg.role === "assistant" &&
+      (!lastMsg.content || !lastMsg.content.trim())
+    ) {
+      lastMsg.content = response;
+      if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
+        lastMsg.thinking = metadata.thinking;
+      }
+      lastMsg.status = "async_wake";
+    } else {
+      const assistantMessage = { role: "assistant", content: response };
+      if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
+        assistantMessage.thinking = metadata.thinking;
+      }
+      assistantMessage.status = "async_wake";
+      history.push(assistantMessage);
+    }
+
+    if (history.length > MAX_HISTORY_MESSAGES) {
+      history.splice(0, history.length - MAX_HISTORY_MESSAGES);
+    }
+    convs[idx].history = history;
+    convs[idx].updatedAt = Date.now();
+    saveConversations(convs);
+    appendSecurityEvent("pi_async_wake_persisted", { convId });
+  } catch (e) {
+    console.error("Failed to persist async-wake Pi turn:", e.message || e);
+  }
+}
+
 function upsertConversation(
   saveConv,
   convTitle,
@@ -386,8 +431,22 @@ function upsertConversation(
   if (typeof metadata.status === "string" && metadata.status.trim()) {
     assistantMessage.status = metadata.status.trim().slice(0, 80);
   }
+  // Client-supplied history can carry raw stream events on earlier assistant
+  // turns (full thinking accumulations, session ids). Sanitize at the write
+  // boundary so re-saving a conversation never re-inflates it.
   const newHistory = [
-    ...messages.filter((item) => !isTransientLibraryContextMessage(item)),
+    ...messages
+      .filter((item) => !isTransientLibraryContextMessage(item))
+      .map((item) => {
+        if (!item || !Array.isArray(item.traceEvents)) return item;
+        const cleanEvents = item.traceEvents
+          .map((evt) => sanitizeTraceEventForStorage(evt))
+          .filter(Boolean);
+        const copy = { ...item };
+        if (cleanEvents.length) copy.traceEvents = cleanEvents;
+        else delete copy.traceEvents;
+        return copy;
+      }),
     assistantMessage,
   ];
   const title = convTitle || message.slice(0, 40);
@@ -442,8 +501,14 @@ function saveClientConversation(id, title, mode, rawMessages) {
         item.passages = m.passages;
       if (typeof m.thinking === "string" && m.thinking.trim())
         item.thinking = m.thinking;
-      if (Array.isArray(m.traceEvents) && m.traceEvents.length)
-        item.traceEvents = m.traceEvents;
+      if (Array.isArray(m.traceEvents) && m.traceEvents.length) {
+        // Client snapshots carry raw stream events — sanitize each one so
+        // accumulated thinking strings / session ids never reach disk.
+        const cleanEvents = m.traceEvents
+          .map((evt) => sanitizeTraceEventForStorage(evt))
+          .filter(Boolean);
+        if (cleanEvents.length) item.traceEvents = cleanEvents;
+      }
       if (Array.isArray(m.traceLines) && m.traceLines.length)
         item.traceLines = m.traceLines;
       if (typeof m.status === "string" && m.status.trim())
@@ -536,6 +601,7 @@ function defaultSkillsConfig() {
   return {
     shell_command: false,
     wikipedia: true,
+    book_search: true,
     britannica: true,
     wiktionary: true,
     deep_etymology: true,
@@ -1771,6 +1837,27 @@ function extractSkillSources(toolName, argsObj, resultText) {
   if (toolName === "web_scraper" && argsObj && argsObj.url) {
     add(hostTitleFromUrl(argsObj.url), argsObj.url);
   }
+  // book_search lists its providers as markdown links on a "Sources:" line.
+  if (toolName === "book_search") {
+    const BOOK_PROVIDER_LABELS = {
+      openlibrary: "Open Library",
+      google: "Google Books",
+      goodreads: "Goodreads",
+      storygraph: "StoryGraph",
+      hardcover: "Hardcover",
+      librarything: "LibraryThing",
+      calibre: "Calibre",
+    };
+    // Only the links inside the sources comment become pills — the Cover
+    // link stays a plain hyperlink in the reply.
+    const sourcesComment = text.match(/<!--\s*sources:([\s\S]*?)-->/i);
+    const scope = sourcesComment ? sourcesComment[1] : text;
+    const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+    let link;
+    while ((link = linkRe.exec(scope)) !== null) {
+      add(BOOK_PROVIDER_LABELS[link[1]] || link[1], link[2]);
+    }
+  }
   return sources;
 }
 
@@ -2819,7 +2906,21 @@ function serializeLibraryResults(results, options = {}) {
 function sanitizeTraceEventForStorage(event) {
   if (!event || typeof event !== "object") return null;
   const type = typeof event.type === "string" ? event.type : "";
-  if (!type || type === "delta" || type === "done") return null;
+  // Streaming micro-events are not stored: the full thinking text is already
+  // persisted separately (metadata.thinking) and history replay never reads
+  // them — keeping hundreds of one-word deltas only bloats conversations.
+  if (
+    !type ||
+    type === "delta" ||
+    type === "done" ||
+    type === "heartbeat" ||
+    type === "thinking_start" ||
+    type === "thinking_delta" ||
+    type === "thinking_end" ||
+    type === "session_start"
+  ) {
+    return null;
+  }
   const clean = { type };
   for (const key of [
     "label",
@@ -2833,20 +2934,37 @@ function sanitizeTraceEventForStorage(event) {
     "outputPreview",
     "chunk",
     "delta",
+    "key",
+    "text",
+    "message",
+    "noticeType",
+    "model",
   ]) {
     if (typeof event[key] === "string") clean[key] = event[key].slice(0, 4000);
   }
   for (const key of [
     "isError",
     "failure",
+    "success",
     "retrievedCount",
     "injectedCount",
     "uniqueSourceCount",
     "maxContextChars",
+    "input",
+    "output",
+    "cost",
+    "tokensBefore",
   ]) {
     if (typeof event[key] === "boolean" || typeof event[key] === "number") {
       clean[key] = event[key];
     }
+  }
+  if (Array.isArray(event.lines)) {
+    clean.lines = event.lines
+      .slice(0, 80)
+      .map((line) => String(line).slice(0, 400));
+  } else if (event.lines === null) {
+    clean.lines = null;
   }
   if (Array.isArray(event.results)) {
     clean.results = serializeLibraryResults(event.results).slice(0, 50);
@@ -3913,40 +4031,6 @@ function createPiSessionId() {
   return `pi_${randomUUID()}`;
 }
 
-function isPiConvProcBusy(convProc) {
-  return !!convProc.activeRequestId;
-}
-
-function dispatchPiPrompt(convProc, session, message) {
-  convProc.activeRequestId = session.id;
-  if (convProc.proc.stdin && convProc.proc.stdin.writable) {
-    convProc.proc.stdin.write(
-      JSON.stringify({ type: "prompt", message }) + "\n",
-    );
-    convProc.lastActivityAt = Date.now();
-  } else {
-    session.error = new Error("Pi process stdin is not writable.");
-    cleanupPiSession(session.id, "stdin_not_writable");
-  }
-}
-
-function advancePiQueue(convProc) {
-  if (!convProc.queue || convProc.queue.length === 0) {
-    convProc.activeRequestId = null;
-    return;
-  }
-
-  const next = convProc.queue.shift();
-  const session = piRpcSessions.get(next.id);
-  if (!session) {
-    advancePiQueue(convProc);
-    return;
-  }
-
-  session.queued = false;
-  dispatchPiPrompt(convProc, session, next.message);
-}
-
 function buildPiEnv() {
   const env = { ...process.env };
   env.PATH = buildExecutablePath(env.PATH || "");
@@ -3958,8 +4042,33 @@ function notifyPiSession(session) {
   waiters.forEach((resolve) => resolve());
 }
 
+// ---- Persistent per-conversation Pi event channels (SSE) ----
+// The per-prompt NDJSON stream only lives as long as one prompt request.
+// Events that arrive between turns (async subagent wakes, widget updates,
+// orphaned-session captures) are pushed here instead, so the client never
+// has to poll conversations.json to find out what happened.
+const piEventChannels = new Map(); // convId -> Set<http.ServerResponse>
+
+function broadcastPiConvEvent(convId, event) {
+  if (!convId || !event) return;
+  const subscribers = piEventChannels.get(convId);
+  if (!subscribers || subscribers.size === 0) return;
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const res of subscribers) {
+    if (!res.writableEnded) {
+      try {
+        res.write(payload);
+      } catch (_e) {}
+    }
+  }
+}
+
 function emitPiSessionEvent(session, event) {
-  if (!session || !session.streamListeners || !event) return;
+  if (!session || !event) return;
+  // Push to the conversation's persistent channel regardless of whether a
+  // prompt stream is attached — the client dedupes by run state.
+  broadcastPiConvEvent(session.convProc?.convId, event);
+  if (!session.streamListeners) return;
   for (const listener of session.streamListeners) {
     try {
       listener(event);
@@ -3993,6 +4102,15 @@ function addPiSessionListener(session, listener) {
   };
 }
 
+// Pi extension widgets/status lines carry terminal ANSI colour codes; strip
+// them so the web UI renders clean text.
+function stripAnsi(text) {
+  return String(text ?? "").replace(
+    /\u001b\[[0-9;?]*[a-zA-Z]|\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b[@-Z\\^_]/g,
+    "",
+  );
+}
+
 function isPiDialogRequest(evt) {
   return (
     evt?.type === "extension_ui_request" && PI_DIALOG_METHODS.has(evt.method)
@@ -4021,6 +4139,22 @@ function cleanupPiSession(sessionId, reason = "session_closed") {
 
   const wasQueued = session.queued;
   const convProc = session.convProc;
+
+  // If the session ended in a provider error but hasn't actually finished the agent run,
+  // we must NOT delete it yet. This keeps the session alive so that Pi's internal
+  // auto-retries can still emit events to the original session ID, allowing the
+  // browser to receive the recovered response on the same stream.
+  // Terminal reasons (stale sweep, process death) must still reclaim it,
+  // otherwise a retry that never resolves leaks the session forever.
+  if (
+    session.hadProviderError &&
+    !session.done &&
+    !session.closed &&
+    reason !== "stale_timeout" &&
+    reason !== "session_closed"
+  ) {
+    return;
+  }
 
   if (!session.done && !session.error) {
     session.error = new Error(reason);
@@ -4065,6 +4199,8 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
         piConvProcesses.delete(id);
         break; // we just need to free up one slot
       }
+      // Avoid killing a process that is actively processing a request
+      if (proc.activeRequestId !== null) continue;
       if (proc.lastActivityAt < oldestTime) {
         oldest = id;
         oldestTime = proc.lastActivityAt;
@@ -4107,6 +4243,8 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
     activeRequestId: null,
     pendingStatsResolver: null,
     pendingStateResolver: null,
+    pendingCommandResolvers: new Map(),
+    convId,
   };
 
   piConvProcesses.set(convId, convProc);
@@ -4126,6 +4264,19 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       }
 
       convProc.lastActivityAt = Date.now();
+
+      // Generic RPC command responses (issued via sendPiCommand with an id).
+      if (
+        evt.type === "response" &&
+        typeof evt.id === "string" &&
+        convProc.pendingCommandResolvers instanceof Map &&
+        convProc.pendingCommandResolvers.has(evt.id)
+      ) {
+        const resolveCommand = convProc.pendingCommandResolvers.get(evt.id);
+        convProc.pendingCommandResolvers.delete(evt.id);
+        resolveCommand(evt);
+        continue;
+      }
 
       if (evt.type === "response" && evt.command === "get_state") {
         const stateData = evt.data || evt;
@@ -4153,11 +4304,182 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
         continue;
       }
 
-      if (!convProc.activeRequestId) continue;
-      const session = piRpcSessions.get(convProc.activeRequestId);
+      let session = piRpcSessions.get(convProc.activeRequestId);
+
+      if (!session) {
+        // The session is missing (either it never existed, or was cleaned up/timed out).
+        // If we get a message update, tool, or end, the model has "woken up" (or a
+        // lingering response arrived) and we should capture it as an async wake turn.
+        const isWakeEvent =
+          evt.type === "message_update" ||
+          evt.type === "tool_execution_start" ||
+          evt.type === "tool_execution_update" ||
+          evt.type === "tool_execution_end" ||
+          evt.type === "agent_end";
+        if (isWakeEvent) {
+          const captured = {
+            id: createPiSessionId(),
+            proc: convProc.proc,
+            convProc,
+            response: "",
+            thinking: "",
+            buffer: "",
+            stderrData: "",
+            pendingDialog: null,
+            done: false,
+            closed: false,
+            error: null,
+            hadProviderError: false,
+            waiters: [],
+            streamListeners: new Set(),
+            source: "async_wake",
+            timeoutMs: convProc.settings.timeoutMs,
+            uiSettings: convProc.settings.permissionUx,
+            createdAt: Date.now(),
+            lastActivityAt: Date.now(),
+            queued: false,
+          };
+          piRpcSessions.set(captured.id, captured);
+          convProc.activeRequestId = captured.id;
+          session = captured;
+          appendSecurityEvent("pi_async_wake_detected", {
+            convId,
+            sessionId: captured.id,
+            triggerEvent: evt.type || null,
+          });
+        }
+      }
+
+      // Track the pi-subagents async fleet widget even when no session is
+      // attached: its presence means background subagents are still running,
+      // which gates when an agent_end really finishes the conversation turn.
+      if (
+        evt.type === "extension_ui_request" &&
+        evt.method === "setWidget" &&
+        evt.widgetKey === "subagent-async"
+      ) {
+        convProc.asyncWidgetActive =
+          Array.isArray(evt.widgetLines) && evt.widgetLines.length > 0;
+      }
+
       if (!session) continue;
 
       session.lastActivityAt = Date.now();
+
+      // Extension UI signals (widgets, status lines, notifications) become
+      // first-class readable events instead of raw JSON trace dumps. The
+      // subagent fleet widget in particular is the same live progress view
+      // the terminal shows — forward its lines verbatim (ANSI stripped).
+      if (evt.type === "extension_ui_request") {
+        if (evt.method === "setWidget") {
+          const widgetLines = Array.isArray(evt.widgetLines)
+            ? evt.widgetLines.slice(0, 80).map((l) => stripAnsi(l))
+            : null;
+          emitPiSessionEvent(session, {
+            type: "pi_widget",
+            sessionId: session.id,
+            key: evt.widgetKey || "widget",
+            lines: widgetLines,
+          });
+          continue;
+        }
+        if (evt.method === "setStatus") {
+          emitPiSessionEvent(session, {
+            type: "pi_status",
+            sessionId: session.id,
+            key: evt.statusKey || "status",
+            text:
+              typeof evt.statusText === "string"
+                ? stripAnsi(evt.statusText)
+                : "",
+          });
+          continue;
+        }
+        if (evt.method === "notify") {
+          emitPiSessionEvent(session, {
+            type: "pi_notice",
+            sessionId: session.id,
+            noticeType: evt.notifyType || "info",
+            message: stripAnsi(evt.message || ""),
+          });
+          continue;
+        }
+        if (evt.method === "setTitle" || evt.method === "set_editor_text") {
+          continue; // terminal-only concerns, meaningless in the web UI
+        }
+        // select / confirm / input / editor fall through to the dialog
+        // handler below (isPiDialogRequest).
+      }
+
+      if (evt.type === "auto_retry_start") {
+        emitPiSessionEvent(session, {
+          type: "provider_retry",
+          sessionId: session.id,
+        });
+        continue;
+      }
+
+      if (evt.type === "auto_retry_end") {
+        emitPiSessionEvent(session, {
+          type: "provider_retry_end",
+          success: evt.success || false,
+          sessionId: session.id,
+        });
+        continue;
+      }
+
+      if (
+        (evt.type === "message_end" || evt.type === "turn_end") &&
+        (evt.stopReason === "error" || evt.message?.stopReason === "error")
+      ) {
+        let errorMsg =
+          evt.errorMessage ||
+          evt.message?.errorMessage ||
+          "Unknown provider error";
+        if (typeof errorMsg === "object") {
+          errorMsg = JSON.stringify(errorMsg);
+        }
+        session.hadProviderError = true;
+        emitPiSessionEvent(session, {
+          type: "provider_error",
+          error: clampText(String(errorMsg), 600),
+          sessionId: session.id,
+        });
+        continue;
+      }
+
+      // A clean assistant message-end carries the model + token usage for the
+      // turn — surface it as a compact readable footer instead of JSON noise.
+      if (
+        evt.type === "message_end" &&
+        evt.message?.role === "assistant" &&
+        evt.message?.usage
+      ) {
+        const usage = evt.message.usage;
+        emitPiSessionEvent(session, {
+          type: "pi_usage",
+          sessionId: session.id,
+          model: evt.message.model || "",
+          input: Number(usage.input) || 0,
+          output: Number(usage.output) || 0,
+          cost: Number(usage.cost?.total) || 0,
+        });
+        continue;
+      }
+
+      // Structural lifecycle events carry nothing the user can read — the
+      // substance arrives via thinking/text deltas and tool events. Dropping
+      // them here is what kills the raw-JSON "Trace" gibberish.
+      if (
+        evt.type === "agent_start" ||
+        evt.type === "turn_start" ||
+        evt.type === "turn_end" ||
+        evt.type === "message_start" ||
+        evt.type === "message_end" ||
+        evt.type === "response"
+      ) {
+        continue;
+      }
 
       if (evt.type === "compaction_start") {
         emitPiSessionEvent(session, {
@@ -4207,6 +4529,14 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
           continue;
         }
         if (delta?.type === "text_delta") {
+          // First text of the wake turn (after async subagents finished):
+          // separate it from the pre-async text instead of gluing them.
+          if (session.awaitingAsync) {
+            session.awaitingAsync = false;
+            if (session.response && session.response.trim()) {
+              session.response += "\n\n";
+            }
+          }
           session.response += delta.delta;
           emitPiSessionEvent(session, {
             type: "delta",
@@ -4214,6 +4544,18 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
             response: session.response,
             sessionId: session.id,
           });
+          continue;
+        }
+        // Fallback: if it's a message update but not a delta, it might be a full response.
+        if (typeof delta === "string" && delta.trim()) {
+          session.response = delta;
+          emitPiSessionEvent(session, {
+            type: "delta",
+            delta: delta,
+            response: session.response,
+            sessionId: session.id,
+          });
+          continue;
         }
         continue;
       }
@@ -4236,7 +4578,7 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
           sessionId: session.id,
           toolName: evt.toolName || null,
           toolCallId: evt.toolCallId || null,
-          outputPreview: clampText(output, 1500),
+          outputPreview: clampText(output, 3000),
         });
         continue;
       }
@@ -4266,13 +4608,50 @@ function getOrCreatePiConvProcess(convId, piSettings = null) {
       }
 
       if (evt.type === "agent_end") {
+        // Async subagents: pi-subagents lets the parent agent end its turn
+        // while background children keep working, then wakes it with their
+        // results. While the fleet widget is active, this agent_end is NOT
+        // the end of the conversation turn — keep the session (and the
+        // client's stream) open so the wake turn lands in the same bubble
+        // instead of an empty reply + a prematurely re-enabled send button.
+        if (
+          convProc.asyncWidgetActive &&
+          session.source !== "async_wake" &&
+          !session.error
+        ) {
+          session.awaitingAsync = true;
+          emitPiSessionEvent(session, {
+            type: "async_pending",
+            sessionId: session.id,
+          });
+          continue;
+        }
         session.done = true;
+        if (
+          session.hadProviderError &&
+          (!session.response || !session.response.trim())
+        ) {
+          emitPiSessionEvent(session, {
+            type: "error",
+            error:
+              "The provider encountered an error and retries were exhausted. No response was generated.",
+            sessionId: session.id,
+          });
+        }
         emitPiSessionEvent(session, {
           type: "done",
           response: session.response || "",
           sessionId: session.id,
         });
         notifyPiSession(session);
+        if (session.source === "async_wake") {
+          // Nobody is listening for this session (no stream, no waiter) —
+          // save the result now, since this is the only chance to.
+          persistAsyncWakeTurn(convId, session.response || "", {
+            thinking: session.thinking || "",
+          });
+          cleanupPiSession(session.id, "async_wake_completed");
+        }
         continue;
       }
 
@@ -4503,8 +4882,185 @@ function summarizePiStatus(state, stats = null) {
   };
 }
 
+function isPiConvProcBusy(convProc) {
+  return convProc.activeRequestId !== null;
+}
+
+function advancePiQueue(convProc) {
+  if (!convProc.queue || convProc.queue.length === 0) {
+    convProc.activeRequestId = null;
+    return;
+  }
+  const next = convProc.queue.shift();
+  const session = piRpcSessions.get(next.id);
+  if (!session) {
+    advancePiQueue(convProc);
+    return;
+  }
+  dispatchPiPrompt(convProc, session, next.message);
+}
+
+function dispatchPiPrompt(convProc, session, message) {
+  convProc.activeRequestId = session.id;
+  const payload = JSON.stringify({
+    type: "prompt",
+    message,
+    source: session.source,
+  });
+  convProc.proc.stdin.write(payload + "\n");
+  session.lastActivityAt = Date.now();
+}
+
+// ---- Pi environment banner (version, context, skills, prompts, extensions) ----
+let piVersionCache = null;
+function getPiVersionSync() {
+  if (piVersionCache !== null) return piVersionCache;
+  piVersionCache = "";
+  try {
+    let cmd = getPiCommand();
+    if (!path.isAbsolute(cmd)) {
+      const lookup = spawnSync("/usr/bin/env", ["which", cmd], {
+        encoding: "utf8",
+        env: buildPiEnv(),
+      });
+      const found = (lookup.stdout || "").trim().split("\n")[0];
+      if (found) cmd = found;
+    }
+    const real = fs.realpathSync(cmd);
+    const pkg = JSON.parse(
+      fs.readFileSync(
+        path.join(path.dirname(real), "..", "package.json"),
+        "utf8",
+      ),
+    );
+    piVersionCache = typeof pkg.version === "string" ? pkg.version : "";
+  } catch (_e) {}
+  return piVersionCache;
+}
+
+function listPiExtensionsFromSettings() {
+  try {
+    const cfg = JSON.parse(
+      fs.readFileSync(
+        path.join(os.homedir(), ".pi", "agent", "settings.json"),
+        "utf8",
+      ),
+    );
+    const names = new Set();
+    const nameOf = (source) => {
+      const s = String(source);
+      if (s.startsWith("npm:")) return s.slice(4);
+      return path.basename(s);
+    };
+    for (const entry of Array.isArray(cfg.extensions) ? cfg.extensions : []) {
+      const parts = String(entry).split("/").filter(Boolean);
+      // "+extensions/pi-face/src/index.ts" -> "pi-face"
+      const idx = parts.findIndex(
+        (p) => p === "extensions" || p === "+extensions",
+      );
+      names.add(idx >= 0 && parts[idx + 1] ? parts[idx + 1] : parts[0]);
+    }
+    for (const entry of Array.isArray(cfg.packages) ? cfg.packages : []) {
+      if (typeof entry === "string") names.add(nameOf(entry));
+      else if (entry && typeof entry === "object" && entry.source) {
+        names.add(nameOf(entry.source));
+      }
+    }
+    return [...names].sort();
+  } catch (_e) {
+    return [];
+  }
+}
+
+function listPiContextFiles(workingDirectory) {
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, ".pi", "agent", "AGENTS.md"),
+    workingDirectory ? path.join(workingDirectory, "AGENTS.md") : null,
+    workingDirectory ? path.join(workingDirectory, ".pi", "AGENTS.md") : null,
+  ].filter(Boolean);
+  return candidates
+    .filter((file) => {
+      try {
+        return fs.existsSync(file);
+      } catch (_e) {
+        return false;
+      }
+    })
+    .map((file) =>
+      file.startsWith(home) ? "~" + file.slice(home.length) : file,
+    );
+}
+
+// Compose the same startup banner the pi terminal shows and deliver it into
+// the first turn's execution trace of a conversation.
+async function emitPiEnvironmentBanner(convProc, session) {
+  const lines = [];
+  const version = getPiVersionSync();
+  lines.push(version ? `pi v${version}` : "pi");
+  const context = listPiContextFiles(
+    convProc.settings?.workingDirectory || DATA_DIR,
+  );
+  if (context.length) lines.push(`Context: ${context.join(", ")}`);
+  try {
+    const reply = await sendPiCommand(
+      convProc,
+      { type: "get_commands" },
+      20000,
+    );
+    const commands = reply?.data?.commands || [];
+    const skills = commands
+      .filter((c) => c.source === "skill")
+      .map((c) => c.name)
+      .sort();
+    const prompts = commands
+      .filter((c) => c.source === "prompt")
+      .map((c) => "/" + c.name)
+      .sort();
+    if (skills.length) lines.push(`Skills: ${skills.join(", ")}`);
+    if (prompts.length) lines.push(`Prompts: ${prompts.join(", ")}`);
+  } catch (_e) {}
+  const extensions = listPiExtensionsFromSettings();
+  if (extensions.length) lines.push(`Extensions: ${extensions.join(", ")}`);
+  emitPiSessionEvent(session, {
+    type: "pi_banner",
+    sessionId: session.id,
+    text: lines.join("\n"),
+  });
+}
+
+// Send a one-shot RPC command (model switching, thinking level, compaction,
+// stats, command discovery) to a conversation's pi process and await its
+// response. This is what lets the web UI expose the same controls the
+// terminal has instead of prompting-only access.
+function sendPiCommand(convProc, command, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    if (!convProc.proc.stdin || !convProc.proc.stdin.writable) {
+      reject(new Error("Pi process stdin is not writable."));
+      return;
+    }
+    if (!(convProc.pendingCommandResolvers instanceof Map)) {
+      convProc.pendingCommandResolvers = new Map();
+    }
+    const id = `cmd_${randomUUID()}`;
+    const timer = setTimeout(() => {
+      convProc.pendingCommandResolvers.delete(id);
+      reject(new Error(`Pi command ${command.type} timed out.`));
+    }, timeoutMs);
+    convProc.pendingCommandResolvers.set(id, (evt) => {
+      clearTimeout(timer);
+      resolve(evt);
+    });
+    convProc.proc.stdin.write(JSON.stringify({ id, ...command }) + "\n");
+    convProc.lastActivityAt = Date.now();
+  });
+}
+
 function sendPiPrompt(convProc, message, source = "manual") {
-  const id = createPiSessionId();
+  // Use convId as the session ID to ensure a single stable channel per conversation.
+  // This ensures that async_wake recoveries (which use the same convId) are delivered
+  // to the original stream.
+  const id = convProc.convId || createPiSessionId();
 
   const session = {
     id,
@@ -4518,6 +5074,7 @@ function sendPiPrompt(convProc, message, source = "manual") {
     done: false,
     closed: false,
     error: null,
+    hadProviderError: false,
     waiters: [],
     streamListeners: new Set(),
     source,
@@ -4746,6 +5303,41 @@ const server = http.createServer(async (req, res) => {
       res.end(css);
     } catch (error) {
       send(500, { error: "Failed to load font faces." });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath.startsWith("/assets/")) {
+    try {
+      const filename = urlPath.slice("/assets/".length);
+      if (!filename || /\\|\.\./.test(filename)) {
+        res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Invalid asset path.");
+        return;
+      }
+      const assetPath = path.join(__dirname, "assets", filename);
+      if (!fs.existsSync(assetPath)) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Asset not found.");
+        return;
+      }
+      const buffer = fs.readFileSync(assetPath);
+      const ext = path.extname(filename).toLowerCase();
+      const mimeMap = {
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+      };
+      res.writeHead(200, {
+        "Content-Type": mimeMap[ext] || "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+      });
+      res.end(buffer);
+    } catch (error) {
+      send(500, { error: "Failed to load asset." });
     }
     return;
   }
@@ -5273,6 +5865,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath.startsWith("/api/conversations/id/")) {
+    const id = urlPath.slice("/api/conversations/id/".length).trim();
+    if (!id) {
+      send(400, { error: "Conversation id is required" });
+      return;
+    }
+    const convs = loadConversations();
+    const conv = convs.find((c) => c.id === id);
+    if (!conv) {
+      send(404, { error: "Conversation not found" });
+      return;
+    }
+    send(200, conv);
+    return;
+  }
+
   if (
     req.method === "DELETE" &&
     (urlPath === "/api/conversations/id" ||
@@ -5423,6 +6031,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && urlPath === "/api/book-search/config") {
+    try {
+      const file = path.join(DATA_DIR, "book-search.json");
+      const cfg = fs.existsSync(file)
+        ? JSON.parse(fs.readFileSync(file, "utf8"))
+        : {};
+      send(200, { config: cfg && typeof cfg === "object" ? cfg : {} });
+    } catch (e) {
+      send(500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/book-search/config") {
+    try {
+      const body = await parseJsonBody(req);
+      const raw = body?.config;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        send(400, { error: "Config object is required" });
+        return;
+      }
+      const clean = {};
+      for (const key of [
+        "googleApiKey",
+        "hardcoverToken",
+        "librarythingToken",
+        "calibreServerUrl",
+        "calibreLibraryId",
+      ]) {
+        if (typeof raw[key] === "string" && raw[key].trim()) {
+          clean[key] = raw[key].trim();
+        }
+      }
+      const file = path.join(DATA_DIR, "book-search.json");
+      fs.writeFileSync(file, JSON.stringify(clean, null, 2), { mode: 0o600 });
+      send(200, { ok: true, config: clean });
+    } catch (e) {
+      send(500, { error: e.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && urlPath === "/api/ollama/skills/settings") {
     send(200, loadSkillsConfig());
     return;
@@ -5495,6 +6145,73 @@ const server = http.createServer(async (req, res) => {
       ollamaToolRequests.delete(sessionId);
 
       send(200, { ok: true });
+    } catch (e) {
+      send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath.startsWith("/api/pi/events")) {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const convId = url.searchParams.get("conv") || "default";
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+    let subscribers = piEventChannels.get(convId);
+    if (!subscribers) {
+      subscribers = new Set();
+      piEventChannels.set(convId, subscribers);
+    }
+    subscribers.add(res);
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": hb\n\n");
+    }, 15000);
+    heartbeat.unref?.();
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      subscribers.delete(res);
+      if (subscribers.size === 0) piEventChannels.delete(convId);
+    });
+    return;
+  }
+
+  if (req.method === "POST" && urlPath === "/api/pi/command") {
+    try {
+      const body = await parseJsonBody(req);
+      const convId = body.saveConv || body.convId || "default";
+      const command = body.command;
+      // Only session-control commands; prompting still goes through the
+      // streaming endpoint so events render in the conversation.
+      const ALLOWED_PI_COMMANDS = new Set([
+        "get_state",
+        "get_available_models",
+        "set_model",
+        "cycle_model",
+        "set_thinking_level",
+        "cycle_thinking_level",
+        "compact",
+        "set_auto_compaction",
+        "set_auto_retry",
+        "abort_retry",
+        "get_session_stats",
+        "get_commands",
+      ]);
+      if (
+        !command ||
+        typeof command !== "object" ||
+        !ALLOWED_PI_COMMANDS.has(command.type)
+      ) {
+        send(400, { error: "Unsupported Pi command" });
+        return;
+      }
+      const convProc = getOrCreatePiConvProcess(convId, loadPiSettings());
+      const timeoutMs = command.type === "compact" ? 180000 : 15000;
+      const result = await sendPiCommand(convProc, command, timeoutMs);
+      send(200, { ok: result?.success !== false, result });
     } catch (e) {
       send(e.statusCode || 500, { error: e.message });
     }
@@ -6751,16 +7468,50 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && urlPath === "/api/pi/stream") {
     let session = null;
     let unsubscribe = null;
+    let persistTimer = null;
+    let persistPartial = null;
     const traceEvents = [];
     let thinking = "";
     const writeStreamEvent = (evt) => {
-      const storedEvent = sanitizeTraceEventForStorage(evt);
+      // Widget frames update in place — keep only the latest frame per widget
+      // in the stored trace so history holds the final state, not hundreds of
+      // intermediate repaints. A clear frame (lines: null) mutes the live
+      // view but must NOT erase the stored final state.
+      let skipStore = false;
+      if (evt?.type === "pi_widget") {
+        if (Array.isArray(evt.lines) && evt.lines.length) {
+          for (let i = traceEvents.length - 1; i >= 0; i--) {
+            if (
+              traceEvents[i].type === "pi_widget" &&
+              traceEvents[i].key === evt.key
+            ) {
+              traceEvents.splice(i, 1);
+            }
+          }
+        } else {
+          skipStore = true;
+        }
+      }
+      const storedEvent = skipStore ? null : sanitizeTraceEventForStorage(evt);
       if (storedEvent) traceEvents.push(storedEvent);
       if (evt?.type === "thinking_delta") {
         if (typeof evt.thinking === "string") {
           thinking = evt.thinking;
         } else if (typeof evt.delta === "string") {
           thinking += evt.delta;
+        }
+      }
+      // Continuously checkpoint the in-flight turn to disk (debounced) so
+      // clearing the chat, starting a new session, or a crash mid-run never
+      // loses what was already produced.
+      if (evt?.type !== "heartbeat" && typeof persistPartial === "function") {
+        if (evt?.type === "async_pending") {
+          persistPartial();
+        } else if (!persistTimer) {
+          persistTimer = setTimeout(() => {
+            persistTimer = null;
+            if (session && !session.done) persistPartial();
+          }, 2500);
         }
       }
       if (res.writableEnded) return;
@@ -6882,11 +7633,38 @@ const server = http.createServer(async (req, res) => {
       const convId = body.saveConv || "default";
       const convProc = getOrCreatePiConvProcess(convId, piSettings);
       session = sendPiPrompt(convProc, promptMessage, source);
+      persistPartial = () => {
+        try {
+          upsertConversation(
+            saveConv,
+            convTitle,
+            body.message,
+            messages,
+            session?.response || "",
+            mode,
+            {
+              librarySources: librarySourceResults,
+              passages: libraryPassages,
+              thinking,
+              traceEvents,
+              status: "streaming",
+            },
+          );
+        } catch (_e) {}
+      };
       writeStreamEvent({ type: "session_start", sessionId: session.id });
+      if (!convProc.bannerEmitted) {
+        convProc.bannerEmitted = true;
+        emitPiEnvironmentBanner(convProc, session).catch(() => {});
+      }
 
       unsubscribe = addPiSessionListener(session, (evt) => {
         writeStreamEvent(evt);
         if (evt.type === "done" || evt.type === "error") {
+          if (persistTimer) {
+            clearTimeout(persistTimer);
+            persistTimer = null;
+          }
           if (evt.type === "done") {
             upsertConversation(
               saveConv,
@@ -6933,7 +7711,16 @@ const server = http.createServer(async (req, res) => {
       res.on("close", () => {
         if (typeof unsubscribe === "function") unsubscribe();
         if (heartbeatInterval) clearInterval(heartbeatInterval);
+        if (persistTimer) {
+          clearTimeout(persistTimer);
+          persistTimer = null;
+        }
         if (session && piRpcSessions.has(session.id)) {
+          // The client went away mid-run (stop button, app closed, reload):
+          // checkpoint whatever the turn produced so far before tearing down.
+          if (!session.done && typeof persistPartial === "function") {
+            persistPartial();
+          }
           cleanupPiSession(session.id, "stream_client_disconnected");
         }
       });
