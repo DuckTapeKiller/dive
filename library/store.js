@@ -5439,6 +5439,7 @@ ORDER BY lower(path);`,
 }
 
 module.exports = {
+  checkEmbeddingPreflight,
   CONFIG_FILE,
   buildChatLibraryContext,
   buildChunks,

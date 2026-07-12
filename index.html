@@ -9648,7 +9648,44 @@ Output rules (absolute):
         return ` | ${formatEtaSeconds(Number(embeddingPending) / rate)}`;
       }
 
+      let alertedEmbeddingFailureJobId = null;
+
       function renderLibraryIndexJob(payload) {
+        // Surface mid-run embedding failures once per job, loudly.
+        try {
+          const jobId = payload?.job?.id || null;
+          const embErrors =
+            Number(payload?.job?.progress?.embeddingErrors) || 0;
+          if (
+            jobId &&
+            embErrors > 0 &&
+            payload?.job?.status === "running" &&
+            alertedEmbeddingFailureJobId !== jobId
+          ) {
+            alertedEmbeddingFailureJobId = jobId;
+            const recent = payload?.job?.progress?.recentErrors || [];
+            const detail = recent.length
+              ? `\n\nMost recent error:\n${String(recent[recent.length - 1]?.error || recent[recent.length - 1] || "").slice(0, 300)}`
+              : "";
+            appConfirm(
+              `Embeddings are failing during this index run (${embErrors} so far). ` +
+                `You can pause now, fix the embedding server, and press ` +
+                `Build / Update Index to resume — or continue keyword-only ` +
+                `and use Retry Embeddings later for the affected passages.` +
+                detail,
+              "Database — embedding errors",
+              {
+                confirmLabel: "Pause indexing",
+                cancelLabel: "Continue without embeddings",
+                danger: true,
+              },
+            )
+              .then((pause) => {
+                if (pause) cancelLibraryIndex();
+              })
+              .catch(() => {});
+          }
+        } catch (_e) {}
         // Side panel activity light: glowing while the index job runs.
         const dbDot = document.getElementById("sideDbDot");
         if (dbDot) {
@@ -9803,7 +9840,7 @@ Output rules (absolute):
         }
         if (job.status === "paused") {
           statusEl.textContent =
-            "Index paused. Build / Update Index will continue later.";
+            "INDEX PAUSED — nothing is being indexed right now. Press Build / Update Index to resume from where it stopped.";
           renderIndexJobGrid({
             phase: "Paused",
             progress: `${Math.round(percent)}%`,
@@ -9878,9 +9915,150 @@ Output rules (absolute):
         }
       }
 
+      // Human explanation for a failed embedding preflight, so nobody has to
+      // dig through logs to learn the embedding server simply is not running.
+      function describeEmbeddingProblem(check) {
+        const where = check.baseUrl || "the configured embedding server";
+        const model = check.model || "the configured embedding model";
+        const raw = String(check.error || "");
+        if (
+          /ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH|fetch failed/i.test(
+            raw,
+          )
+        ) {
+          return (
+            `The embedding server at ${where} is not responding.\n\n` +
+            `Start the app that serves your embedding model (LM Studio or ` +
+            `Ollama) and make sure "${model}" is loaded, or correct the ` +
+            `Embedding Server URL in Settings > Database.`
+          );
+        }
+        if (/404|not found|no such model|model .* not/i.test(raw)) {
+          return (
+            `The server at ${where} answered, but the embedding model ` +
+            `"${model}" is not available on it.\n\n` +
+            `Load or pull that model, or set a different Embedding Model in ` +
+            `Settings > Database.`
+          );
+        }
+        if (/sqlite-vec|loadable extension/i.test(raw)) {
+          return raw;
+        }
+        return (
+          `Embedding check failed:\n${raw || "unknown error"}\n\n` +
+          `Verify the Embedding Server URL and Embedding Model in ` +
+          `Settings > Database.`
+        );
+      }
+
       async function startLibraryIndex(force = false, extraOptions = {}) {
         const saved = await saveLibrarySettingsFromForm();
         if (!saved) return;
+        // Preflight EVERYTHING before starting, so every misconfiguration is
+        // a plain-language dialog instead of a silent no-op or a crippled
+        // index the user only discovers hours later.
+        let pre = null;
+        try {
+          const res = await fetch(apiUrl("/api/library/preflight"));
+          pre = await readJsonResponse(res, "Index preflight");
+        } catch (_e) {
+          // The preflight itself failing must never block indexing.
+        }
+        if (pre) {
+          const retryRun = extraOptions.retryEmbeddings === true;
+          if (!(pre.sourcesConfigured > 0)) {
+            await appAlert(
+              "No library folder is selected, so there is nothing to " +
+                "index.\n\nAdd the folder that contains your books under " +
+                "Settings > Database, then press Build / Update Index again.",
+              "Database — no folder selected",
+            );
+            return;
+          }
+          if (Array.isArray(pre.missingPaths) && pre.missingPaths.length) {
+            await appAlert(
+              "The configured library folder does not exist:\n\n" +
+                pre.missingPaths.join("\n") +
+                "\n\nCorrect the path in Settings > Database, then press " +
+                "Build / Update Index again.",
+              "Database — folder not found",
+            );
+            return;
+          }
+          if (!(pre.fileCount > 0)) {
+            await appAlert(
+              "The configured library folder contains no supported files, " +
+                "so there is nothing to index.\n\nCheck the folder path and " +
+                "the file extensions configured in Settings > Database.",
+              "Database — no files to index",
+            );
+            return;
+          }
+          const emb = pre.embedding || {};
+          if (!emb.configured) {
+            if (retryRun) {
+              await appAlert(
+                "Retry Embeddings needs an embedding model. Set the " +
+                  "Embedding Server URL and Embedding Model in " +
+                  "Settings > Database first.",
+                "Database — no embedding model",
+              );
+              return;
+            }
+            const proceed = await appConfirm(
+              "No embedding model is configured, so this index would be " +
+                "KEYWORD-ONLY: searches will match exact words, but " +
+                "semantic search (finding passages by meaning) will not " +
+                "work.\n\nTo enable semantic search, set the Embedding " +
+                "Server URL and Embedding Model in Settings > Database " +
+                "before indexing.",
+              "Database — no embedding model",
+              { confirmLabel: "Index keyword-only", danger: true },
+            );
+            if (!proceed) return;
+          } else if (!emb.ready) {
+            if (retryRun) {
+              await appAlert(
+                describeEmbeddingProblem(emb) +
+                  "\n\nFix the problem, then press Retry Embeddings again.",
+                "Database — embeddings unavailable",
+              );
+              return;
+            }
+            const proceed = await appConfirm(
+              describeEmbeddingProblem(emb) +
+                "\n\nYou can fix the problem and press Build / Update Index " +
+                "again, or continue now with KEYWORD-ONLY indexing (no " +
+                "semantic search for the affected passages).",
+              "Database — embeddings unavailable",
+              { confirmLabel: "Index keyword-only", danger: true },
+            );
+            if (!proceed) return;
+          }
+          // Final gate: state exactly what is about to happen.
+          const embLine = emb.configured
+            ? emb.ready
+              ? `Embeddings: ${emb.model} at ${emb.baseUrl}` +
+                (emb.dimensions ? ` (${emb.dimensions} dimensions)` : "")
+              : "Embeddings: UNAVAILABLE — indexing keyword-only"
+            : "Embeddings: none configured — indexing keyword-only";
+          const actionLine = retryRun
+            ? "Retry missing embeddings for the existing index."
+            : force
+              ? "Rebuild the ENTIRE index from scratch."
+              : pre.indexedFiles > 0
+                ? `Update the index (${formatMetricNumber(pre.indexedFiles)} files already indexed; unchanged files are skipped).`
+                : "Build a new index.";
+          const start = await appConfirm(
+            `${actionLine}\n\n` +
+              `Files found: ${formatMetricNumber(pre.fileCount)}\n` +
+              `${embLine}\n` +
+              `Index file: ${pre.databasePath || "default location"}`,
+            "Database — start indexing?",
+            { confirmLabel: retryRun ? "Retry embeddings" : "Start indexing" },
+          );
+          if (!start) return;
+        }
         if (libraryIndexPollTimer) clearTimeout(libraryIndexPollTimer);
         try {
           const payload = await postJson(
@@ -12808,6 +12986,7 @@ Output rules (absolute):
         // run start instead of restarting when the transcript is re-rendered.
         const startedAt = Number(initialSnapshot.startedAt) || Date.now();
         let timerInterval = null;
+        let lastFailureReason = "";
         const renderElapsed = () => {
           const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
           const elapsed =
@@ -13032,6 +13211,10 @@ Output rules (absolute):
           },
           markFailure(reason) {
             if (!reason) return;
+            // The stream error event and the caller's catch block both
+            // report the same failure — record it once.
+            if (reason === lastFailureReason) return;
+            lastFailureReason = reason;
             this.addTraceLine(`Failure: ${reason}`, { failure: true });
             // Don't leave a frozen "Loading…" label on a dead run.
             this.stopTimer();
@@ -14914,6 +15097,11 @@ Output rules (absolute):
         const run = piChannelRun;
         piChannelRun = null;
         if (!run) return;
+        // This finalizer is the only close path for channel (wake) turns:
+        // freeze the bubble's timeline and elapsed clock, or a kept bubble
+        // ticks forever after the retry/continuation finished.
+        run.controller?.finalizeTimeline?.();
+        run.controller?.stopTimer?.();
         const responseText =
           typeof finalResponse === "string" && finalResponse
             ? finalResponse

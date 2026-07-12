@@ -18,6 +18,7 @@ const {
 } = require("./slash_commands");
 const {
   buildChatLibraryContext,
+  collectSourceFiles,
   estimateLibraryIndex,
   getLibraryStatus,
   indexLibrary,
@@ -27,6 +28,7 @@ const {
   saveLibraryChatSettings,
   searchLibrary,
   searchLibraryFiles,
+  checkEmbeddingPreflight,
 } = require("./library/store");
 
 const DEFAULT_PORT = 8080;
@@ -5505,6 +5507,82 @@ const server = http.createServer(async (req, res) => {
       send(200, { ok: true, config });
     } catch (e) {
       send(e.statusCode || 500, { error: e.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && urlPath === "/api/library/embedding-check") {
+    try {
+      const config = loadLibraryConfig();
+      if (config.embedding?.enabled !== true) {
+        send(200, { enabled: false, ready: false, error: "" });
+        return;
+      }
+      const result = await checkEmbeddingPreflight(config);
+      send(200, {
+        enabled: true,
+        ready: result.ready === true,
+        error: result.error || "",
+        model: config.embedding.model || "",
+        baseUrl: config.embedding.ollamaBaseUrl || "",
+      });
+    } catch (e) {
+      send(500, { error: e.message });
+    }
+    return;
+  }
+
+  // Everything the client needs to validate BEFORE starting an index run:
+  // sources, files on disk, embedding pipeline, and current index size.
+  if (req.method === "GET" && urlPath === "/api/library/preflight") {
+    try {
+      const config = loadLibraryConfig();
+      const sources = Array.isArray(config.sources) ? config.sources : [];
+      const configuredSources = sources.filter(
+        (source) =>
+          source && typeof source.path === "string" && source.path.trim(),
+      );
+      const missingPaths = configuredSources
+        .filter((source) => !fs.existsSync(source.path))
+        .map((source) => source.path);
+      let fileCount = 0;
+      if (configuredSources.length) {
+        try {
+          fileCount = collectSourceFiles(config).length;
+        } catch (_e) {}
+      }
+      const embeddingEnabled = config.embedding?.enabled === true;
+      const embeddingModel = String(config.embedding?.model || "");
+      const embedding = {
+        enabled: embeddingEnabled,
+        configured: embeddingEnabled && !!embeddingModel,
+        ready: false,
+        error: "",
+        model: embeddingModel,
+        baseUrl: config.embedding?.ollamaBaseUrl || "",
+        dimensions: 0,
+      };
+      if (embedding.configured) {
+        const result = await checkEmbeddingPreflight(config);
+        embedding.ready = result.ready === true;
+        embedding.error = result.error || "";
+        embedding.dimensions = Number(result.dimensions) || 0;
+      }
+      let indexedFiles = 0;
+      try {
+        const status = await getLibraryStatus();
+        indexedFiles = Number(status.files || 0);
+      } catch (_e) {}
+      send(200, {
+        sourcesConfigured: configuredSources.length,
+        missingPaths,
+        fileCount,
+        indexedFiles,
+        databasePath: config.databasePath || "",
+        embedding,
+      });
+    } catch (e) {
+      send(500, { error: e.message });
     }
     return;
   }
