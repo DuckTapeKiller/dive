@@ -38,7 +38,7 @@
   "searchModes": {},
   "embedding": {
     "enabled": false,
-    "model": "nomic-embed-text-v2-moe:latest",
+    "model": "",
     "dimensions": 0,
     "quantization": "int8",
     "ollamaBaseUrl": "http://127.0.0.1:11434",

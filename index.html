@@ -6781,7 +6781,7 @@
         chatModes: { ...databaseChatModes },
         embedding: {
           enabled: false,
-          model: "nomic-embed-text-v2-moe:latest",
+          model: "",
           ollamaBaseUrl: "http://127.0.0.1:11434",
           batchSize: 16,
           dimensions: 0,
@@ -8449,9 +8449,9 @@ Output rules (absolute):
           chatModes,
           embedding: {
             enabled: embedding.enabled === true,
-            model:
-              String(embedding.model || "").trim() ||
-              "nomic-embed-text-v2-moe:latest",
+            // No invented default: an unset model stays empty so the UI and
+            // the index preflight treat it as "not configured yet".
+            model: String(embedding.model || "").trim(),
             ollamaBaseUrl:
               String(embedding.ollamaBaseUrl || "").trim() ||
               "http://127.0.0.1:11434",
@@ -8535,11 +8535,23 @@ Output rules (absolute):
         customOption.value = "__custom__";
         customOption.textContent = "Custom model id";
         select.appendChild(customOption);
-        select.value = currentKnown ? currentModel : "__custom__";
+        // An unset model shows an explicit placeholder instead of being
+        // dumped into the Custom input as if something were configured.
+        if (!currentModel) {
+          const placeholder = document.createElement("option");
+          placeholder.value = "";
+          placeholder.textContent = "Select an embedding model";
+          select.insertBefore(placeholder, select.firstChild);
+        }
+        select.value = currentKnown
+          ? currentModel
+          : currentModel
+            ? "__custom__"
+            : "";
         if (customInput) {
           customInput.style.display =
             select.value === "__custom__" ? "" : "none";
-          customInput.value = currentKnown ? "" : currentModel || "";
+          customInput.value = currentKnown || !currentModel ? "" : currentModel;
         }
         refreshCustomSelectUi(select);
         if (currentKnown) syncEmbeddingBaseUrlToModel(currentModel);
