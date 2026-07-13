@@ -151,7 +151,7 @@ module.exports = function createChatDomain(deps) {
           : "";
       let requestMessages = systemOverride
         ? [{ role: "system", content: systemOverride }, ...messages]
-        : withSharedSystemPrompt(messages);
+        : withSharedSystemPrompt(messages, false, modeId);
       let librarySourceResults = [];
       let libraryPassages = [];
       let databaseContextEnabled = false;
@@ -199,7 +199,7 @@ module.exports = function createChatDomain(deps) {
             databaseContextEnabled = true;
             requestMessages[0] = {
               role: "system",
-              content: getSharedAssistantPolicyPrompt(true),
+              content: getSharedAssistantPolicyPrompt(true, modeId),
             };
             requestMessages = insertLibraryContextMessage(
               requestMessages,
@@ -274,7 +274,11 @@ module.exports = function createChatDomain(deps) {
             toolName: slashCommand.skillName,
             argsPreview: toolCall.function.arguments.slice(0, 300),
           });
-          const result = await executeToolCallWithConfirmation(toolCall, emit);
+          const result = await executeToolCallWithConfirmation(
+            toolCall,
+            emit,
+            modeId,
+          );
           throwIfClientAborted();
           appendForcedSkillResult(requestMessages, slashCommand, result);
           emit({
@@ -356,7 +360,11 @@ module.exports = function createChatDomain(deps) {
         } else {
           seenSkillCalls.add(callKey);
           try {
-            result = await executeToolCallWithConfirmation(toolCall, emit);
+            result = await executeToolCallWithConfirmation(
+              toolCall,
+              emit,
+              modeId,
+            );
           } catch (toolError) {
             result = `Error: ${toolError.message}`;
           }
@@ -687,7 +695,7 @@ module.exports = function createChatDomain(deps) {
     });
   }
 
-  async function executeToolCallWithConfirmation(toolCall, emit) {
+  async function executeToolCallWithConfirmation(toolCall, emit, skillMode) {
     // A disabled skill must NOT crash the stream. Return an instructive result
     // so the model recovers by using one of its enabled skills instead.
     try {
@@ -733,6 +741,7 @@ module.exports = function createChatDomain(deps) {
     }
     return await executeSkill(toolCall, {
       dataDir: DATA_DIR,
+      mode: skillMode,
       allowShellCommand: requiresShellConfirmation,
       cloudKeys: getCloudSearchKeys(),
     });
@@ -1231,22 +1240,23 @@ module.exports = function createChatDomain(deps) {
     );
   }
 
-  function withSharedSystemPrompt(messages, databaseEnabled = false) {
+  function withSharedSystemPrompt(messages, databaseEnabled = false, modeName) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     return [
       {
         role: "system",
-        content: getSharedAssistantPolicyPrompt(databaseEnabled),
+        content: getSharedAssistantPolicyPrompt(databaseEnabled, modeName),
       },
       ...sourceMessages,
     ];
   }
 
-  function getSharedAssistantPolicyPrompt(databaseEnabled = false) {
+  function getSharedAssistantPolicyPrompt(databaseEnabled = false, modeName) {
     const base = databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT;
-    // User-taught lessons (~/dive/lessons.md, managed via the remember_lesson
-    // skill or Settings > Skills > Lessons) apply to every non-Pi chat.
-    const lessons = readLessons(DATA_DIR);
+    // User-taught lessons (~/dive/lessons/<mode>-lessons.md, managed via the
+    // remember_lesson skill or Settings > Skills > Lessons) are strictly
+    // per-mode: this prompt only ever carries the current mode's lessons.
+    const lessons = readLessons(DATA_DIR, modeName);
     if (!lessons) return base;
     return (
       base +
@@ -1276,10 +1286,12 @@ module.exports = function createChatDomain(deps) {
     // Transparency: expose the exact system prompts sent to non-Pi models so
     // the Prompt settings section can display them verbatim.
     if (req.method === "GET" && urlPath === "/api/system-prompts") {
+      const promptMode = ctx.requestUrl?.searchParams?.get("mode") || "ollama";
       send(200, {
-        dbOff: getSharedAssistantPolicyPrompt(false),
-        dbOn: getSharedAssistantPolicyPrompt(true),
-        lessonsApplied: Boolean(readLessons(DATA_DIR)),
+        mode: promptMode,
+        dbOff: getSharedAssistantPolicyPrompt(false, promptMode),
+        dbOn: getSharedAssistantPolicyPrompt(true, promptMode),
+        lessonsApplied: Boolean(readLessons(DATA_DIR, promptMode)),
       });
       return;
     }
@@ -1433,7 +1445,7 @@ module.exports = function createChatDomain(deps) {
             : "";
         let requestMessages = systemOverride
           ? [{ role: "system", content: systemOverride }, ...messages]
-          : withSharedSystemPrompt(messages);
+          : withSharedSystemPrompt(messages, false, "cloud");
         let librarySourceResults = [];
         let libraryPassages = [];
         let databaseContextEnabled = false;
@@ -1477,7 +1489,7 @@ module.exports = function createChatDomain(deps) {
               // library-only prompt instead of the default tool-enabled one.
               requestMessages[0] = {
                 role: "system",
-                content: getSharedAssistantPolicyPrompt(true),
+                content: getSharedAssistantPolicyPrompt(true, "cloud"),
               };
               requestMessages = insertLibraryContextMessage(
                 requestMessages,
@@ -1538,6 +1550,7 @@ module.exports = function createChatDomain(deps) {
             const result = await executeToolCallWithConfirmation(
               toolCall,
               emit,
+              "cloud",
             );
             throwIfClientAborted();
             appendForcedSkillResult(requestMessages, slashCommand, result);
@@ -1680,7 +1693,11 @@ module.exports = function createChatDomain(deps) {
           } else {
             seenSkillCalls.add(callKey);
             try {
-              result = await executeToolCallWithConfirmation(toolCall, emit);
+              result = await executeToolCallWithConfirmation(
+                toolCall,
+                emit,
+                "cloud",
+              );
             } catch (toolError) {
               result = `Error: ${toolError.message}`;
             }
@@ -1848,6 +1865,18 @@ module.exports = function createChatDomain(deps) {
           userMessage.images = attachmentImages.map((img) => img.dataBase64);
         }
         const messages = [...history, userMessage];
+        // Ollama builds its system context client-side (prompt overlays), so
+        // lessons are injected here server-side — strictly the OLLAMA mode's
+        // own lessons file, never another mode's.
+        const ollamaLessons = readLessons(DATA_DIR, "ollama");
+        if (ollamaLessons) {
+          messages.unshift({
+            role: "system",
+            content:
+              "LEARNED LESSONS — standing instructions the user taught you in past conversations. Follow them unless the current request explicitly overrides them:\n" +
+              ollamaLessons,
+          });
+        }
         const storedMessages = [
           ...history,
           { role: "user", content: originalMessage },
@@ -1948,6 +1977,7 @@ module.exports = function createChatDomain(deps) {
             const result = await executeToolCallWithConfirmation(
               toolCall,
               emit,
+              "ollama",
             );
             if (clientGone) {
               const err = new Error("Request aborted by client.");
@@ -2156,6 +2186,7 @@ module.exports = function createChatDomain(deps) {
                           result = await executeToolCallWithConfirmation(
                             tc,
                             emit,
+                            "ollama",
                           );
                         } catch (toolError) {
                           result = `Error: ${toolError.message}`;

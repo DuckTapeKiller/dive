@@ -1305,7 +1305,7 @@ When asked about these relationships, ALWAYS query both words and explain the di
     function: {
       name: "remember_lesson",
       description:
-        "Permanently saves a short lesson, correction, or preference the user taught you (e.g. formatting rules, terminology, standing instructions). The lesson is injected into your system prompt in every future conversation. Use when the user corrects you or says something like 'remember this' or 'from now on'.",
+        "Permanently saves a short lesson, correction, or preference the user taught you (e.g. formatting rules, terminology, standing instructions). The lesson is injected into your system prompt in every future conversation of the CURRENT mode only (each mode keeps independent lessons). Use when the user corrects you or says something like 'remember this' or 'from now on'.",
       parameters: {
         type: "object",
         properties: {
@@ -2082,16 +2082,27 @@ async function executeBookSearch(
   }
 }
 
-const LESSONS_HEADER =
-  '# Lessons\n\nLines starting with "- " are injected into the system prompt of every non-Pi chat. Edit or delete freely.\n';
+// Lessons are strictly per-mode: each mode is its own ecosystem, so each
+// mode has its own file in DATA_DIR/lessons and never sees another mode's
+// lessons. Pi is excluded entirely — it has its own native context system
+// (~/.pi/agent/AGENTS.md).
+const LESSON_MODES = ["ollama", "cloud", "lmstudio", "llamacpp"];
 
-function lessonsFilePath(dataDir) {
-  return path.join(dataDir, "lessons.md");
+function lessonModeKey(mode) {
+  return LESSON_MODES.includes(mode) ? mode : "ollama";
 }
 
-function readLessons(dataDir) {
+function lessonsHeader(mode) {
+  return `# ${lessonModeKey(mode)} lessons\n\nLines starting with "- " are injected into the system prompt of every ${lessonModeKey(mode)} chat. Edit or delete freely.\n`;
+}
+
+function lessonsFilePath(dataDir, mode) {
+  return path.join(dataDir, "lessons", `${lessonModeKey(mode)}-lessons.md`);
+}
+
+function readLessons(dataDir, mode) {
   try {
-    const text = fs.readFileSync(lessonsFilePath(dataDir), "utf8");
+    const text = fs.readFileSync(lessonsFilePath(dataDir, mode), "utf8");
     return text
       .split("\n")
       .filter((line) => line.trim().startsWith("- "))
@@ -2101,8 +2112,47 @@ function readLessons(dataDir) {
   }
 }
 
-async function executeRememberLesson(args, dataDir) {
+// One-time migration: the old single lessons.md applied to all non-Pi modes,
+// so its lessons are seeded into every mode file; the original is kept as a
+// backup, never deleted.
+function migrateLegacyLessons(dataDir) {
+  const legacy = path.join(dataDir, "lessons.md");
+  try {
+    if (!fs.existsSync(legacy)) return;
+    const lines = fs
+      .readFileSync(legacy, "utf8")
+      .split("\n")
+      .filter((line) => line.trim().startsWith("- "));
+    fs.mkdirSync(path.join(dataDir, "lessons"), { recursive: true });
+    for (const mode of LESSON_MODES) {
+      const file = lessonsFilePath(dataDir, mode);
+      let current = "";
+      try {
+        current = fs.readFileSync(file, "utf8");
+      } catch {
+        current = lessonsHeader(mode);
+      }
+      const missing = lines.filter((line) => !current.includes(line));
+      if (missing.length) {
+        fs.writeFileSync(
+          file,
+          current.trimEnd() + "\n" + missing.join("\n") + "\n",
+          "utf8",
+        );
+      }
+    }
+    fs.renameSync(legacy, `${legacy}.migrated-backup`);
+    console.log(
+      `[lessons] migrated ${lines.length} legacy lessons into per-mode files`,
+    );
+  } catch (e) {
+    console.error("Lesson migration failed:", e.message || e);
+  }
+}
+
+async function executeRememberLesson(args, dataDir, mode) {
   if (!dataDir) return "Error: no data directory available.";
+  const modeKey = lessonModeKey(mode);
   const lesson = String(args.lesson || "")
     .trim()
     .replace(/\s+/g, " ");
@@ -2110,19 +2160,20 @@ async function executeRememberLesson(args, dataDir) {
   if (lesson.length > 500) {
     return "Error: keep lessons under 500 characters.";
   }
-  const file = lessonsFilePath(dataDir);
+  const file = lessonsFilePath(dataDir, modeKey);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   let current = "";
   try {
     current = fs.readFileSync(file, "utf8");
   } catch {
-    current = LESSONS_HEADER;
+    current = lessonsHeader(modeKey);
   }
   const entry = `- ${lesson}`;
   if (current.includes(entry)) {
-    return `Already remembered: "${lesson}"`;
+    return `Already remembered for ${modeKey}: "${lesson}"`;
   }
   fs.writeFileSync(file, current.trimEnd() + "\n" + entry + "\n", "utf8");
-  return `Remembered: "${lesson}" — this now applies to every future conversation. The user can edit or remove lessons in Settings > Skills > Lessons.`;
+  return `Remembered for ${modeKey} mode: "${lesson}" — this now applies to every future ${modeKey} conversation (each mode keeps its own independent lessons). The user can edit or remove lessons in Settings > Skills > Lessons.`;
 }
 
 async function executeProposePlugin(args, dataDir) {
@@ -2194,7 +2245,7 @@ async function executeSkill(toolCall, context = {}) {
     case "local_notes":
       return await executeLocalNotes(args, context.dataDir);
     case "remember_lesson":
-      return await executeRememberLesson(args, context.dataDir);
+      return await executeRememberLesson(args, context.dataDir, context.mode);
     case "propose_plugin":
       return await executeProposePlugin(args, context.dataDir);
     case "time_and_date":
@@ -2242,6 +2293,8 @@ async function executeSkill(toolCall, context = {}) {
 
 module.exports = {
   readLessons,
+  migrateLegacyLessons,
+  LESSON_MODES,
   ALL_SKILLS,
   executeSkill,
   skillRequiresShellConfirmation,

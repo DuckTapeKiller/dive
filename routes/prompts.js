@@ -50,19 +50,27 @@ module.exports = function createPromptsDomain(deps) {
     }
   }
 
-  const LESSONS_FILE = path.join(DATA_DIR, "lessons.md");
+  // Lessons are strictly per-mode files under DATA_DIR/lessons.
+  const LESSON_MODES = ["ollama", "cloud", "lmstudio", "llamacpp"];
+
+  function lessonsFileForMode(mode) {
+    const key = LESSON_MODES.includes(mode) ? mode : "ollama";
+    return path.join(DATA_DIR, "lessons", `${key}-lessons.md`);
+  }
 
   async function handleRequest(ctx) {
-    const { req, urlPath, send } = ctx;
+    const { req, urlPath, requestUrl, send } = ctx;
 
     if (req.method === "GET" && urlPath === "/api/lessons") {
+      const mode = requestUrl?.searchParams?.get("mode") || "ollama";
+      const file = lessonsFileForMode(mode);
       let text = "";
       try {
-        text = fs.readFileSync(LESSONS_FILE, "utf8");
+        text = fs.readFileSync(file, "utf8");
       } catch {
         text = "";
       }
-      send(200, { text, path: LESSONS_FILE });
+      send(200, { mode, text, path: file, modes: LESSON_MODES });
       return true;
     }
 
@@ -73,7 +81,11 @@ module.exports = function createPromptsDomain(deps) {
           send(400, { error: "text field required" });
           return true;
         }
-        fs.writeFileSync(LESSONS_FILE, body.text.slice(0, 100000), "utf8");
+        const file = lessonsFileForMode(
+          typeof body.mode === "string" ? body.mode : "ollama",
+        );
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, body.text.slice(0, 100000), "utf8");
         send(200, { ok: true });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
