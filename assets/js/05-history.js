@@ -1835,6 +1835,101 @@
           console.error("Could not load Ollama skills config", error);
           renderBuiltinSkillsList();
         }
+        loadPluginsUi().catch(() => {});
+      }
+
+      // ---- PLUGINS (skills / slash commands loaded from ~/dive/plugins) ----
+      let loadedPluginsPayload = null;
+
+      function renderPluginsList() {
+        const list = document.getElementById("pluginsList");
+        const hint = document.getElementById("pluginsDirHint");
+        if (!list) return;
+        const payload = loadedPluginsPayload;
+        if (hint && payload?.directory) {
+          hint.textContent = `Directory: ${payload.directory}`;
+        }
+        const plugins = payload?.plugins || [];
+        if (!plugins.length) {
+          list.innerHTML =
+            '<div class="setting-help">No plugins installed.</div>';
+          return;
+        }
+        const esc = (s) =>
+          String(s ?? "").replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+        let html = "";
+        for (const plugin of plugins) {
+          const version = plugin.version ? ` v${esc(plugin.version)}` : "";
+          const commands = Object.keys(plugin.commands || {})
+            .map((c) => `/${c}`)
+            .join(" ");
+          const commandText = commands ? ` | Commands: ${commands}` : "";
+          let skillRows = "";
+          for (const skillName of plugin.skills || []) {
+            const enabled = builtinSkillsConfig[skillName] !== false;
+            skillRows += `
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                <span>${esc(skillName)}</span>
+                <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${esc(skillName)}" ${enabled ? "checked" : ""} >
+              </div>`;
+          }
+          const errorRow = plugin.error
+            ? `<div style="font-size: calc(11px * var(--font-scale, 1)); margin-top: 6px; color: var(--error-color, #b33);">Error: ${esc(plugin.error)}</div>`
+            : "";
+          html += `
+            <div style="background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
+              <strong>${esc(plugin.name)}${version}</strong>
+              <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${esc(plugin.description || "No description.")}${esc(commandText)}</div>
+              ${errorRow}
+              ${skillRows}
+            </div>
+          `;
+        }
+        list.innerHTML = html;
+      }
+
+      async function loadPluginsUi() {
+        const reloadBtn = document.getElementById("pluginsReloadBtn");
+        if (reloadBtn && !reloadBtn.dataset.wired) {
+          reloadBtn.dataset.wired = "1";
+          reloadBtn.addEventListener("click", () => {
+            reloadPlugins().catch(() => {});
+          });
+        }
+        try {
+          const res = await fetch(apiUrl("/api/plugins"));
+          loadedPluginsPayload = await readJsonResponse(res, "Load plugins");
+        } catch (error) {
+          console.error("Could not load plugins", error);
+          loadedPluginsPayload = null;
+        }
+        renderPluginsList();
+      }
+
+      async function reloadPlugins() {
+        try {
+          const res = await fetch(apiUrl("/api/plugins/reload"), {
+            method: "POST",
+          });
+          loadedPluginsPayload = await readJsonResponse(res, "Reload plugins");
+          renderPluginsList();
+        } catch (error) {
+          console.error("Could not reload plugins", error);
+          await appAlert(
+            error.message || "Failed to reload plugins.",
+            "Plugins",
+          );
+        }
       }
 
       async function toggleBuiltinSkill(skillName, enabled) {
@@ -1846,6 +1941,7 @@
             body: JSON.stringify(builtinSkillsConfig),
           });
           renderBuiltinSkillsList();
+          renderPluginsList();
         } catch (error) {
           console.error("Could not save Ollama skills config", error);
         }

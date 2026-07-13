@@ -26,12 +26,23 @@ const COMMANDS = {
   shell: { type: "skill", skillName: "shell_command", label: "shell" },
 };
 
+// Slash commands contributed by plugins (~/dive/plugins). Lazy require so
+// plugins.js is only loaded in processes that actually parse commands.
+function pluginCommandConfig(name) {
+  try {
+    const skillName = require("./plugins.js").getPluginCommands()[name];
+    return skillName ? { type: "skill", skillName, label: name } : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 function parseSlashCommand(message) {
   const raw = typeof message === "string" ? message : "";
   const match = raw.match(/^\s*\/([a-z][a-z0-9_-]*)\b\s*([\s\S]*)$/i);
   if (!match) return null;
   const commandName = match[1].toLowerCase();
-  const config = COMMANDS[commandName];
+  const config = COMMANDS[commandName] || pluginCommandConfig(commandName);
   if (!config) return null;
   const input = String(match[2] || "").trim();
   return {

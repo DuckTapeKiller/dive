@@ -3221,6 +3221,37 @@
             </div>
           </div>
 
+          <div id="pluginsGroup" class="setting-group">
+            <label>PLUGINS</label>
+            <div class="setting-help">
+              Drop plugin folders into the plugins directory to add new skills
+              and slash commands. Plugins are plain Node.js modules with full
+              local access: only install code you trust. A broken plugin is
+              listed with its error and never affects the rest of the app.
+            </div>
+            <div
+              class="setting-help"
+              id="pluginsDirHint"
+              style="user-select: text"
+            ></div>
+            <button
+              id="pluginsReloadBtn"
+              class="settings-action-btn"
+              style="margin-top: 6px"
+            >
+              RELOAD PLUGINS
+            </button>
+            <div
+              id="pluginsList"
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 0;
+                margin-top: 8px;
+              "
+            ></div>
+          </div>
+
           <div id="customSkillsGroup" class="setting-group">
             <label>MANAGE CUSTOM SKILLS</label>
             <div class="setting-help">

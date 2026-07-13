@@ -166,6 +166,11 @@ function syncRuntimeFiles(runtimeDir) {
     required: true,
   });
   copyIfExists(
+    path.join(appRoot, "plugins.js"),
+    path.join(runtimeDir, "plugins.js"),
+    { required: true },
+  );
+  copyIfExists(
     path.join(appRoot, "slash_commands.js"),
     path.join(runtimeDir, "slash_commands.js"),
     {
