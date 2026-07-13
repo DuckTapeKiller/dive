@@ -16,20 +16,7 @@ const {
   isSkillSlashCommand,
   parseSlashCommand,
 } = require("./slash_commands");
-const {
-  buildChatLibraryContext,
-  collectSourceFiles,
-  estimateLibraryIndex,
-  getLibraryStatus,
-  indexLibrary,
-  listIndexedLibraryFiles,
-  loadLibraryConfig,
-  saveLibraryConfig,
-  saveLibraryChatSettings,
-  searchLibrary,
-  searchLibraryFiles,
-  checkEmbeddingPreflight,
-} = require("./library/store");
+const { buildChatLibraryContext } = require("./library/store");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -43,9 +30,6 @@ const MAX_LOG_FILE_SIZE = 10 * 1024 * 1024; // 10MB per log file
 const MAX_ROTATED_LOG_FILES = 3;
 const PDFTOTEXT_TIMEOUT_MS = 15 * 1000;
 const PDFTOTEXT_MAX_BUFFER = 10 * 1024 * 1024;
-
-let activeLibraryIndexJob = null;
-let lastLibraryIndexJob = null;
 
 const DATA_DIR = path.join(os.homedir(), "dive");
 try {
@@ -83,23 +67,12 @@ try {
 const EMBEDDED_INDEX = EMBEDDED_ASSETS.get("index.html") || null;
 
 const HISTORY_FILE = path.join(DATA_DIR, "conversations.json");
-const PROMPTS_FILE = path.join(DATA_DIR, "prompts.json");
 const CUSTOM_SKILLS_FILE = path.join(DATA_DIR, "custom_skills.json");
 const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
 const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
 const OLLAMA_SETTINGS_FILE = path.join(DATA_DIR, "ollama-settings.json");
-const NOTES_FILE = path.join(DATA_DIR, "notes.json");
-const LIBRARY_INDEX_JOB_FILE = path.join(DATA_DIR, "library-index-job.json");
-const LIBRARY_INDEX_ERROR_FILE = path.join(
-  DATA_DIR,
-  "library-index-errors.jsonl",
-);
-const LIBRARY_INDEXED_FILES_EXPORT_FILE = path.join(
-  DATA_DIR,
-  "indexed-epub-files.txt",
-);
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
 const FONTS_DIR = path.join(__dirname, "fonts");
 const VENDOR_SCRIPT_FILES = {
@@ -545,49 +518,6 @@ function saveClientConversation(id, title, mode, rawMessages) {
   saveConversations(convs);
 }
 
-function loadPrompts() {
-  const RESERVED_PROMPT_IDS = new Set(["custom-assistant", "english-editor"]);
-
-  const maybeNormalizePrompts = (prompts) => {
-    if (!Array.isArray(prompts)) return [];
-    const next = prompts
-      .filter(
-        (p) =>
-          p &&
-          typeof p.id === "string" &&
-          typeof p.name === "string" &&
-          typeof p.content === "string",
-      )
-      .filter((p) => !RESERVED_PROMPT_IDS.has(p.id))
-      .map((p) => ({ ...p }));
-    return next;
-  };
-
-  try {
-    if (fs.existsSync(PROMPTS_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(PROMPTS_FILE, "utf8"));
-      const normalized = maybeNormalizePrompts(raw);
-      if (Array.isArray(raw) && raw.length !== normalized.length) {
-        savePrompts(normalized);
-      }
-      return normalized;
-    }
-  } catch (e) {
-    console.warn("Failed to load prompts:", e.message || e);
-  }
-
-  savePrompts([]);
-  return [];
-}
-
-function savePrompts(prompts) {
-  try {
-    fs.writeFileSync(PROMPTS_FILE, JSON.stringify(prompts, null, 2));
-  } catch (e) {
-    console.error("Failed to save prompts:", e);
-  }
-}
-
 function loadCustomSkills() {
   try {
     if (fs.existsSync(CUSTOM_SKILLS_FILE)) {
@@ -653,201 +583,6 @@ function saveCustomSkills(skills) {
   } catch (e) {
     console.error("Failed to save custom skills:", e);
   }
-}
-
-// ---- Notes: individual Markdown files in DATA_DIR/notes ----
-const NOTES_DIR = path.join(DATA_DIR, "notes");
-const ACTIVE_NOTE_FILE = path.join(NOTES_DIR, ".active");
-const NOTE_MAX_CHARS = 200000;
-
-// A note name is the .md filename without extension. Strict allowlist keeps
-// path traversal impossible and filenames portable.
-function sanitizeNoteName(raw) {
-  const cleaned = String(raw || "")
-    .replace(/\.md$/i, "")
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/^\.+/, "")
-    .trim()
-    .slice(0, 80)
-    .trim();
-  return cleaned;
-}
-
-function noteFilePath(name) {
-  const clean = sanitizeNoteName(name);
-  if (!clean) {
-    const error = new Error("Invalid note name.");
-    error.statusCode = 400;
-    throw error;
-  }
-  const filePath = path.join(NOTES_DIR, `${clean}.md`);
-  if (!filePath.startsWith(NOTES_DIR + path.sep)) {
-    const error = new Error("Invalid note path.");
-    error.statusCode = 400;
-    throw error;
-  }
-  return { name: clean, filePath };
-}
-
-// One-time migration: the legacy single note (notes.json) becomes Notes.md.
-// The legacy file is kept as a backup, never deleted.
-function migrateLegacyNotes() {
-  try {
-    fs.mkdirSync(NOTES_DIR, { recursive: true });
-    const hasNotes = fs
-      .readdirSync(NOTES_DIR)
-      .some((entry) => entry.toLowerCase().endsWith(".md"));
-    if (hasNotes || !fs.existsSync(NOTES_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(NOTES_FILE, "utf8"));
-    const text = typeof raw.text === "string" ? raw.text : "";
-    if (text.trim()) {
-      fs.writeFileSync(path.join(NOTES_DIR, "Notes.md"), text, "utf8");
-      setActiveNoteName("Notes");
-    }
-  } catch (e) {
-    console.error("Notes migration failed:", e.message || e);
-  }
-}
-
-function getActiveNoteName() {
-  try {
-    const raw = fs.readFileSync(ACTIVE_NOTE_FILE, "utf8").trim();
-    const clean = sanitizeNoteName(raw);
-    if (clean && fs.existsSync(path.join(NOTES_DIR, `${clean}.md`))) {
-      return clean;
-    }
-  } catch {
-    /* no active marker yet */
-  }
-  return "";
-}
-
-function setActiveNoteName(name) {
-  try {
-    fs.mkdirSync(NOTES_DIR, { recursive: true });
-    fs.writeFileSync(ACTIVE_NOTE_FILE, sanitizeNoteName(name), "utf8");
-  } catch (e) {
-    console.error("Could not persist active note:", e.message || e);
-  }
-}
-
-function listNotes() {
-  migrateLegacyNotes();
-  let entries = [];
-  try {
-    entries = fs.readdirSync(NOTES_DIR).filter((entry) => {
-      return entry.toLowerCase().endsWith(".md") && !entry.startsWith(".");
-    });
-  } catch {
-    entries = [];
-  }
-  const notes = entries
-    .map((entry) => {
-      const filePath = path.join(NOTES_DIR, entry);
-      let stat = null;
-      try {
-        stat = fs.statSync(filePath);
-      } catch {
-        return null;
-      }
-      return {
-        name: entry.replace(/\.md$/i, ""),
-        updatedAt: new Date(stat.mtimeMs).toISOString(),
-        sizeBytes: stat.size,
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  let active = getActiveNoteName();
-  if (!active && notes.length) active = notes[0].name;
-  return { notes, active };
-}
-
-function readNote(name) {
-  const { name: clean, filePath } = noteFilePath(name);
-  let text = "";
-  let updatedAt = null;
-  try {
-    text = fs.readFileSync(filePath, "utf8");
-    updatedAt = new Date(fs.statSync(filePath).mtimeMs).toISOString();
-  } catch {
-    text = "";
-  }
-  return { name: clean, text, updatedAt };
-}
-
-function writeNote(name, text) {
-  const { name: clean, filePath } = noteFilePath(name);
-  const body =
-    String(text || "").length > NOTE_MAX_CHARS
-      ? String(text).slice(0, NOTE_MAX_CHARS)
-      : String(text || "");
-  fs.mkdirSync(NOTES_DIR, { recursive: true });
-  fs.writeFileSync(filePath, body, "utf8");
-  setActiveNoteName(clean);
-  return { name: clean, text: body, updatedAt: new Date().toISOString() };
-}
-
-// Create a note with a unique name derived from the requested title.
-function createNote(title) {
-  migrateLegacyNotes();
-  const base = sanitizeNoteName(title) || "Untitled";
-  let candidate = base;
-  let counter = 2;
-  while (fs.existsSync(path.join(NOTES_DIR, `${candidate}.md`))) {
-    candidate = `${base} ${counter}`;
-    counter += 1;
-    if (counter > 500) throw new Error("Could not allocate a note name.");
-  }
-  return writeNote(candidate, "");
-}
-
-function renameNote(name, title) {
-  const { name: fromName, filePath: fromPath } = noteFilePath(name);
-  const toBase = sanitizeNoteName(title);
-  if (!toBase) {
-    const error = new Error("Invalid note title.");
-    error.statusCode = 400;
-    throw error;
-  }
-  if (toBase === fromName) return { name: fromName };
-  const { name: toName, filePath: toPath } = noteFilePath(toBase);
-  if (fs.existsSync(toPath)) {
-    const error = new Error(`A note named "${toName}" already exists.`);
-    error.statusCode = 409;
-    throw error;
-  }
-  fs.renameSync(fromPath, toPath);
-  if (getActiveNoteName() === fromName) setActiveNoteName(toName);
-  return { name: toName };
-}
-
-function deleteNote(name) {
-  const { name: clean, filePath } = noteFilePath(name);
-  try {
-    fs.unlinkSync(filePath);
-  } catch {
-    /* already gone */
-  }
-  if (getActiveNoteName() === clean) {
-    const { notes } = listNotes();
-    setActiveNoteName(notes.length ? notes[0].name : "");
-  }
-  return listNotes();
-}
-
-// Legacy single-note API compatibility: reads/writes the active note.
-function loadNotes() {
-  migrateLegacyNotes();
-  const active = getActiveNoteName() || listNotes().active;
-  if (active) return readNote(active);
-  return { name: "", text: "", updatedAt: null };
-}
-
-function saveNotes(text) {
-  const active = getActiveNoteName() || listNotes().active || "Notes";
-  return writeNote(active, text);
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -3180,27 +2915,6 @@ async function executeToolCallWithConfirmation(toolCall, emit) {
   });
 }
 
-function formatIndexedLibraryFilesExport(files, config) {
-  const lines = [
-    "Dive Indexed EPUB Files",
-    `Generated: ${new Date().toISOString()}`,
-    `Database: ${config.databasePath}`,
-    `Total indexed EPUB files: ${files.length}`,
-    "",
-  ];
-  files.forEach((file, index) => {
-    const title = file.title || path.basename(file.path || "") || "Untitled";
-    const author = file.author ? ` - ${file.author}` : "";
-    lines.push(`${index + 1}. ${title}${author}`);
-    lines.push(`   Path: ${file.path || ""}`);
-    lines.push(`   Source: ${file.sourceName || file.sourceType || "unknown"}`);
-    lines.push(`   Passages: ${file.chunkCount || 0}`);
-    lines.push(`   Indexed: ${file.indexedAt || "unknown"}`);
-    lines.push("");
-  });
-  return `${lines.join("\n").trimEnd()}\n`;
-}
-
 function buildCloudEndpoint(baseUrl, pathSuffix) {
   const normalized = String(baseUrl || "").replace(/\/+$/, "");
   return `${normalized}${pathSuffix}`;
@@ -3697,255 +3411,6 @@ function getModels() {
     req.on("error", reject);
     req.end();
   });
-}
-
-function publicLibraryIndexJob(job) {
-  if (!job) return null;
-  return {
-    id: job.id,
-    status: job.status,
-    force: job.force,
-    prune: job.prune,
-    compact: job.compact,
-    retryEmbeddings: job.retryEmbeddings === true,
-    cancelRequested: job.cancelRequested === true,
-    pauseRequested: job.pauseRequested === true,
-    autoResumed: job.autoResumed === true,
-    startedAt: job.startedAt,
-    resumedAt: job.resumedAt || null,
-    finishedAt: job.finishedAt || null,
-    progress: job.progress || null,
-    stats: job.stats || null,
-    recentErrors: Array.isArray(job.recentErrors)
-      ? job.recentErrors.slice(-10)
-      : [],
-    error: job.error || null,
-  };
-}
-
-function readLibraryIndexJobFile() {
-  try {
-    if (!fs.existsSync(LIBRARY_INDEX_JOB_FILE)) return null;
-    const parsed = JSON.parse(fs.readFileSync(LIBRARY_INDEX_JOB_FILE, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch (error) {
-    console.error("Could not read library index job state:", error.message);
-    return null;
-  }
-}
-
-function persistLibraryIndexJob(job) {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = `${LIBRARY_INDEX_JOB_FILE}.tmp`;
-    fs.writeFileSync(
-      tmp,
-      JSON.stringify(publicLibraryIndexJob(job), null, 2),
-      "utf8",
-    );
-    fs.renameSync(tmp, LIBRARY_INDEX_JOB_FILE);
-  } catch (error) {
-    console.error("Could not persist library index job state:", error.message);
-  }
-}
-
-function persistedJobStartFileIndex(job) {
-  const progress = job?.progress || {};
-  const embeddingErrors = Number(progress.embeddingErrors || 0);
-  const fileErrors = Number(progress.errors || 0);
-  if (embeddingErrors > 0 || fileErrors > 0) return 0;
-  const processed = Number(job?.progress?.processed || 0);
-  return Number.isFinite(processed) && processed > 0
-    ? Math.floor(processed)
-    : 0;
-}
-
-function appendLibraryIndexError(job, entry) {
-  const record = {
-    timestamp: new Date().toISOString(),
-    jobId: job.id,
-    ...entry,
-  };
-  job.recentErrors = [...(job.recentErrors || []), record].slice(-10);
-  appendFileWithRotation(
-    LIBRARY_INDEX_ERROR_FILE,
-    `${JSON.stringify(record)}\n`,
-  );
-}
-
-function readRecentLibraryIndexErrors(limit = 50) {
-  try {
-    if (!fs.existsSync(LIBRARY_INDEX_ERROR_FILE)) return [];
-    const max = Math.min(200, Math.max(1, Number(limit) || 50));
-    return fs
-      .readFileSync(LIBRARY_INDEX_ERROR_FILE, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .slice(-max)
-      .map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch (_error) {
-          return { timestamp: "", kind: "parse_error", error: line };
-        }
-      });
-  } catch (error) {
-    console.error("Could not read library index error log:", error.message);
-    return [];
-  }
-}
-
-function startLibraryIndexJob(options = {}) {
-  if (activeLibraryIndexJob) {
-    const error = new Error("A library index job is already running.");
-    error.statusCode = 409;
-    throw error;
-  }
-  const resumeProgress =
-    options.resumeProgress && typeof options.resumeProgress === "object"
-      ? options.resumeProgress
-      : null;
-  const startFileIndex = Math.max(
-    0,
-    Number.isFinite(Number(options.startFileIndex))
-      ? Math.floor(Number(options.startFileIndex))
-      : 0,
-  );
-  const job = {
-    id: options.id || randomUUID(),
-    status: "running",
-    force: options.force === true,
-    prune: options.prune !== false,
-    compact: options.compact !== false,
-    retryEmbeddings: options.retryEmbeddings === true,
-    cancelRequested: false,
-    pauseRequested: false,
-    autoResumed: options.autoResume === true,
-    startedAt: options.startedAt || new Date().toISOString(),
-    resumedAt: options.autoResume === true ? new Date().toISOString() : null,
-    finishedAt: null,
-    progress: resumeProgress,
-    stats: null,
-    recentErrors: [],
-    error: null,
-  };
-  activeLibraryIndexJob = job;
-  lastLibraryIndexJob = job;
-  persistLibraryIndexJob(job);
-  indexLibrary({
-    force: job.force,
-    prune: job.prune,
-    compact: job.compact,
-    retryEmbeddings: job.retryEmbeddings,
-    startFileIndex,
-    resumeFromPath: options.resumeFromPath || "",
-    resumeProgress:
-      startFileIndex > 0 || options.resumeFromPath ? resumeProgress : null,
-    onProgress: (progress) => {
-      job.progress = progress;
-      // Progress fires per file AND per embedding batch — persisting each one
-      // hammers the disk for hours on a big run. Crash-resume only needs a
-      // recent snapshot, so throttle to one write every 2 seconds.
-      const now = Date.now();
-      if (!job._lastPersistMs || now - job._lastPersistMs >= 2000) {
-        job._lastPersistMs = now;
-        persistLibraryIndexJob(job);
-      }
-    },
-    onError: (entry) => {
-      appendLibraryIndexError(job, entry);
-      job.progress = {
-        ...(job.progress || {}),
-        recentErrors: job.recentErrors.slice(-5),
-        lastEmbeddingError: entry.error || entry.reason || "",
-      };
-      persistLibraryIndexJob(job);
-    },
-    shouldCancel: () => job.cancelRequested === true,
-  })
-    .then((stats) => {
-      job.status = "completed";
-      job.stats = stats;
-      job.progress = {
-        ...(job.progress || {}),
-        phase: "completed",
-        percent: 100,
-      };
-      persistLibraryIndexJob(job);
-    })
-    .catch((error) => {
-      if (error?.cancelled) {
-        job.status = job.pauseRequested ? "paused" : "cancelled";
-        job.error = null;
-        job.progress = {
-          ...(job.progress || {}),
-          phase: job.pauseRequested ? "paused" : "cancelled",
-        };
-      } else {
-        job.status = "failed";
-        job.error = error.stack || error.message || String(error);
-      }
-      persistLibraryIndexJob(job);
-    })
-    .finally(() => {
-      job.finishedAt = new Date().toISOString();
-      activeLibraryIndexJob = null;
-      persistLibraryIndexJob(job);
-    });
-  return job;
-}
-
-function pauseLibraryIndexJob() {
-  if (!activeLibraryIndexJob) return null;
-  activeLibraryIndexJob.pauseRequested = true;
-  activeLibraryIndexJob.cancelRequested = true;
-  activeLibraryIndexJob.progress = {
-    ...(activeLibraryIndexJob.progress || {}),
-    phase: "pausing",
-  };
-  persistLibraryIndexJob(activeLibraryIndexJob);
-  return activeLibraryIndexJob;
-}
-
-function resumePersistedLibraryIndexJob() {
-  const persisted = readLibraryIndexJobFile();
-  if (!persisted) return;
-  lastLibraryIndexJob = persisted;
-  if (
-    persisted.status !== "running" ||
-    persisted.cancelRequested === true ||
-    persisted.pauseRequested === true
-  ) {
-    return;
-  }
-  const startFileIndex = persistedJobStartFileIndex(persisted);
-  // Resume by the last in-flight file PATH (robust to list changes while the
-  // app was down); the numeric index is only a fallback for old job files.
-  const resumeFromPath =
-    startFileIndex > 0 ? String(persisted.progress?.currentFile || "") : "";
-  try {
-    startLibraryIndexJob({
-      id: persisted.id || randomUUID(),
-      startedAt: persisted.startedAt || null,
-      force: persisted.force === true,
-      prune: persisted.prune !== false,
-      compact: persisted.compact !== false,
-      autoResume: true,
-      resumeFromPath,
-      resumeProgress:
-        startFileIndex > 0 || resumeFromPath
-          ? persisted.progress || null
-          : null,
-      startFileIndex,
-    });
-  } catch (error) {
-    persisted.status = "failed";
-    persisted.error = `Auto-resume failed: ${error.message}`;
-    persisted.finishedAt = new Date().toISOString();
-    lastLibraryIndexJob = persisted;
-    persistLibraryIndexJob(persisted);
-  }
 }
 
 function buildExecutablePath(basePath = "") {
@@ -5210,6 +4675,45 @@ function isRequestAllowed(req) {
   return true;
 }
 
+const conversationsDomain = require("./routes/conversations")({
+  parseJsonBody,
+  loadConversations,
+  saveConversations,
+  saveClientConversation,
+  UI_SETTINGS_MODE_KEYS,
+});
+const promptsDomain = require("./routes/prompts")({ DATA_DIR, parseJsonBody });
+const notesDomain = require("./routes/notes")({ DATA_DIR, parseJsonBody });
+const settingsDomain = require("./routes/settings")({
+  parseJsonBody,
+  loadUiSettingsWithMeta,
+  saveUiSettings,
+  loadCloudSettings,
+  saveCloudSettings,
+  sanitizeCloudSettings,
+  redactCloudSettings,
+  loadLocalModelSettings,
+  saveLocalModelSettings,
+  getOllamaBaseUrl: () => ollamaBaseUrl,
+  saveOllamaBaseUrl,
+});
+const skillsDomain = require("./routes/skills")({
+  DATA_DIR,
+  parseJsonBody,
+  loadCustomSkills,
+  saveCustomSkills,
+  loadSkillsConfig,
+  saveSkillsConfig,
+  defaultSkillsConfig,
+  initMcpServers,
+});
+const libraryDomain = require("./routes/library")({
+  DATA_DIR,
+  parseJsonBody,
+  appendFileWithRotation,
+  openPathInFileManager,
+});
+
 const server = http.createServer(async (req, res) => {
   // CORS & Host check for security
   if (!isRequestAllowed(req)) {
@@ -5400,383 +4904,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && urlPath === "/api/ui/settings") {
-    const payload = loadUiSettingsWithMeta();
-    send(200, payload);
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/ui/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-      const nextSettings =
-        body.settings && typeof body.settings === "object"
-          ? body.settings
-          : body;
-      const sanitized = saveUiSettings(nextSettings);
-      send(200, { ok: true, settings: sanitized, exists: true });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/cloud/settings") {
-    send(200, { settings: redactCloudSettings(loadCloudSettings()) });
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/cloud/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-      const nextSettings =
-        body.settings && typeof body.settings === "object"
-          ? body.settings
-          : body;
-      const sanitized = sanitizeCloudSettings(
-        nextSettings,
-        loadCloudSettings(),
-      );
-      saveCloudSettings(sanitized);
-      send(200, {
-        ok: true,
-        settings: redactCloudSettings(sanitized),
-      });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/settings") {
-    try {
-      const config = loadLibraryConfig();
-      send(200, { settings: config.chatIntegration });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-      const nextSettings =
-        body.settings && typeof body.settings === "object"
-          ? body.settings
-          : body;
-      const config = saveLibraryChatSettings(nextSettings);
-      send(200, { ok: true, settings: config.chatIntegration });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/config") {
-    try {
-      send(200, { config: loadLibraryConfig() });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/config") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Config object is required" });
-        return;
-      }
-      const nextConfig =
-        body.config && typeof body.config === "object" ? body.config : body;
-      const config = saveLibraryConfig(nextConfig);
-      send(200, { ok: true, config });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/embedding-check") {
-    try {
-      const config = loadLibraryConfig();
-      if (config.embedding?.enabled !== true) {
-        send(200, { enabled: false, ready: false, error: "" });
-        return;
-      }
-      const result = await checkEmbeddingPreflight(config);
-      send(200, {
-        enabled: true,
-        ready: result.ready === true,
-        error: result.error || "",
-        model: config.embedding.model || "",
-        baseUrl: config.embedding.ollamaBaseUrl || "",
-      });
-    } catch (e) {
-      send(500, { error: e.message });
-    }
-    return;
-  }
-
-  // Everything the client needs to validate BEFORE starting an index run:
-  // sources, files on disk, embedding pipeline, and current index size.
-  if (req.method === "GET" && urlPath === "/api/library/preflight") {
-    try {
-      const config = loadLibraryConfig();
-      const sources = Array.isArray(config.sources) ? config.sources : [];
-      const configuredSources = sources.filter(
-        (source) =>
-          source && typeof source.path === "string" && source.path.trim(),
-      );
-      const missingPaths = configuredSources
-        .filter((source) => !fs.existsSync(source.path))
-        .map((source) => source.path);
-      let fileCount = 0;
-      if (configuredSources.length) {
-        try {
-          fileCount = collectSourceFiles(config).length;
-        } catch (_e) {}
-      }
-      const embeddingEnabled = config.embedding?.enabled === true;
-      const embeddingModel = String(config.embedding?.model || "");
-      const embedding = {
-        enabled: embeddingEnabled,
-        configured: embeddingEnabled && !!embeddingModel,
-        ready: false,
-        error: "",
-        model: embeddingModel,
-        baseUrl: config.embedding?.ollamaBaseUrl || "",
-        dimensions: 0,
-      };
-      if (embedding.configured) {
-        const result = await checkEmbeddingPreflight(config);
-        embedding.ready = result.ready === true;
-        embedding.error = result.error || "";
-        embedding.dimensions = Number(result.dimensions) || 0;
-      }
-      let indexedFiles = 0;
-      try {
-        const status = await getLibraryStatus();
-        indexedFiles = Number(status.files || 0);
-      } catch (_e) {}
-      send(200, {
-        sourcesConfigured: configuredSources.length,
-        missingPaths,
-        fileCount,
-        indexedFiles,
-        databasePath: config.databasePath || "",
-        embedding,
-      });
-    } catch (e) {
-      send(500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/status") {
-    try {
-      send(200, await getLibraryStatus());
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/estimate") {
-    try {
-      const sampleLimit = Number.parseInt(
-        requestUrl.searchParams.get("sample") || "",
-        10,
-      );
-      send(
-        200,
-        await estimateLibraryIndex({
-          sampleLimit: Number.isFinite(sampleLimit) ? sampleLimit : undefined,
-        }),
-      );
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/index") {
-    let status = null;
-    try {
-      status = await getLibraryStatus();
-    } catch (error) {
-      status = { error: error.message };
-    }
-    // Sync lastLibraryIndexJob from disk to ensure accuracy
-    if (!activeLibraryIndexJob) {
-      lastLibraryIndexJob = readLibraryIndexJobFile();
-    }
-    send(200, {
-      running: !!activeLibraryIndexJob,
-      job: publicLibraryIndexJob(activeLibraryIndexJob || lastLibraryIndexJob),
-      status,
-    });
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/library/index/errors") {
-    const limit = Number.parseInt(
-      requestUrl.searchParams.get("limit") || "",
-      10,
-    );
-    send(200, {
-      errors: readRecentLibraryIndexErrors(Number.isFinite(limit) ? limit : 50),
-      path: LIBRARY_INDEX_ERROR_FILE,
-    });
+  if (await settingsDomain.handleRequest({ req, urlPath, send })) {
     return;
   }
 
   if (
-    req.method === "POST" &&
-    urlPath === "/api/library/export-indexed-files"
+    await libraryDomain.handleRequest({ req, res, urlPath, requestUrl, send })
   ) {
-    try {
-      const config = loadLibraryConfig();
-      const files = await listIndexedLibraryFiles({ extension: ".epub" });
-      const text = formatIndexedLibraryFilesExport(files, config);
-      fs.writeFileSync(LIBRARY_INDEXED_FILES_EXPORT_FILE, text, "utf8");
-      const stat = fs.statSync(LIBRARY_INDEXED_FILES_EXPORT_FILE);
-      send(200, {
-        ok: true,
-        count: files.length,
-        path: LIBRARY_INDEXED_FILES_EXPORT_FILE,
-        directory: DATA_DIR,
-        bytes: stat.size,
-      });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (
-    req.method === "POST" &&
-    urlPath === "/api/library/export-indexed-files/open"
-  ) {
-    const targetPath = fs.existsSync(LIBRARY_INDEXED_FILES_EXPORT_FILE)
-      ? LIBRARY_INDEXED_FILES_EXPORT_FILE
-      : DATA_DIR;
-    openPathInFileManager(targetPath, { revealFile: true }, (error) => {
-      if (error) {
-        send(500, { error: `Failed to open export folder: ${error.message}` });
-        return;
-      }
-      send(200, {
-        ok: true,
-        path: LIBRARY_INDEXED_FILES_EXPORT_FILE,
-        directory: DATA_DIR,
-      });
-    });
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/index") {
-    try {
-      const body = await parseJsonBody(req);
-      const job = startLibraryIndexJob({
-        force: body?.force === true,
-        prune: body?.prune !== false,
-        compact: body?.compact !== false,
-        retryEmbeddings: body?.retryEmbeddings === true,
-      });
-      send(202, {
-        ok: true,
-        running: true,
-        job: publicLibraryIndexJob(job),
-        status: await getLibraryStatus().catch((error) => ({
-          error: error.message,
-        })),
-      });
-    } catch (e) {
-      send(e.statusCode || 500, {
-        error: e.message,
-        running: !!activeLibraryIndexJob,
-        job: publicLibraryIndexJob(
-          activeLibraryIndexJob || lastLibraryIndexJob,
-        ),
-        status: await getLibraryStatus().catch((error) => ({
-          error: error.message,
-        })),
-      });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/index/cancel") {
-    if (!activeLibraryIndexJob) {
-      send(200, {
-        ok: true,
-        running: false,
-        job: publicLibraryIndexJob(lastLibraryIndexJob),
-        status: await getLibraryStatus().catch((error) => ({
-          error: error.message,
-        })),
-      });
-      return;
-    }
-    const job = pauseLibraryIndexJob();
-    send(202, {
-      ok: true,
-      running: true,
-      job: publicLibraryIndexJob(job),
-      status: await getLibraryStatus().catch((error) => ({
-        error: error.message,
-      })),
-    });
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/search") {
-    try {
-      const body = await parseJsonBody(req);
-      const query = typeof body?.query === "string" ? body.query.trim() : "";
-      if (!query) {
-        send(400, { error: "Search query is required" });
-        return;
-      }
-      const results = await searchLibrary(query, {
-        limit: body.limit,
-        mode: body.mode,
-      });
-      send(200, { query, results });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/library/files/search") {
-    try {
-      const body = await parseJsonBody(req);
-      const query = typeof body?.query === "string" ? body.query.trim() : "";
-      if (!query) {
-        send(400, { error: "Search query is required" });
-        return;
-      }
-      const files = await searchLibraryFiles(query, { limit: 12 });
-      send(200, { query, files });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
     return;
   }
 
@@ -5860,341 +4994,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && urlPath === "/api/conversations") {
-    send(200, loadConversations());
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/conversations") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Conversation body required" });
-        return;
-      }
-      const id = typeof body.id === "string" ? body.id : "";
-      if (!id) {
-        send(400, { error: "Conversation id required" });
-        return;
-      }
-      saveClientConversation(
-        id,
-        body.title,
-        typeof body.mode === "string" ? body.mode : "ollama",
-        body.messages,
-      );
-      send(200, { ok: true });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  const deleteModeMatch =
-    req.method === "DELETE" &&
-    urlPath.match(/^\/api\/conversations\/mode\/([^/]+)$/);
-  if (deleteModeMatch) {
-    const requestedMode = decodeURIComponent(deleteModeMatch[1] || "");
-    // Every chat mode keeps its own history — local modes included.
-    const allowedModes = new Set(UI_SETTINGS_MODE_KEYS);
-    if (!allowedModes.has(requestedMode)) {
-      send(400, { error: "Invalid conversation mode" });
-      return;
-    }
-    const convs = loadConversations();
-    const next = convs.filter((conv) => {
-      const convMode =
-        typeof conv.mode === "string" && conv.mode ? conv.mode : "ollama";
-      return convMode !== requestedMode;
-    });
-    saveConversations(next);
-    send(200, {
-      ok: true,
-      mode: requestedMode,
-      deleted: convs.length - next.length,
-    });
-    return;
-  }
-
-  if (req.method === "DELETE" && urlPath === "/api/conversations") {
-    saveConversations([]);
-    send(200, { ok: true });
-    return;
-  }
-
-  const deleteMatch =
-    req.method === "DELETE" &&
-    urlPath.match(/^\/api\/conversations\/id\/([^/]+)$/);
-  if (deleteMatch) {
-    const encodedId = deleteMatch[1];
-    const convId = decodeURIComponent(encodedId || "");
-    if (!convId) {
-      send(400, { error: "Conversation id is required" });
-      return;
-    }
-    const convs = loadConversations();
-    const next = convs.filter((c) => c.id !== convId);
-    if (next.length === convs.length) {
-      send(404, { error: "Conversation not found" });
-      return;
-    }
-    saveConversations(next);
-    send(200, { ok: true });
-    return;
-  }
-
-  if (req.method === "GET" && urlPath.startsWith("/api/conversations/id/")) {
-    const id = urlPath.slice("/api/conversations/id/".length).trim();
-    if (!id) {
-      send(400, { error: "Conversation id is required" });
-      return;
-    }
-    const convs = loadConversations();
-    const conv = convs.find((c) => c.id === id);
-    if (!conv) {
-      send(404, { error: "Conversation not found" });
-      return;
-    }
-    send(200, conv);
-    return;
-  }
-
   if (
-    req.method === "DELETE" &&
-    (urlPath === "/api/conversations/id" ||
-      urlPath === "/api/conversations/id/")
+    (await conversationsDomain.handleRequest({ req, urlPath, send })) ||
+    (await promptsDomain.handleRequest({ req, urlPath, send }))
   ) {
-    send(400, {
-      error:
-        "Conversation id is required in the URL path, e.g. /api/conversations/id/{id}",
-    });
     return;
   }
 
-  if (req.method === "DELETE" && urlPath.startsWith("/api/conversations/")) {
-    const parts = urlPath.split("/");
-    const idxStr = parts.pop();
-    const idx = parseInt(idxStr, 10);
-    const convs = loadConversations();
-    if (isNaN(idx) || idx < 0 || idx >= convs.length) {
-      send(400, { error: "Invalid conversation index" });
-      return;
-    }
-    convs.splice(idx, 1);
-    saveConversations(convs);
-    send(200, { ok: true });
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/prompts") {
-    send(200, loadPrompts());
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/prompts") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!Array.isArray(body)) {
-        send(400, { error: "Prompts must be an array" });
-        return;
-      }
-      const valid = body.every(
-        (p) =>
-          p &&
-          typeof p.id === "string" &&
-          typeof p.name === "string" &&
-          typeof p.content === "string",
-      );
-      if (!valid) {
-        send(400, { error: "Invalid prompt structure" });
-        return;
-      }
-      savePrompts(body);
-      send(200, { ok: true });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/custom-skills") {
-    send(200, loadCustomSkills());
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/mcp/config") {
-    try {
-      const body = await parseJsonBody(req);
-      const servers = await initMcpServers(body.config);
-      send(200, { success: true, servers: servers || [] });
-    } catch (e) {
-      send(500, { error: e.message });
-    }
-    return;
-  }
-
-  // Stop all MCP servers and delete everything they downloaded. The download
-  // locations are the absolute paths in each server's env (npm cache, browser
-  // downloads, memory file). Only paths nested at least two levels under the
-  // user's home are deleted, so a stray "/" or "~" can never be wiped.
-  if (req.method === "POST" && urlPath === "/api/mcp/purge") {
-    try {
-      const body = await parseJsonBody(req);
-      await initMcpServers("");
-      const removed = [];
-      let config = null;
-      try {
-        config = JSON.parse(typeof body.config === "string" ? body.config : "");
-      } catch (_e) {
-        config = null;
-      }
-      const home = os.homedir();
-      const candidates = new Set();
-      if (config && config.mcpServers) {
-        for (const server of Object.values(config.mcpServers)) {
-          const env =
-            server && typeof server.env === "object" && server.env
-              ? server.env
-              : {};
-          for (const value of Object.values(env)) {
-            if (typeof value === "string" && path.isAbsolute(value.trim())) {
-              candidates.add(value.trim());
-            }
-          }
-        }
-      }
-      for (const candidate of candidates) {
-        const resolved = path.resolve(candidate);
-        if (!resolved.startsWith(home + path.sep)) continue;
-        const rel = path.relative(home, resolved);
-        if (!rel || rel.split(path.sep).length < 2) continue;
-        try {
-          fs.rmSync(resolved, { recursive: true, force: true });
-          removed.push(resolved);
-        } catch (e) {
-          console.error(`[MCP] Could not delete ${resolved}:`, e.message);
-        }
-      }
-      send(200, { ok: true, removed });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/custom-skills") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!Array.isArray(body)) {
-        send(400, { error: "Custom skills must be an array" });
-        return;
-      }
-      const valid = body.every(
-        (s) =>
-          s &&
-          typeof s.name === "string" &&
-          typeof s.description === "string" &&
-          typeof s.type === "string" &&
-          typeof s.code === "string",
-      );
-      if (!valid) {
-        send(400, { error: "Invalid custom skill structure" });
-        return;
-      }
-      saveCustomSkills(body);
-      send(200, { ok: true });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/book-search/config") {
-    try {
-      const file = path.join(DATA_DIR, "book-search.json");
-      const cfg = fs.existsSync(file)
-        ? JSON.parse(fs.readFileSync(file, "utf8"))
-        : {};
-      send(200, { config: cfg && typeof cfg === "object" ? cfg : {} });
-    } catch (e) {
-      send(500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/book-search/config") {
-    try {
-      const body = await parseJsonBody(req);
-      const raw = body?.config;
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-        send(400, { error: "Config object is required" });
-        return;
-      }
-      const clean = {};
-      for (const key of [
-        "googleApiKey",
-        "hardcoverToken",
-        "librarythingToken",
-        "calibreServerUrl",
-        "calibreLibraryId",
-      ]) {
-        if (typeof raw[key] === "string" && raw[key].trim()) {
-          clean[key] = raw[key].trim();
-        }
-      }
-      const file = path.join(DATA_DIR, "book-search.json");
-      fs.writeFileSync(file, JSON.stringify(clean, null, 2), { mode: 0o600 });
-      send(200, { ok: true, config: clean });
-    } catch (e) {
-      send(500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/ollama/skills/settings") {
-    send(200, loadSkillsConfig());
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/ollama/settings") {
-    send(200, { baseUrl: ollamaBaseUrl });
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/ollama/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-      const saved = saveOllamaBaseUrl(body.baseUrl);
-      send(200, { ok: true, baseUrl: saved });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/ollama/skills/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body !== "object" || Array.isArray(body)) {
-        send(400, { error: "Settings object is required" });
-        return;
-      }
-
-      const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
-      const filtered = Object.fromEntries(
-        Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k)),
-      );
-      const nextSettings = { ...loadSkillsConfig(), ...filtered };
-
-      saveSkillsConfig(nextSettings);
-      send(200, { ok: true, settings: nextSettings });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
+  if (await skillsDomain.handleRequest({ req, urlPath, send })) {
     return;
   }
 
@@ -6426,81 +5233,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && urlPath === "/api/notes/list") {
-    try {
-      send(200, listNotes());
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "GET" && urlPath === "/api/notes") {
-    try {
-      const requestedName = requestUrl.searchParams.get("name");
-      if (requestedName) {
-        const note = readNote(requestedName);
-        // Opening a note in the panel makes it the target of the local_notes
-        // skill ("append this to my notes" lands where the user is looking).
-        setActiveNoteName(note.name);
-        send(200, note);
-        return;
-      }
-      send(200, loadNotes());
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/notes/create") {
-    try {
-      const body = await parseJsonBody(req);
-      send(200, createNote(body?.title || ""));
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/notes/rename") {
-    try {
-      const body = await parseJsonBody(req);
-      send(200, renameNote(body?.name || "", body?.title || ""));
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (req.method === "POST" && urlPath === "/api/notes/delete") {
-    try {
-      const body = await parseJsonBody(req);
-      send(200, deleteNote(body?.name || ""));
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
-    }
-    return;
-  }
-
-  if (
-    (req.method === "PUT" || req.method === "POST") &&
-    urlPath === "/api/notes"
-  ) {
-    try {
-      const body = await parseJsonBody(req);
-      if (!body || typeof body.text !== "string") {
-        send(400, { error: "text field required" });
-        return;
-      }
-      const saved = body.name
-        ? writeNote(body.name, body.text)
-        : saveNotes(body.text);
-      send(200, saved);
-    } catch (e) {
-      const status = e && e.statusCode ? e.statusCode : 500;
-      send(status, { error: e?.message || "Failed to save notes" });
-    }
+  if (await notesDomain.handleRequest({ req, urlPath, requestUrl, send })) {
     return;
   }
 
@@ -6921,19 +5654,6 @@ const server = http.createServer(async (req, res) => {
       send(200, await fetchLocalModels(modeId));
     } catch (e) {
       send(e.statusCode || 502, { error: e.message });
-    }
-    return;
-  }
-  if (req.method === "GET" && urlPath === "/api/local-models/settings") {
-    send(200, { settings: loadLocalModelSettings() });
-    return;
-  }
-  if (req.method === "POST" && urlPath === "/api/local-models/settings") {
-    try {
-      const body = await parseJsonBody(req);
-      send(200, { settings: saveLocalModelSettings(body && body.settings) });
-    } catch (e) {
-      send(e.statusCode || 500, { error: e.message });
     }
     return;
   }
@@ -8049,7 +6769,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log("Running securely on http://127.0.0.1:" + PORT);
-  resumePersistedLibraryIndexJob();
+  libraryDomain.resumePersistedLibraryIndexJob();
 });
 
 // SV-18: Graceful shutdown handler
