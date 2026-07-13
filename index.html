@@ -3250,6 +3250,38 @@
                 margin-top: 8px;
               "
             ></div>
+            <div id="pluginDraftsWrap" style="display: none; margin-top: 10px">
+              <label>DRAFTS AWAITING YOUR APPROVAL</label>
+              <div class="setting-help">
+                Plugins drafted by the model. They are NOT active. Review the
+                code, then approve or delete. Approving moves the plugin into
+                the plugins directory and enables it.
+              </div>
+              <div id="pluginDraftsList"></div>
+            </div>
+          </div>
+
+          <div id="lessonsGroup" class="setting-group">
+            <label>LESSONS</label>
+            <div class="setting-help">
+              Standing instructions the model has learned (via the
+              remember_lesson skill or /remember) or that you write here
+              yourself. Lines starting with "- " are added to the system prompt
+              of every non-Pi chat.
+            </div>
+            <textarea
+              id="lessonsTextarea"
+              rows="8"
+              style="width: 100%; margin-top: 8px; resize: vertical"
+              spellcheck="false"
+            ></textarea>
+            <button
+              id="lessonsSaveBtn"
+              class="settings-action-btn"
+              style="margin-top: 6px"
+            >
+              SAVE LESSONS
+            </button>
           </div>
 
           <div id="customSkillsGroup" class="setting-group">

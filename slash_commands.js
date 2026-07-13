@@ -24,6 +24,11 @@ const COMMANDS = {
   book: { type: "skill", skillName: "book_search", label: "book search" },
   isbn: { type: "skill", skillName: "book_search", label: "book search" },
   shell: { type: "skill", skillName: "shell_command", label: "shell" },
+  remember: {
+    type: "skill",
+    skillName: "remember_lesson",
+    label: "remember lesson",
+  },
 };
 
 // Slash commands contributed by plugins (~/dive/plugins). Lazy require so

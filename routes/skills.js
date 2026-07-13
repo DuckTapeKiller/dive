@@ -37,6 +37,77 @@ module.exports = function createSkillsDomain(deps) {
       return true;
     }
 
+    // Model-drafted plugins awaiting human approval. Drafts live in
+    // DATA_DIR/plugin-drafts and are inert until approved (moved into the
+    // live plugins directory) by the user.
+    if (req.method === "GET" && urlPath === "/api/plugins/drafts") {
+      const draftsDir = path.join(DATA_DIR, "plugin-drafts");
+      const drafts = [];
+      try {
+        for (const entry of fs.readdirSync(draftsDir, {
+          withFileTypes: true,
+        })) {
+          if (!entry.isDirectory()) continue;
+          const dir = path.join(draftsDir, entry.name);
+          let manifest = {};
+          try {
+            manifest = JSON.parse(
+              fs.readFileSync(path.join(dir, "plugin.json"), "utf8"),
+            );
+          } catch (_e) {}
+          let code = "";
+          try {
+            code = fs.readFileSync(path.join(dir, "index.js"), "utf8");
+          } catch (_e) {}
+          drafts.push({
+            name: entry.name,
+            description: manifest.description || "",
+            draftedAt: manifest.draftedAt || "",
+            code,
+          });
+        }
+      } catch (_e) {}
+      send(200, { drafts });
+      return true;
+    }
+
+    if (
+      req.method === "POST" &&
+      (urlPath === "/api/plugins/drafts/approve" ||
+        urlPath === "/api/plugins/drafts/delete")
+    ) {
+      try {
+        const body = await parseJsonBody(req);
+        const name = String(body?.name || "").replace(/[^a-z0-9-]/g, "");
+        if (!name) {
+          send(400, { error: "Draft name required" });
+          return true;
+        }
+        const draftDir = path.join(DATA_DIR, "plugin-drafts", name);
+        if (!fs.existsSync(draftDir)) {
+          send(404, { error: "Draft not found" });
+          return true;
+        }
+        if (urlPath.endsWith("/approve")) {
+          const target = path.join(PLUGINS_DIR, name);
+          if (fs.existsSync(target)) {
+            send(409, { error: `A plugin named "${name}" already exists.` });
+            return true;
+          }
+          fs.mkdirSync(PLUGINS_DIR, { recursive: true });
+          fs.renameSync(draftDir, target);
+          loadPlugins();
+          send(200, { ok: true, approved: name, plugins: listPlugins() });
+        } else {
+          fs.rmSync(draftDir, { recursive: true, force: true });
+          send(200, { ok: true, deleted: name });
+        }
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
     if (req.method === "GET" && urlPath === "/api/custom-skills") {
       send(200, loadCustomSkills());
       return true;

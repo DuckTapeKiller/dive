@@ -1914,6 +1914,130 @@
           loadedPluginsPayload = null;
         }
         renderPluginsList();
+        loadLessonsUi().catch(() => {});
+        loadPluginDraftsUi().catch(() => {});
+      }
+
+      // ---- LESSONS (persistent instructions injected into system prompts) ----
+      async function loadLessonsUi() {
+        const box = document.getElementById("lessonsTextarea");
+        const btn = document.getElementById("lessonsSaveBtn");
+        if (!box) return;
+        if (btn && !btn.dataset.wired) {
+          btn.dataset.wired = "1";
+          btn.addEventListener("click", async () => {
+            try {
+              await fetch(apiUrl("/api/lessons"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: box.value }),
+              });
+              btn.textContent = "SAVED";
+              setTimeout(() => (btn.textContent = "SAVE LESSONS"), 1200);
+            } catch (error) {
+              console.error("Could not save lessons", error);
+              await appAlert(
+                error.message || "Failed to save lessons.",
+                "Lessons",
+              );
+            }
+          });
+        }
+        try {
+          const res = await fetch(apiUrl("/api/lessons"));
+          const payload = await readJsonResponse(res, "Load lessons");
+          box.value = payload?.text || "";
+        } catch (error) {
+          console.error("Could not load lessons", error);
+        }
+      }
+
+      // ---- MODEL-DRAFTED PLUGINS AWAITING APPROVAL ----
+      async function loadPluginDraftsUi() {
+        const wrap = document.getElementById("pluginDraftsWrap");
+        const list = document.getElementById("pluginDraftsList");
+        if (!wrap || !list) return;
+        let drafts = [];
+        try {
+          const res = await fetch(apiUrl("/api/plugins/drafts"));
+          const payload = await readJsonResponse(res, "Load plugin drafts");
+          drafts = payload?.drafts || [];
+        } catch (error) {
+          console.error("Could not load plugin drafts", error);
+        }
+        wrap.style.display = drafts.length ? "" : "none";
+        list.innerHTML = "";
+        for (const draft of drafts) {
+          const card = document.createElement("div");
+          card.style.cssText =
+            "background: var(--bg-primary); color: var(--text-normal); padding: 8px; margin-top: 8px;";
+          const title = document.createElement("strong");
+          title.textContent = `${draft.name} (drafted ${draft.draftedAt ? new Date(draft.draftedAt).toLocaleString() : "unknown"})`;
+          const desc = document.createElement("div");
+          desc.style.cssText =
+            "font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;";
+          desc.textContent = draft.description || "No description.";
+          const code = document.createElement("pre");
+          code.style.cssText =
+            "max-height: 220px; overflow: auto; margin-top: 6px; padding: 6px; background: var(--bg-secondary); font-size: calc(10px * var(--font-scale, 1)); user-select: text;";
+          code.textContent = draft.code || "";
+          const row = document.createElement("div");
+          row.style.cssText = "display: flex; gap: 6px; margin-top: 6px;";
+          const approve = document.createElement("button");
+          approve.className = "settings-action-btn";
+          approve.textContent = "APPROVE AND ENABLE";
+          approve.addEventListener("click", async () => {
+            if (
+              !(await appConfirm(
+                `Approve plugin "${draft.name}"? Its code will run inside Dive with full local access. Only approve code you have read and trust.`,
+                "Plugins — approve draft",
+                { confirmLabel: "Approve", danger: true },
+              ))
+            ) {
+              return;
+            }
+            try {
+              const res = await fetch(apiUrl("/api/plugins/drafts/approve"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: draft.name }),
+              });
+              await readJsonResponse(res, "Approve draft");
+              await loadPluginsUi();
+            } catch (error) {
+              await appAlert(
+                error.message || "Failed to approve draft.",
+                "Plugins",
+              );
+            }
+          });
+          const remove = document.createElement("button");
+          remove.className = "settings-action-btn";
+          remove.textContent = "DELETE";
+          remove.addEventListener("click", async () => {
+            try {
+              const res = await fetch(apiUrl("/api/plugins/drafts/delete"), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: draft.name }),
+              });
+              await readJsonResponse(res, "Delete draft");
+              await loadPluginDraftsUi();
+            } catch (error) {
+              await appAlert(
+                error.message || "Failed to delete draft.",
+                "Plugins",
+              );
+            }
+          });
+          row.appendChild(approve);
+          row.appendChild(remove);
+          card.appendChild(title);
+          card.appendChild(desc);
+          card.appendChild(code);
+          card.appendChild(row);
+          list.appendChild(card);
+        }
       }
 
       async function reloadPlugins() {
