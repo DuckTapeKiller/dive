@@ -1395,6 +1395,7 @@ module.exports = function createPiDomain(deps) {
           "compact",
           "set_auto_compaction",
           "set_auto_retry",
+          "abort",
           "abort_retry",
           "get_session_stats",
           "get_commands",

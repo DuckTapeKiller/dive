@@ -739,6 +739,25 @@
         }
       }
 
+      // An assistant bubble is "empty" when it carries no rendered text and no
+      // drum — the exact `<div class="msg assistant" data-raw-text="">` husk
+      // that a cancelled, failed, or tool-only turn would otherwise leave in
+      // the DOM. Remove its whole wrap so the view never shows blank bubbles.
+      function assistantBubbleIsEmpty(div) {
+        if (!div) return false;
+        if ((div.dataset.rawText || "").trim()) return false;
+        if (div.querySelector(".lucide-drum")) return false;
+        if ((div.textContent || "").trim()) return false;
+        return true;
+      }
+
+      function removeAssistantBubbleIfEmpty(div) {
+        if (!assistantBubbleIsEmpty(div)) return false;
+        const wrap = div.closest(".msg-wrap") || div;
+        if (wrap && wrap.parentElement) wrap.remove();
+        return true;
+      }
+
       function addMessage(text, role, options = {}) {
         const wrap = document.createElement("div");
         wrap.className = "msg-wrap " + role;
@@ -793,7 +812,12 @@
 
         const plain = document.createElement("div");
         plain.className = "thinking loading";
-        plain.textContent = "Loading...";
+        plain.textContent = "Working...";
+        // Live substate shown next to the elapsed clock so the user always
+        // sees WHAT the system is doing, never a static opaque spinner
+        // (issue 1.7): "Waiting for response", "Running <tool>", "Retrying",
+        // "Compacting", etc.
+        let currentPhase = "Working";
 
         const details = document.createElement("details");
         details.className = "thinking-details";
@@ -818,7 +842,6 @@
         debugSummary.textContent = "Execution Trace";
         const debugBody = document.createElement("div");
         debugBody.className = "thinking-details-body";
-        debugBody.style.whiteSpace = "pre-wrap";
         debugBody.style.maxHeight = "220px";
         debugBody.style.overflow = "auto";
         debugBody.style.fontSize = "calc(11px * var(--font-scale, 1))";
@@ -905,7 +928,7 @@
           const elapsed =
             s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
           if (plain.style.display !== "none") {
-            plain.textContent = `Loading... ${elapsed}`;
+            plain.textContent = `${currentPhase}... ${elapsed}`;
           }
           summary.textContent = `Thinking... (${elapsed})`;
         };
@@ -933,9 +956,20 @@
           initialSnapshot.status === "error" ||
           traceLines.some((line) => /^Failure:/i.test(String(line || "")));
 
+        // A text delta can fire the "empty bubble" removal a tick before a
+        // reasoning delta arrives (common with cloud reasoning models, whose
+        // answer and reasoning tokens interleave). If that happens the wrap is
+        // detached; re-attach it so reasoning still renders and EXPANDS rather
+        // than vanishing (issue 1.1).
+        const ensureAttached = () => {
+          if (!wrap.isConnected) {
+            chat.appendChild(wrap);
+          }
+        };
         const controller = {
           addReasoningChunk(chunk) {
             if (!chunk) return;
+            ensureAttached();
             if (!hasReasoning) {
               hasReasoning = true;
               plain.style.display = "none";
@@ -996,8 +1030,22 @@
             });
             scrollChatToBottom();
           },
+          setPhase(label) {
+            if (!label) return;
+            currentPhase = String(label);
+            if (plain.style.display !== "none") {
+              const s = Math.max(
+                0,
+                Math.floor((Date.now() - startedAt) / 1000),
+              );
+              const elapsed =
+                s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+              plain.textContent = `${currentPhase}... ${elapsed}`;
+            }
+          },
           addTraceLine(line, opts = {}) {
             if (!line) return;
+            ensureAttached();
             traceCount += 1;
             if (opts.failure) hasFailure = true;
             traceLines.push(String(line));
@@ -1008,7 +1056,9 @@
             if (opts.failure) {
               debugSummary.style.color = "#ff6b6b";
             }
-            debugBody.textContent = `${traceLines.join("\n")}\n`;
+            debugBody.innerHTML = DOMPurify.sanitize(
+              marked.parse(traceLines.join("\n\n")),
+            );
             debugBody.scrollTop = debugBody.scrollHeight;
             scrollChatToBottom();
           },
@@ -1054,13 +1104,14 @@
             if (Array.isArray(lines) && lines.length) {
               let pre = liveWidgets.get(key);
               if (!pre) {
-                pre = document.createElement("pre");
+                pre = document.createElement("div");
                 pre.className = "pi-widget-block";
                 liveWidgets.set(key, pre);
                 widgetsBox.appendChild(pre);
               }
               pre.classList.remove("finished");
-              pre.textContent = lines.join("\n");
+              // Subagent output is Markdown — render it, don't dump the source.
+              pre.innerHTML = DOMPurify.sanitize(marked.parse(lines.join("\n")));
               widgetsBox.style.display = "block";
               scrollChatToBottom();
             } else {
@@ -1129,7 +1180,7 @@
             if (reason === lastFailureReason) return;
             lastFailureReason = reason;
             this.addTraceLine(`Failure: ${reason}`, { failure: true });
-            // Don't leave a frozen "Loading…" label on a dead run.
+            // Don't leave a frozen "Working…" label on a dead run.
             this.stopTimer();
             if (plain.isConnected && plain.style.display !== "none") {
               plain.classList.remove("loading");
@@ -1199,7 +1250,9 @@
           if (hasFailure) {
             debugSummary.style.color = "#ff6b6b";
           }
-          debugBody.textContent = `${traceLines.join("\n")}\n`;
+          debugBody.innerHTML = DOMPurify.sanitize(
+              marked.parse(traceLines.join("\n\n")),
+            );
           debugBody.scrollTop = debugBody.scrollHeight;
         }
         if (currentPassages.length > 0) {
@@ -1348,6 +1401,11 @@
           scrollChatToBottom();
         } else {
           removeDrumIcon(session.streamingAssistantDiv);
+          // A tool ran but produced no visible assistant text — don't leave the
+          // now-drumless empty bubble sitting in the DOM.
+          if (removeAssistantBubbleIfEmpty(session.streamingAssistantDiv)) {
+            session.streamingAssistantDiv = null;
+          }
         }
       }
 
@@ -1427,11 +1485,49 @@
           librarySources || [],
           metadata,
         );
+        // Never leave a blank assistant husk behind: a turn that ended with no
+        // text (aborted before output, tool-only, failed) must purge its DOM
+        // node rather than persist an empty bubble (issue 2.2).
+        removeAssistantBubbleIfEmpty(session.streamingAssistantDiv);
         session.draftAssistant = null;
         session.streamingAssistantDiv = null;
         session.thinkingController = null;
         session.drumPending = false;
         return assistantMessage;
+      }
+
+      // Guarantee a clean slate before a new user turn creates its bubble.
+      // Any leftover draft/streaming node from a cancelled turn or a background
+      // Pi-channel continuation is committed to history (if it has content) or
+      // purged (if empty), then the streaming refs are nulled. After this, the
+      // next stream is forced to mount a brand-new, uniquely mapped assistant
+      // node — it can never reuse or write into a pre-existing container.
+      function beginIsolatedTurn(session, modeName) {
+        if (!session) return;
+        const activeMode = modeName || mode;
+        // Fold any live background Pi continuation into history first.
+        if (typeof finalizePiChannelRun === "function") {
+          try {
+            finalizePiChannelRun();
+          } catch (_e) {}
+        }
+        if (session.draftAssistant || session.streamingAssistantDiv) {
+          const leftoverText = session.draftAssistant?.content || "";
+          const committed = finalizeDraftAssistant(activeMode, leftoverText, []);
+          if (committed.content && committed.content.trim()) {
+            session.history = [...session.history, committed];
+            if (currentConvId === session.convId) {
+              history = [...session.history];
+            }
+          }
+        }
+        // Defensive: finalizeDraftAssistant already nulls these, but ensure no
+        // stale node survives even if no draft existed.
+        if (removeAssistantBubbleIfEmpty(session.streamingAssistantDiv)) {
+          session.streamingAssistantDiv = null;
+        }
+        session.draftAssistant = null;
+        session.streamingAssistantDiv = null;
       }
 
       function clearModeSession(modeName) {
@@ -2455,6 +2551,46 @@
         if (!evt || !thinking) return;
         // Keep-alive frames are transport noise — never record or render them.
         if (evt.type === "heartbeat") return;
+        // Granular phase telemetry on the working indicator (issue 1.7).
+        if (typeof thinking.setPhase === "function") {
+          switch (evt.type) {
+            case "session_start":
+              thinking.setPhase("Starting Pi");
+              break;
+            case "thinking_start":
+              thinking.setPhase("Thinking");
+              break;
+            case "delta":
+            case "thinking_end":
+              thinking.setPhase("Writing response");
+              break;
+            case "tool_start":
+              thinking.setPhase(
+                `Running ${evt.toolName || evt.name || "tool"}`,
+              );
+              break;
+            case "tool_end":
+              thinking.setPhase("Processing result");
+              break;
+            case "provider_retry":
+              thinking.setPhase("Provider error — retrying");
+              break;
+            case "provider_retry_end":
+              thinking.setPhase("Working");
+              break;
+            case "compaction_start":
+              thinking.setPhase("Compacting context");
+              break;
+            case "compaction_end":
+              thinking.setPhase("Working");
+              break;
+            case "async_pending":
+              thinking.setPhase("Waiting on subagents");
+              break;
+            default:
+              break;
+          }
+        }
         if (typeof thinking.addEvent === "function") {
           thinking.addEvent(evt);
         }

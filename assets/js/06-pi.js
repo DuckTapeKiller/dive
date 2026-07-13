@@ -298,6 +298,10 @@
         }
         persistConversationSnapshot(session.convId, "pi", session.history, "");
         refreshSidePanelRecent();
+        // Background continuation finished — return the button to Send.
+        if (typeof updateSendButtonState === "function") {
+          updateSendButtonState();
+        }
       }
 
       function closePiEventChannel() {
@@ -392,6 +396,10 @@
             "Pi woke in the background — streaming its continuation.",
           );
           piChannelRun = { controller, response: "" };
+          // A background continuation is now generating — surface Stop.
+          if (typeof updateSendButtonState === "function") {
+            updateSendButtonState();
+          }
         }
         const run = piChannelRun;
         if (evt.type === "delta") {
