@@ -2015,6 +2015,22 @@
         renderPluginsList();
         loadLessonsUi().catch(() => {});
         loadPluginDraftsUi().catch(() => {});
+        loadSystemPromptsUi().catch(() => {});
+      }
+
+      // ---- SYSTEM PROMPT TRANSPARENCY ----
+      async function loadSystemPromptsUi() {
+        const offEl = document.getElementById("systemPromptDbOff");
+        const onEl = document.getElementById("systemPromptDbOn");
+        if (!offEl || !onEl) return;
+        try {
+          const res = await fetch(apiUrl("/api/system-prompts"));
+          const payload = await readJsonResponse(res, "Load system prompts");
+          offEl.textContent = payload?.dbOff || "";
+          onEl.textContent = payload?.dbOn || "";
+        } catch (error) {
+          console.error("Could not load system prompts", error);
+        }
       }
 
       // ---- LESSONS (persistent instructions injected into system prompts) ----
@@ -3090,6 +3106,7 @@
             mode: modeName,
             title: title || "",
             messages: historyArr,
+            clientId: typeof APP_CLIENT_ID !== "undefined" ? APP_CLIENT_ID : "",
           }),
         }).catch(() => {});
       }

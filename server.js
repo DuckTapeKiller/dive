@@ -10,7 +10,6 @@ const { isDatabaseSlashCommand } = require("./slash_commands");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
-const MAX_CONVERSATIONS = 10;
 const MAX_HISTORY_MESSAGES = 200; // max messages stored per conversation
 const PI_SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const PI_SESSION_SWEEP_INTERVAL_MS = 15 * 1000;
@@ -56,7 +55,14 @@ try {
 }
 const EMBEDDED_INDEX = EMBEDDED_ASSETS.get("index.html") || null;
 
-const HISTORY_FILE = path.join(DATA_DIR, "conversations.json");
+// Conversation storage: one JSON file per mode under DATA_DIR/conversations.
+const CONVERSATIONS_DIR = path.join(DATA_DIR, "conversations");
+const LEGACY_HISTORY_FILE = path.join(DATA_DIR, "conversations.json");
+const CONV_TOMBSTONES_FILE = path.join(
+  CONVERSATIONS_DIR,
+  "deleted-tombstones.json",
+);
+const CONV_TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
 const CUSTOM_SKILLS_FILE = path.join(DATA_DIR, "custom_skills.json");
 const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
@@ -288,23 +294,11 @@ rotateFileIfNeeded(SECURITY_EVENTS_FILE);
 rotateFileIfNeeded(DAEMON_LOG_FILE);
 rotateFileIfNeeded(DAEMON_ERROR_LOG_FILE);
 
-function loadConversations() {
-  try {
-    if (fs.existsSync(HISTORY_FILE)) {
-      return JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
-    }
-  } catch (e) {
-    console.warn("Failed to load conversations:", e.message || e);
-  }
-  return [];
-}
-
-// Cross-client live sync (issue 2.1): every connected client (desktop app,
-// browser) subscribes to one global SSE channel. Whenever a conversation is
-// saved — by any client or by the Pi server-side stream — a lightweight
-// signal is broadcast so the other clients refresh and, if they have that
-// same conversation open, re-render it. Turn/checkpoint granularity: Pi
-// already checkpoints mid-stream, so continuations propagate within seconds.
+// Cross-client live sync: every connected client (desktop app, browser)
+// subscribes to one global SSE channel. Whenever a conversation is saved or
+// deleted — by any client or by a server-side stream — a lightweight signal
+// is broadcast so the other clients refresh and, if they have that same
+// conversation open, re-render it.
 const appEventClients = new Set();
 
 function broadcastAppEvent(type, payload = {}) {
@@ -318,33 +312,213 @@ function broadcastAppEvent(type, payload = {}) {
   }
 }
 
-// SV-16: Mutex for conversation history
-let isSavingConversations = false;
-let pendingSaveConversations = null;
+// ---- Conversation storage ----------------------------------------------
+// Design rules (root fixes for the delete-resurrection / lost-update mess):
+//  * one file per mode: <mode>-conversations.json in CONVERSATIONS_DIR
+//  * every mutation runs through a per-file serialized queue that re-reads
+//    the file inside the critical section (no read-modify-write races)
+//  * deletes leave a tombstone; late saves from an already-running turn can
+//    never re-create a conversation the user deleted
+//  * no MAX_CONVERSATIONS cap: history retains everything
 
-function saveConversations(convs) {
-  if (isSavingConversations) {
-    pendingSaveConversations = convs;
-    return;
+function convModeKey(mode) {
+  return UI_SETTINGS_MODE_KEYS.includes(mode) ? mode : "ollama";
+}
+
+function convFile(mode) {
+  return path.join(
+    CONVERSATIONS_DIR,
+    `${convModeKey(mode)}-conversations.json`,
+  );
+}
+
+let convTombstones = new Map();
+
+function pruneConvTombstones() {
+  const cutoff = Date.now() - CONV_TOMBSTONE_TTL_MS;
+  for (const [id, ts] of convTombstones) {
+    if (ts < cutoff) convTombstones.delete(id);
   }
-  isSavingConversations = true;
-  fs.writeFile(HISTORY_FILE, JSON.stringify(convs, null, 2), (err) => {
-    if (err) console.error("Failed to save conversations:", err);
-    isSavingConversations = false;
-    if (pendingSaveConversations) {
-      const next = pendingSaveConversations;
-      pendingSaveConversations = null;
-      saveConversations(next);
+}
+
+function loadConvTombstones() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CONV_TOMBSTONES_FILE, "utf8"));
+    convTombstones = new Map(
+      Object.entries(raw).map(([k, v]) => [k, Number(v)]),
+    );
+    pruneConvTombstones();
+  } catch {
+    convTombstones = new Map();
+  }
+}
+
+function persistConvTombstones() {
+  try {
+    fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+    atomicWriteJson(CONV_TOMBSTONES_FILE, Object.fromEntries(convTombstones));
+  } catch (e) {
+    console.error("Could not persist conversation tombstones:", e.message);
+  }
+}
+
+function tombstoneConversation(id) {
+  if (!id) return;
+  pruneConvTombstones();
+  convTombstones.set(id, Date.now());
+  persistConvTombstones();
+}
+
+function isConversationTombstoned(id) {
+  if (!id || !convTombstones.has(id)) return false;
+  if (convTombstones.get(id) < Date.now() - CONV_TOMBSTONE_TTL_MS) {
+    convTombstones.delete(id);
+    return false;
+  }
+  return true;
+}
+
+function readConversationFile(file) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function atomicWriteJson(file, data) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  fs.renameSync(tmp, file);
+}
+
+// Serialize every mutation per mode file. The mutator receives the freshly
+// read list and returns the next list (or null to skip the write).
+const convWriteQueues = new Map();
+
+function withModeConversations(mode, mutator) {
+  const file = convFile(mode);
+  const prev = convWriteQueues.get(file) || Promise.resolve();
+  const next = prev
+    .then(() => {
+      fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+      const list = readConversationFile(file);
+      const result = mutator(list);
+      if (Array.isArray(result)) atomicWriteJson(file, result);
+      return result;
+    })
+    .catch((e) => {
+      console.error(`Conversation write failed (${mode}):`, e.message || e);
+      return null;
+    });
+  convWriteQueues.set(file, next);
+  return next;
+}
+
+function loadConversationsForMode(mode) {
+  return readConversationFile(convFile(mode));
+}
+
+function loadConversations() {
+  const all = [];
+  for (const mode of UI_SETTINGS_MODE_KEYS) {
+    all.push(...loadConversationsForMode(mode));
+  }
+  all.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return all;
+}
+
+function getConversationById(id) {
+  if (!id) return null;
+  for (const mode of UI_SETTINGS_MODE_KEYS) {
+    const found = loadConversationsForMode(mode).find((c) => c.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function deleteConversationById(id) {
+  if (!id) return Promise.resolve(false);
+  tombstoneConversation(id);
+  const deletions = UI_SETTINGS_MODE_KEYS.map((mode) =>
+    withModeConversations(mode, (list) => {
+      const next = list.filter((c) => c.id !== id);
+      return next.length === list.length ? null : next;
+    }),
+  );
+  return Promise.all(deletions).then((results) => {
+    const deleted = results.some((r) => Array.isArray(r));
+    if (deleted) {
+      broadcastAppEvent("conversation_deleted", { id });
     }
+    return deleted;
   });
+}
+
+function deleteConversationsByMode(mode) {
+  return withModeConversations(mode, (list) => {
+    for (const conv of list) tombstoneConversation(conv.id);
+    return [];
+  }).then((result) => {
+    broadcastAppEvent("conversation_deleted", { mode });
+    return Array.isArray(result) ? 0 : 0;
+  });
+}
+
+function deleteAllConversations() {
+  return Promise.all(
+    UI_SETTINGS_MODE_KEYS.map((mode) => deleteConversationsByMode(mode)),
+  );
+}
+
+// One-time migration: split the legacy single conversations.json into the
+// per-mode files. The original is kept as a .migrated-backup, never deleted.
+function migrateLegacyConversations() {
+  try {
+    fs.mkdirSync(CONVERSATIONS_DIR, { recursive: true });
+    if (!fs.existsSync(LEGACY_HISTORY_FILE)) return;
+    const legacy = JSON.parse(fs.readFileSync(LEGACY_HISTORY_FILE, "utf8"));
+    if (Array.isArray(legacy) && legacy.length) {
+      const byMode = {};
+      for (const conv of legacy) {
+        if (!conv || typeof conv !== "object") continue;
+        const m = convModeKey(conv.mode || "ollama");
+        (byMode[m] ||= []).push(conv);
+      }
+      for (const [m, list] of Object.entries(byMode)) {
+        const file = convFile(m);
+        const existing = readConversationFile(file);
+        const ids = new Set(existing.map((conv) => conv.id));
+        const merged = [
+          ...existing,
+          ...list.filter((conv) => !ids.has(conv.id)),
+        ];
+        merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        atomicWriteJson(file, merged);
+      }
+      console.log(
+        `[conversations] migrated ${legacy.length} conversations from the legacy single file into per-mode files`,
+      );
+    }
+    fs.renameSync(
+      LEGACY_HISTORY_FILE,
+      `${LEGACY_HISTORY_FILE}.migrated-backup`,
+    );
+  } catch (e) {
+    console.error("Conversation migration failed:", e.message || e);
+  }
 }
 
 function persistAsyncWakeTurn(convId, response, metadata = {}) {
   if (!convId || !response) return;
-  try {
-    const convs = loadConversations();
+  if (isConversationTombstoned(convId)) return;
+  const existing = getConversationById(convId);
+  if (!existing) return; // nothing to attach this turn to
+  const mode = convModeKey(existing.mode || "pi");
+  withModeConversations(mode, (convs) => {
     const idx = convs.findIndex((c) => c.id === convId);
-    if (idx === -1) return; // nothing to attach this turn to
+    if (idx === -1) return null;
 
     const history = Array.isArray(convs[idx].history)
       ? convs[idx].history.slice()
@@ -377,11 +551,15 @@ function persistAsyncWakeTurn(convId, response, metadata = {}) {
     }
     convs[idx].history = history;
     convs[idx].updatedAt = Date.now();
-    saveConversations(convs);
+    return convs;
+  }).then(() => {
     appendSecurityEvent("pi_async_wake_persisted", { convId });
-  } catch (e) {
-    console.error("Failed to persist async-wake Pi turn:", e.message || e);
-  }
+    broadcastAppEvent("conversation_saved", {
+      id: convId,
+      mode,
+      origin: "server",
+    });
+  });
 }
 
 function upsertConversation(
@@ -396,7 +574,9 @@ function upsertConversation(
   const piSessionFile =
     mode === "pi" && saveConv ? piDomain.api.getSessionFile(saveConv) : null;
   if (!saveConv) return;
-  const convs = loadConversations();
+  // A deleted conversation stays deleted: a still-running turn that finishes
+  // after the user deleted its conversation must not re-create it.
+  if (isConversationTombstoned(saveConv)) return;
   const assistantMessage = { role: "assistant", content: response };
   if (
     Array.isArray(metadata.librarySources) &&
@@ -438,7 +618,6 @@ function upsertConversation(
     assistantMessage,
   ];
   const title = convTitle || message.slice(0, 40);
-  const existing = convs.findIndex((c) => c.id === saveConv);
 
   // Cap the size of the conversation history array
   if (newHistory.length > MAX_HISTORY_MESSAGES) {
@@ -446,28 +625,34 @@ function upsertConversation(
     newHistory.splice(0, spliceCount);
   }
 
-  if (existing >= 0) {
-    convs[existing].history = newHistory;
-    convs[existing].updatedAt = Date.now();
-    convs[existing].mode = mode;
-    if (piSessionFile) convs[existing].piSessionFile = piSessionFile;
-  } else {
-    convs.unshift({
-      piSessionFile,
-      id: saveConv,
-      title,
-      mode,
-      history: newHistory,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-    if (convs.length > MAX_CONVERSATIONS) convs.splice(MAX_CONVERSATIONS);
-  }
-  saveConversations(convs);
-  broadcastAppEvent("conversation_saved", {
-    id: saveConv,
-    mode,
-    origin: "server",
+  return withModeConversations(mode, (convs) => {
+    if (isConversationTombstoned(saveConv)) return null;
+    const existing = convs.findIndex((c) => c.id === saveConv);
+    if (existing >= 0) {
+      convs[existing].history = newHistory;
+      convs[existing].updatedAt = Date.now();
+      convs[existing].mode = convModeKey(mode);
+      if (piSessionFile) convs[existing].piSessionFile = piSessionFile;
+    } else {
+      convs.unshift({
+        piSessionFile,
+        id: saveConv,
+        title,
+        mode: convModeKey(mode),
+        history: newHistory,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+    return convs;
+  }).then((result) => {
+    if (Array.isArray(result)) {
+      broadcastAppEvent("conversation_saved", {
+        id: saveConv,
+        mode,
+        origin: "server",
+      });
+    }
   });
 }
 
@@ -475,8 +660,9 @@ function upsertConversation(
 // interrupted turn: the normal stream "done" save never fires on abort, so the
 // client posts the in-memory history (user + partial assistant) here so it
 // survives in the History panel and across reloads, for every mode.
-function saveClientConversation(id, title, mode, rawMessages) {
-  if (!id || !Array.isArray(rawMessages)) return;
+function saveClientConversation(id, title, mode, rawMessages, originClientId) {
+  if (!id || !Array.isArray(rawMessages)) return Promise.resolve();
+  if (isConversationTombstoned(id)) return Promise.resolve();
   const allowedRoles = new Set(["system", "user", "assistant", "tool"]);
   const history = rawMessages
     .filter(
@@ -508,33 +694,42 @@ function saveClientConversation(id, title, mode, rawMessages) {
         item.status = m.status.trim().slice(0, 80);
       return item;
     });
-  if (!history.length) return;
+  if (!history.length) return Promise.resolve();
   if (history.length > MAX_HISTORY_MESSAGES) {
     history.splice(0, history.length - MAX_HISTORY_MESSAGES);
   }
-  const convs = loadConversations();
   const firstUser = history.find((m) => m.role === "user");
   const finalTitle =
     (typeof title === "string" && title.trim()) ||
     (firstUser ? firstUser.content.slice(0, 40) : "Conversation");
-  const existing = convs.findIndex((c) => c.id === id);
-  if (existing >= 0) {
-    convs[existing].history = history;
-    convs[existing].updatedAt = Date.now();
-    convs[existing].mode = mode;
-  } else {
-    convs.unshift({
-      id,
-      title: finalTitle,
-      mode,
-      history,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-    if (convs.length > MAX_CONVERSATIONS) convs.splice(MAX_CONVERSATIONS);
-  }
-  saveConversations(convs);
-  broadcastAppEvent("conversation_saved", { id, mode, origin: "client" });
+  return withModeConversations(mode, (convs) => {
+    if (isConversationTombstoned(id)) return null;
+    const existing = convs.findIndex((c) => c.id === id);
+    if (existing >= 0) {
+      convs[existing].history = history;
+      convs[existing].updatedAt = Date.now();
+      convs[existing].mode = convModeKey(mode);
+    } else {
+      convs.unshift({
+        id,
+        title: finalTitle,
+        mode: convModeKey(mode),
+        history,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+    return convs;
+  }).then((result) => {
+    if (Array.isArray(result)) {
+      broadcastAppEvent("conversation_saved", {
+        id,
+        mode,
+        origin: "client",
+        clientId: typeof originClientId === "string" ? originClientId : "",
+      });
+    }
+  });
 }
 
 function loadCustomSkills() {
@@ -2378,8 +2573,12 @@ const piDomain = require("./routes/pi")({
 const conversationsDomain = require("./routes/conversations")({
   parseJsonBody,
   loadConversations,
-  saveConversations,
+  loadConversationsForMode,
   saveClientConversation,
+  getConversationById,
+  deleteConversationById,
+  deleteConversationsByMode,
+  deleteAllConversations,
   UI_SETTINGS_MODE_KEYS,
 });
 const promptsDomain = require("./routes/prompts")({ DATA_DIR, parseJsonBody });
@@ -2570,7 +2769,7 @@ const server = http.createServer(async (req, res) => {
       if (!res.writableEnded) res.write(": hb\n\n");
     }, 15000);
     heartbeat.unref?.();
-    req.on("close", () => {
+    res.on("close", () => {
       clearInterval(heartbeat);
       appEventClients.delete(res);
     });
@@ -2813,6 +3012,9 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404);
   res.end();
 });
+
+loadConvTombstones();
+migrateLegacyConversations();
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log("Running securely on http://127.0.0.1:" + PORT);

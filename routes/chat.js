@@ -87,6 +87,18 @@ module.exports = function createChatDomain(deps) {
   async function handleLocalModeStream(modeId, req, res, send) {
     let finished = false;
     const abortController = new AbortController();
+    // Stop MUST stop: tool executions between model rounds are not bound to
+    // the HTTP abort signal, so re-check it explicitly after every tool and
+    // at each round boundary. Throwing AbortError routes into the existing
+    // cancellation branch, which never saves the zombie answer.
+    const throwIfClientAborted = () => {
+      if (abortController.signal.aborted) {
+        const err = new Error("Request aborted by client.");
+        err.name = "AbortError";
+        throw err;
+      }
+    };
+
     const traceEvents = [];
     const emit = (event) => {
       const stored = sanitizeTraceEventForStorage(event);
@@ -154,7 +166,11 @@ module.exports = function createChatDomain(deps) {
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
-      req.on("close", () => {
+      // Client-disconnect detection MUST hang off the RESPONSE: in modern
+      // Node the request's "close" relates to the (long-finished) request
+      // body, so it never fires when the user hits Stop mid-stream — which
+      // silently disabled the abort and let generation run to completion.
+      res.on("close", () => {
         if (!finished) abortController.abort();
       });
       emitSlashCommand(emit, slashCommand);
@@ -259,6 +275,7 @@ module.exports = function createChatDomain(deps) {
             argsPreview: toolCall.function.arguments.slice(0, 300),
           });
           const result = await executeToolCallWithConfirmation(toolCall, emit);
+          throwIfClientAborted();
           appendForcedSkillResult(requestMessages, slashCommand, result);
           emit({
             type: "tool_end",
@@ -343,6 +360,7 @@ module.exports = function createChatDomain(deps) {
           } catch (toolError) {
             result = `Error: ${toolError.message}`;
           }
+          throwIfClientAborted();
         }
 
         emit({
@@ -389,6 +407,7 @@ module.exports = function createChatDomain(deps) {
 
       let round = 0;
       for (;;) {
+        throwIfClientAborted();
         // Once a native tool call starts streaming, everything the model wrote
         // this round is interim — stop mirroring it to the reply bubble.
         let sawToolCallThisRound = false;
@@ -548,6 +567,7 @@ module.exports = function createChatDomain(deps) {
       }
 
       finished = true;
+      throwIfClientAborted();
       upsertConversation(
         saveConv,
         convTitle,
@@ -1253,6 +1273,17 @@ module.exports = function createChatDomain(deps) {
   async function dispatch(ctx) {
     const { req, res, urlPath, send } = ctx;
 
+    // Transparency: expose the exact system prompts sent to non-Pi models so
+    // the Prompt settings section can display them verbatim.
+    if (req.method === "GET" && urlPath === "/api/system-prompts") {
+      send(200, {
+        dbOff: getSharedAssistantPolicyPrompt(false),
+        dbOn: getSharedAssistantPolicyPrompt(true),
+        lessonsApplied: Boolean(readLessons(DATA_DIR)),
+      });
+      return;
+    }
+
     if (req.method === "GET" && urlPath === "/api/models") {
       try {
         send(200, { models: await getModels(), offline: false });
@@ -1348,6 +1379,18 @@ module.exports = function createChatDomain(deps) {
     if (req.method === "POST" && urlPath === "/api/cloud/chat/stream") {
       let finished = false;
       const abortController = new AbortController();
+      // Stop MUST stop: tool executions between model rounds are not bound to
+      // the HTTP abort signal, so re-check it explicitly after every tool and
+      // at each round boundary. Throwing AbortError routes into the existing
+      // cancellation branch, which never saves the zombie answer.
+      const throwIfClientAborted = () => {
+        if (abortController.signal.aborted) {
+          const err = new Error("Request aborted by client.");
+          err.name = "AbortError";
+          throw err;
+        }
+      };
+
       const traceEvents = [];
       const emit = (event) => {
         const storedEvent = sanitizeTraceEventForStorage(event);
@@ -1404,7 +1447,9 @@ module.exports = function createChatDomain(deps) {
           "X-Accel-Buffering": "no",
         });
 
-        req.on("close", () => {
+        // Response-side close: see the local handler note — req "close" does
+        // not fire on client disconnect.
+        res.on("close", () => {
           if (!finished) {
             abortController.abort();
           }
@@ -1494,6 +1539,7 @@ module.exports = function createChatDomain(deps) {
               toolCall,
               emit,
             );
+            throwIfClientAborted();
             appendForcedSkillResult(requestMessages, slashCommand, result);
             emit({
               type: "tool_end",
@@ -1638,6 +1684,7 @@ module.exports = function createChatDomain(deps) {
             } catch (toolError) {
               result = `Error: ${toolError.message}`;
             }
+            throwIfClientAborted();
           }
 
           emit({
@@ -1702,6 +1749,7 @@ module.exports = function createChatDomain(deps) {
         }
 
         finished = true;
+        throwIfClientAborted();
         upsertConversation(
           saveConv,
           convTitle,
@@ -1772,6 +1820,9 @@ module.exports = function createChatDomain(deps) {
 
     if (req.method === "POST" && urlPath === "/api/chat/stream") {
       let finished = false;
+      // Stop MUST stop: once the client disconnects, no further model rounds
+      // may run and the zombie answer must never be saved.
+      let clientGone = false;
       let upstreamReq = null;
       let upstreamRes = null;
       try {
@@ -1898,6 +1949,11 @@ module.exports = function createChatDomain(deps) {
               toolCall,
               emit,
             );
+            if (clientGone) {
+              const err = new Error("Request aborted by client.");
+              err.name = "AbortError";
+              throw err;
+            }
             appendForcedSkillResult(messages, slashCommand, result);
             emit({
               type: "tool_end",
@@ -2104,6 +2160,11 @@ module.exports = function createChatDomain(deps) {
                         } catch (toolError) {
                           result = `Error: ${toolError.message}`;
                         }
+                        if (clientGone) {
+                          const err = new Error("Request aborted by client.");
+                          err.name = "AbortError";
+                          throw err;
+                        }
                         emit({
                           type: "tool_end",
                           toolName: tc.function.name,
@@ -2154,6 +2215,7 @@ module.exports = function createChatDomain(deps) {
 
                   if (finished) return;
                   finished = true;
+                  if (clientGone) return;
                   upsertConversation(
                     saveConv,
                     convTitle,
@@ -2183,6 +2245,7 @@ module.exports = function createChatDomain(deps) {
             ollamaRes.on("end", () => {
               if (!finished && outputToolCalls.length === 0) {
                 finished = true;
+                if (clientGone) return;
                 upsertConversation(
                   saveConv,
                   convTitle,
@@ -2225,8 +2288,11 @@ module.exports = function createChatDomain(deps) {
 
         startStream(0);
 
-        req.on("close", () => {
+        // Response-side close: see the local handler note — req "close" does
+        // not fire on client disconnect.
+        res.on("close", () => {
           if (!finished) {
+            clientGone = true;
             if (upstreamReq) upstreamReq.destroy();
             if (upstreamRes) upstreamRes.destroy();
           }
@@ -2266,7 +2332,7 @@ module.exports = function createChatDomain(deps) {
         let { promise, abort } = ollamaChat(model, messages, safeOptions);
         cancel = abort;
 
-        req.on("close", () => {
+        res.on("close", () => {
           if (!finished) {
             console.log(
               "Client aborted request. Aborting Ollama API request...",
@@ -2367,6 +2433,7 @@ module.exports = function createChatDomain(deps) {
   }
 
   const CHAT_PATHS = new Set([
+    "/api/system-prompts",
     "/api/models",
     "/api/ollama/tool-respond",
     "/api/cloud/chat/stream",

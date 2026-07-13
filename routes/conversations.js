@@ -1,12 +1,16 @@
-// Conversation history routes. Storage helpers (loadConversations, etc.)
-// stay in server.js because the chat/stream handlers persist through them
-// too; this module only owns the HTTP surface.
+// Conversation history routes. Storage lives in server.js (per-mode files
+// under DATA_DIR/conversations with serialized writes and delete
+// tombstones); this module only owns the HTTP surface.
 module.exports = function createConversationsDomain(deps) {
   const {
     parseJsonBody,
     loadConversations,
-    saveConversations,
+    loadConversationsForMode,
     saveClientConversation,
+    getConversationById,
+    deleteConversationById,
+    deleteConversationsByMode,
+    deleteAllConversations,
     UI_SETTINGS_MODE_KEYS,
   } = deps;
 
@@ -30,11 +34,12 @@ module.exports = function createConversationsDomain(deps) {
           send(400, { error: "Conversation id required" });
           return true;
         }
-        saveClientConversation(
+        await saveClientConversation(
           id,
           body.title,
           typeof body.mode === "string" ? body.mode : "ollama",
           body.messages,
+          typeof body.clientId === "string" ? body.clientId : "",
         );
         send(200, { ok: true });
       } catch (e) {
@@ -54,23 +59,18 @@ module.exports = function createConversationsDomain(deps) {
         send(400, { error: "Invalid conversation mode" });
         return true;
       }
-      const convs = loadConversations();
-      const next = convs.filter((conv) => {
-        const convMode =
-          typeof conv.mode === "string" && conv.mode ? conv.mode : "ollama";
-        return convMode !== requestedMode;
-      });
-      saveConversations(next);
+      const before = loadConversationsForMode(requestedMode).length;
+      await deleteConversationsByMode(requestedMode);
       send(200, {
         ok: true,
         mode: requestedMode,
-        deleted: convs.length - next.length,
+        deleted: before,
       });
       return true;
     }
 
     if (req.method === "DELETE" && urlPath === "/api/conversations") {
-      saveConversations([]);
+      await deleteAllConversations();
       send(200, { ok: true });
       return true;
     }
@@ -85,13 +85,11 @@ module.exports = function createConversationsDomain(deps) {
         send(400, { error: "Conversation id is required" });
         return true;
       }
-      const convs = loadConversations();
-      const next = convs.filter((c) => c.id !== convId);
-      if (next.length === convs.length) {
+      const deleted = await deleteConversationById(convId);
+      if (!deleted) {
         send(404, { error: "Conversation not found" });
         return true;
       }
-      saveConversations(next);
       send(200, { ok: true });
       return true;
     }
@@ -102,8 +100,7 @@ module.exports = function createConversationsDomain(deps) {
         send(400, { error: "Conversation id is required" });
         return true;
       }
-      const convs = loadConversations();
-      const conv = convs.find((c) => c.id === id);
+      const conv = getConversationById(id);
       if (!conv) {
         send(404, { error: "Conversation not found" });
         return true;
@@ -125,6 +122,8 @@ module.exports = function createConversationsDomain(deps) {
     }
 
     if (req.method === "DELETE" && urlPath.startsWith("/api/conversations/")) {
+      // Legacy index-based delete: resolve the index against the merged,
+      // recency-sorted list, then delete by id.
       const parts = urlPath.split("/");
       const idxStr = parts.pop();
       const idx = parseInt(idxStr, 10);
@@ -133,8 +132,7 @@ module.exports = function createConversationsDomain(deps) {
         send(400, { error: "Invalid conversation index" });
         return true;
       }
-      convs.splice(idx, 1);
-      saveConversations(convs);
+      await deleteConversationById(convs[idx].id);
       send(200, { ok: true });
       return true;
     }
