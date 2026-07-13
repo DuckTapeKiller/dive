@@ -62,13 +62,15 @@
       "assets/**/*",
       "node_modules/**/*",
       "security/**/*",
-      "library/**/*"
+      "library/**/*",
+      "routes/**/*"
     ],
     "files": [
       "electron/**/*",
       "assets/**/*",
       "security/**/*",
       "library/**/*",
+      "routes/**/*",
       "index.html",
       "server.js",
       "skills.js",

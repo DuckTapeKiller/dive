@@ -218,6 +218,10 @@ function syncRuntimeFiles(runtimeDir) {
       required: true,
     },
   );
+  copyIfExists(path.join(appRoot, "routes"), path.join(runtimeDir, "routes"), {
+    recursive: true,
+    required: true,
+  });
 }
 
 function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
