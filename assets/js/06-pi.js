@@ -63,6 +63,20 @@
         return `${m.provider || "?"}/${m.id || m.modelId || "?"}`;
       }
 
+      // Sync the side-panel thinking dropdown to Pi's actual resolved level.
+      // Pi always resolves a concrete level (e.g. "high"), so without this the
+      // static <select> would keep showing its first option ("Off") until a
+      // conversation exists and refreshPiStatus runs — which is exactly the
+      // "shows only Off by default" symptom.
+      function syncPiThinkingSelect(level) {
+        if (!level) return;
+        const sel = document.getElementById("sidePiThinkSelect");
+        if (!sel || sel.value === level) return;
+        if (![...sel.options].some((o) => o.value === level)) return;
+        sel.value = level;
+        if (typeof syncCustomSelect === "function") syncCustomSelect(sel);
+      }
+
       async function loadPiTopbarModels() {
         try {
           const payload = await callPiCommand({ type: "get_available_models" });
@@ -71,6 +85,9 @@
             const st = await callPiCommand({ type: "get_state" });
             const m = st?.result?.data?.model;
             if (m) piCurrentModelValue = piModelValue(m);
+            // Initialise the thinking dropdown from Pi's real state on entry,
+            // before any conversation exists.
+            syncPiThinkingSelect(st?.result?.data?.thinkingLevel);
           } catch (_e) {}
           if (mode === "pi") populateTopbarModelSelect();
         } catch (_e) {}
