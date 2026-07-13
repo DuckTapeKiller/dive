@@ -3195,8 +3195,23 @@
         let sessionId = null;
         let finalResponse = "";
 
+        // On interrupt the server closes the NDJSON stream cleanly, so
+        // reader.read() returns {done:true} instead of throwing. Detect the
+        // aborted signal and raise an AbortError so the caller takes the
+        // cancellation branch (which always writes "Request cancelled by
+        // user.") instead of the normal-completion path that would leave an
+        // empty assistant bubble.
+        const throwIfAborted = () => {
+          if (signal && signal.aborted) {
+            const err = new Error("Pi request aborted by user.");
+            err.name = "AbortError";
+            throw err;
+          }
+        };
+
         while (true) {
           const { done, value } = await reader.read();
+          throwIfAborted();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
@@ -3300,6 +3315,8 @@
             }
           }
         }
+
+        throwIfAborted();
 
         if (buffer.trim()) {
           try {
