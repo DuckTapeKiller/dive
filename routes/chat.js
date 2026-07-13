@@ -17,6 +17,7 @@ const {
   skillRequiresShellConfirmation,
 } = require("../skills.js");
 const { getMcpOllamaTools, executeMcpTool } = require("../mcp.js");
+const { getPluginToolDefs } = require("../plugins.js");
 
 module.exports = function createChatDomain(deps) {
   const {
@@ -918,7 +919,11 @@ module.exports = function createChatDomain(deps) {
       (skill) =>
         skill && typeof skill.name === "string" && skill.name.trim().length > 0,
     );
-    if (!enabledSkills.length && !customSkills.length) return "";
+    const pluginSkills = getPluginToolDefs().filter(
+      (skill) => skillsConfig[skill.function.name] !== false,
+    );
+    if (!enabledSkills.length && !customSkills.length && !pluginSkills.length)
+      return "";
 
     const lines = [
       "### SKILLS & TOOL USAGE (MANDATORY)",
@@ -950,6 +955,12 @@ module.exports = function createChatDomain(deps) {
         const example = CLOUD_SKILL_EXAMPLES[name] || "{}";
         lines.push(
           `${index}. **${name}:** ${skill.function.description}\n   - Example: <call:${name}>${example}</call>`,
+        );
+        index += 1;
+      }
+      for (const pluginSkill of pluginSkills) {
+        lines.push(
+          `${index}. **${pluginSkill.function.name}:** ${pluginSkill.function.description}\n   - Example: <call:${pluginSkill.function.name}>{}</call>`,
         );
         index += 1;
       }
@@ -1046,6 +1057,10 @@ module.exports = function createChatDomain(deps) {
         },
       },
     }));
+    for (const pluginTool of getPluginToolDefs()) {
+      if (skillsConfig[pluginTool.function.name] === false) continue;
+      tools.push(pluginTool);
+    }
     for (const custom of loadCustomSkills()) {
       if (!custom || typeof custom.name !== "string" || !custom.name.trim()) {
         continue;

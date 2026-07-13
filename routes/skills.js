@@ -5,6 +5,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { PLUGINS_DIR, listPlugins, loadPlugins } = require("../plugins.js");
 
 module.exports = function createSkillsDomain(deps) {
   const {
@@ -20,6 +21,21 @@ module.exports = function createSkillsDomain(deps) {
 
   async function handleRequest(ctx) {
     const { req, urlPath, send } = ctx;
+
+    if (req.method === "GET" && urlPath === "/api/plugins") {
+      send(200, { directory: PLUGINS_DIR, plugins: listPlugins() });
+      return true;
+    }
+
+    if (req.method === "POST" && urlPath === "/api/plugins/reload") {
+      try {
+        const plugins = loadPlugins();
+        send(200, { ok: true, directory: PLUGINS_DIR, plugins });
+      } catch (e) {
+        send(500, { error: e.message });
+      }
+      return true;
+    }
 
     if (req.method === "GET" && urlPath === "/api/custom-skills") {
       send(200, loadCustomSkills());
@@ -174,6 +190,10 @@ module.exports = function createSkillsDomain(deps) {
         }
 
         const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
+        for (const plugin of listPlugins()) {
+          for (const skillName of plugin.skills)
+            VALID_SKILL_KEYS.add(skillName);
+        }
         const filtered = Object.fromEntries(
           Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k)),
         );

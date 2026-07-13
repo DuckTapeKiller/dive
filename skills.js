@@ -1,4 +1,5 @@
 const https = require("https");
+const { executePluginSkill } = require("./plugins.js");
 const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
@@ -2073,6 +2074,11 @@ async function executeSkill(toolCall, context = {}) {
       }
       return await executeShellCommand(args);
     default: {
+      // Plugin skills (loaded from ~/dive/plugins) take precedence over the
+      // UI-defined custom skills; executePluginSkill returns null when no
+      // plugin registered this name.
+      const pluginResult = await executePluginSkill(name, args, context);
+      if (pluginResult !== null) return pluginResult;
       try {
         const skill = findCustomSkill(name, context.dataDir);
         if (skill) {
