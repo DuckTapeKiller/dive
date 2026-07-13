@@ -1485,6 +1485,9 @@
           librarySources || [],
           metadata,
         );
+        // A finalized turn has no tool executing, so strip any stale drum
+        // first — otherwise it would keep an otherwise-empty bubble alive.
+        removeDrumIcon(session.streamingAssistantDiv);
         // Never leave a blank assistant husk behind: a turn that ended with no
         // text (aborted before output, tool-only, failed) must purge its DOM
         // node rather than persist an empty bubble (issue 2.2).
