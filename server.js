@@ -2864,7 +2864,7 @@ const server = http.createServer(async (req, res) => {
 
   if (
     (await conversationsDomain.handleRequest({ req, urlPath, send })) ||
-    (await promptsDomain.handleRequest({ req, urlPath, send }))
+    (await promptsDomain.handleRequest({ req, urlPath, requestUrl, send }))
   ) {
     return;
   }
@@ -3015,6 +3015,7 @@ const server = http.createServer(async (req, res) => {
 
 loadConvTombstones();
 migrateLegacyConversations();
+require("./skills.js").migrateLegacyLessons(DATA_DIR);
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log("Running securely on http://127.0.0.1:" + PORT);
