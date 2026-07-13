@@ -2498,10 +2498,17 @@ const server = http.createServer(async (req, res) => {
         ".jpeg": "image/jpeg",
         ".gif": "image/gif",
         ".webp": "image/webp",
+        ".js": "text/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
       };
+      // App code (split client JS/CSS) must never be cached across app
+      // updates; images keep the long immutable cache.
+      const isAppCode = ext === ".js" || ext === ".css";
       res.writeHead(200, {
         "Content-Type": mimeMap[ext] || "application/octet-stream",
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": isAppCode
+          ? "no-cache"
+          : "public, max-age=31536000, immutable",
       });
       res.end(buffer);
     } catch (error) {

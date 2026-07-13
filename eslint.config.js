@@ -38,4 +38,20 @@ module.exports = [
       "no-constant-condition": ["error", { checkLoops: false }],
     },
   },
+  {
+    // Split client files: sequential classic scripts sharing one global
+    // scope. Per-file analysis cannot see cross-file symbols, so the
+    // undef/unused rules only produce noise here; the jsdom boot tests
+    // verify the recomposed whole.
+    files: ["assets/js/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "script",
+    },
+    rules: {
+      "no-undef": "off",
+      "no-unused-vars": "off",
+      "no-constant-condition": ["error", { checkLoops: false }],
+    },
+  },
 ];

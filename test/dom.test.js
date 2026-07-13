@@ -3,7 +3,14 @@ const assert = require("node:assert");
 const fs = require("fs");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
-const html = fs.readFileSync("index.html", "utf8");
+// jsdom does not fetch external scripts; inline the split client files the
+// same way the browser composes them (sequential classic scripts).
+const html = fs
+  .readFileSync("index.html", "utf8")
+  .replace(
+    /<script src="\/assets\/(js\/[^"]+)"><\/script>/g,
+    (_m, rel) => `<script>${fs.readFileSync(`assets/${rel}`, "utf8")}</script>`,
+  );
 
 function jsonResponse(payload, status = 200) {
   const text = JSON.stringify(payload);
