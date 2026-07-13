@@ -2085,9 +2085,15 @@
         font-family: inherit;
         border-radius: 0 !important;
       }
+      /* Code blocks carry a FIXED dark surface in every theme (light and
+         dark alike). The syntax-highlight token palette below is tuned for
+         this dark backdrop, so keeping the surface constant guarantees the
+         colours are always legible — they washed out on the light themes'
+         mid-tone --bg-inverse. This is the atom-one-dark background/foreground
+         the token hues were designed against. */
       .msg.assistant pre {
-        background: var(--bg-inverse);
-        color: var(--text-inverse);
+        background: #282c34;
+        color: #abb2bf;
         padding: 10px;
         margin-bottom: 0.8em;
         overflow-x: auto;
@@ -2099,12 +2105,19 @@
         color: inherit;
         border-radius: 0 !important;
       }
+      /* Same fixed dark code surface inside execution-trace and subagent
+         blocks, so any fenced code there is equally legible across themes. */
+      .thinking-details-body pre,
+      .pi-widget-block pre {
+        background: #282c34;
+        color: #abb2bf;
+        padding: 8px 10px;
+        overflow-x: auto;
+      }
       /* Syntax highlighting (issue 2.3). highlight.js emits .hljs-* token
-         spans; these mid-tone hues stay legible on both light and dark code
-         surfaces (code blocks carry their own --bg-inverse background), so
-         they read correctly across every palette without a per-theme sheet. */
+         spans; the palette is tuned for the fixed dark code surface above. */
       .hljs {
-        color: var(--text-inverse);
+        color: #abb2bf;
         background: transparent;
       }
       .hljs-comment,
