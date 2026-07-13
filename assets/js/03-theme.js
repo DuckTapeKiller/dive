@@ -3139,6 +3139,29 @@
         onEvent,
         images,
       ) {
+        // Terminal parity (issue 1.3): pressing Stop must actually halt Pi,
+        // not just close the HTTP stream. Send a real `abort` RPC command to
+        // the Pi process the instant the user cancels — equivalent to Esc in
+        // the Pi terminal. Fire-and-forget: the stream teardown proceeds
+        // regardless of the command's result.
+        if (signal && typeof signal.addEventListener === "function") {
+          signal.addEventListener(
+            "abort",
+            () => {
+              try {
+                fetch(apiUrl("/api/pi/command"), {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    conv: saveConv || currentConvId,
+                    command: { type: "abort" },
+                  }),
+                }).catch(() => {});
+              } catch (_e) {}
+            },
+            { once: true },
+          );
+        }
         const res = await fetch(apiUrl("/api/pi/stream"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },

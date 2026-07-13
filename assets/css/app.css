@@ -2099,6 +2099,68 @@
         color: inherit;
         border-radius: 0 !important;
       }
+      /* Syntax highlighting (issue 2.3). highlight.js emits .hljs-* token
+         spans; these mid-tone hues stay legible on both light and dark code
+         surfaces (code blocks carry their own --bg-inverse background), so
+         they read correctly across every palette without a per-theme sheet. */
+      .hljs {
+        color: var(--text-inverse);
+        background: transparent;
+      }
+      .hljs-comment,
+      .hljs-quote {
+        color: #7f848e;
+        font-style: italic;
+      }
+      .hljs-keyword,
+      .hljs-selector-tag,
+      .hljs-doctag,
+      .hljs-formula {
+        color: #c678dd;
+      }
+      .hljs-section,
+      .hljs-name,
+      .hljs-selector-id,
+      .hljs-selector-class {
+        color: #e06c75;
+      }
+      .hljs-string,
+      .hljs-regexp,
+      .hljs-addition,
+      .hljs-attribute,
+      .hljs-meta .hljs-string {
+        color: #98c379;
+      }
+      .hljs-number,
+      .hljs-literal,
+      .hljs-variable,
+      .hljs-template-variable,
+      .hljs-type,
+      .hljs-params {
+        color: #d19a66;
+      }
+      .hljs-title,
+      .hljs-title.function_,
+      .hljs-built_in,
+      .hljs-builtin-name {
+        color: #61afef;
+      }
+      .hljs-symbol,
+      .hljs-bullet,
+      .hljs-link,
+      .hljs-meta,
+      .hljs-attr {
+        color: #56b6c2;
+      }
+      .hljs-deletion {
+        color: #e06c75;
+      }
+      .hljs-emphasis {
+        font-style: italic;
+      }
+      .hljs-strong {
+        font-weight: 700;
+      }
       .msg.assistant blockquote {
         border-left: var(--border-width) solid var(--border-color);
         padding-left: 10px;
@@ -2208,13 +2270,16 @@
       }
       .pi-widget-block {
         margin: 0;
-        padding: 8px 10px;
-        background: var(--bg-secondary);
+        padding: 10px 12px;
+        /* Distinct subagent surface: tinted with the accent so it reads as a
+           separate block from the main background and message bubbles, derived
+           from theme variables so it adapts to every palette (issue 1.2). */
+        background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+        border-left: 3px solid
+          color-mix(in srgb, var(--accent) 55%, transparent);
         color: var(--text-normal);
-        font-family: "Space Mono", monospace;
-        font-size: calc(11px * var(--font-scale, 1));
-        line-height: 1.45;
-        white-space: pre-wrap;
+        font-size: calc(12px * var(--font-scale, 1));
+        line-height: 1.5;
         word-break: break-word;
         overflow-x: auto;
         max-height: 320px;
@@ -2223,6 +2288,24 @@
           background 0.2s,
           color 0.2s,
           opacity 0.2s;
+      }
+      /* Rendered-markdown spacing inside subagent + trace blocks. */
+      .pi-widget-block > *:first-child,
+      .thinking-details-body > *:first-child {
+        margin-top: 0;
+      }
+      .pi-widget-block > *:last-child,
+      .thinking-details-body > *:last-child {
+        margin-bottom: 0;
+      }
+      .pi-widget-block p,
+      .pi-widget-block ul,
+      .pi-widget-block ol {
+        margin: 4px 0;
+      }
+      .pi-widget-block pre,
+      .pi-widget-block code {
+        font-family: "Space Mono", monospace;
       }
       .pi-widget-block.finished {
         opacity: 0.55;

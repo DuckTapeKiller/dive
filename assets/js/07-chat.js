@@ -1,3 +1,66 @@
+      // Live cross-client sync (issue 2.1): subscribe to the server's global
+      // event channel. When ANY client (this app or a browser tab) saves a
+      // conversation, refresh the history/side-panel here, and if that same
+      // conversation is open in this client, re-pull and re-render it — unless
+      // this client is mid-stream on that conversation, in which case the
+      // local live render wins and we skip to avoid clobbering it.
+      let globalAppEventSource = null;
+      function subscribeToGlobalAppEvents() {
+        try {
+          if (globalAppEventSource) globalAppEventSource.close();
+          globalAppEventSource = new EventSource(apiUrl("/api/events/global"));
+          globalAppEventSource.onmessage = (msg) => {
+            let evt;
+            try {
+              evt = JSON.parse(msg.data);
+            } catch (_e) {
+              return;
+            }
+            if (evt.type === "conversation_saved") {
+              handleRemoteConversationSaved(evt);
+            }
+          };
+        } catch (_e) {
+          /* EventSource unavailable — sync simply stays manual */
+        }
+      }
+
+      function handleRemoteConversationSaved(evt) {
+        // Keep the recent list and open History panel current everywhere.
+        if (typeof refreshSidePanelRecent === "function") {
+          refreshSidePanelRecent();
+        }
+        if (historyOpen && typeof loadHistoryPanel === "function") {
+          loadHistoryPanel();
+        }
+        // Re-render the open conversation only when it is the one that changed
+        // and this client is not itself streaming it right now.
+        if (!evt.id || evt.id !== currentConvId || evt.mode !== mode) return;
+        const session = getActiveModeSession(mode);
+        if (session.activeAbortController) return; // local run owns the view
+        if (mode === "pi" && typeof piChannelRun !== "undefined" && piChannelRun)
+          return;
+        reloadOpenConversationFromServer(evt.id);
+      }
+
+      async function reloadOpenConversationFromServer(convId) {
+        try {
+          const res = await fetch(
+            apiUrl(`/api/conversations/id/${encodeURIComponent(convId)}`),
+          );
+          if (!res.ok) return;
+          const conv = await res.json();
+          if (!conv || conv.id !== currentConvId) return;
+          const session = getActiveModeSession(mode);
+          if (session.activeAbortController) return;
+          session.history = Array.isArray(conv.history) ? conv.history : [];
+          history = [...session.history];
+          renderSessionTranscript(session);
+        } catch (_e) {
+          /* transient fetch failure — next event will retry */
+        }
+      }
+
       async function sendMessage() {
         const runMode = mode;
         const runSession = getActiveModeSession(runMode);
@@ -23,6 +86,12 @@
         if (!currentConvId) currentConvId = "conv_" + Date.now();
         runSession.convId = currentConvId;
         const runConvId = currentConvId;
+        // Absolute turn isolation (issues 1.5 / 2.2): every new query starts
+        // from a clean stream state. Commit or discard any lingering draft or
+        // background Pi-channel continuation BEFORE this turn creates its own
+        // bubble, so the incoming stream can never inherit a prior assistant
+        // DOM node or leave the new user message orphaned.
+        beginIsolatedTurn(runSession, runMode);
         if (runMode === "pi") ensurePiEventChannel();
 
         let displayText = text;
@@ -1068,9 +1137,25 @@
         counterEl.textContent = `Tokens: ${state.used} / ${totalStr}`;
       }
 
+      // Generation is "active" while a foreground stream is attached OR a Pi
+      // background continuation (async subagent wake / retry) is still running
+      // on the channel. The Stop button must stay visible for both, or the
+      // user sees Send while Pi is still working (issue 1.3).
+      function isGenerationActive() {
+        if (getActiveAbortController()) return true;
+        if (
+          mode === "pi" &&
+          typeof piChannelRun !== "undefined" &&
+          piChannelRun
+        ) {
+          return true;
+        }
+        return false;
+      }
+
       function updateSendButtonState() {
         const sendBtn = document.getElementById("send");
-        if (getActiveAbortController()) {
+        if (isGenerationActive()) {
           sendBtn.innerHTML = STOP_ICON;
           sendBtn.setAttribute("aria-label", "Stop response");
           sendBtn.setAttribute("title", "Stop response");
@@ -1083,14 +1168,44 @@
         }
       }
 
-      document.getElementById("send").addEventListener("click", () => {
+      // Stop whatever is generating: a live stream (abort its controller) or a
+      // Pi background continuation (send a real abort RPC + close the channel
+      // run). Returns true if it stopped something.
+      function stopActiveGeneration() {
         const controller = getActiveAbortController();
         if (controller) {
           if (activePiPermissionRequest) {
             resolvePiPermission({ cancelled: true });
           }
           controller.abort();
-        } else {
+          return true;
+        }
+        if (
+          mode === "pi" &&
+          typeof piChannelRun !== "undefined" &&
+          piChannelRun
+        ) {
+          fetch(apiUrl("/api/pi/command"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conv: currentConvId,
+              command: { type: "abort" },
+            }),
+          }).catch(() => {});
+          if (typeof finalizePiChannelRun === "function") {
+            try {
+              finalizePiChannelRun();
+            } catch (_e) {}
+          }
+          updateSendButtonState();
+          return true;
+        }
+        return false;
+      }
+
+      document.getElementById("send").addEventListener("click", () => {
+        if (!stopActiveGeneration()) {
           sendMessage();
         }
       });
@@ -1118,13 +1233,7 @@
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          const controller = getActiveAbortController();
-          if (controller) {
-            if (activePiPermissionRequest) {
-              resolvePiPermission({ cancelled: true });
-            }
-            controller.abort();
-          } else {
+          if (!stopActiveGeneration()) {
             sendMessage();
           }
         }
@@ -1796,6 +1905,7 @@
           btn_saveBookSearch.addEventListener("click", saveBookSearchConfigUi);
         }
         await __timed("loadOllamaSkillsConfig", loadOllamaSkillsConfig);
+        subscribeToGlobalAppEvents();
         __bootTimings.push({
           label: "__boot_total",
           ms: Math.round(performance.now() - __appLoadStart),

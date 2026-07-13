@@ -82,6 +82,17 @@ const VENDOR_SCRIPT_FILES = {
         "purify.min.js",
       ),
   },
+  "/vendor/highlight.min.js": {
+    assetName: "vendor/highlight.min.js",
+    resolveFilePath: () =>
+      path.join(
+        __dirname,
+        "node_modules",
+        "@highlightjs",
+        "cdn-assets",
+        "highlight.min.js",
+      ),
+  },
 };
 const SECURITY_EVENTS_FILE = path.join(DATA_DIR, "security-events.jsonl");
 const DAEMON_LOG_FILE = path.join(DATA_DIR, "daemon.log");
@@ -288,6 +299,25 @@ function loadConversations() {
   return [];
 }
 
+// Cross-client live sync (issue 2.1): every connected client (desktop app,
+// browser) subscribes to one global SSE channel. Whenever a conversation is
+// saved — by any client or by the Pi server-side stream — a lightweight
+// signal is broadcast so the other clients refresh and, if they have that
+// same conversation open, re-render it. Turn/checkpoint granularity: Pi
+// already checkpoints mid-stream, so continuations propagate within seconds.
+const appEventClients = new Set();
+
+function broadcastAppEvent(type, payload = {}) {
+  const frame = `data: ${JSON.stringify({ type, ...payload })}\n\n`;
+  for (const res of appEventClients) {
+    try {
+      if (!res.writableEnded) res.write(frame);
+    } catch (_e) {
+      appEventClients.delete(res);
+    }
+  }
+}
+
 // SV-16: Mutex for conversation history
 let isSavingConversations = false;
 let pendingSaveConversations = null;
@@ -434,6 +464,11 @@ function upsertConversation(
     if (convs.length > MAX_CONVERSATIONS) convs.splice(MAX_CONVERSATIONS);
   }
   saveConversations(convs);
+  broadcastAppEvent("conversation_saved", {
+    id: saveConv,
+    mode,
+    origin: "server",
+  });
 }
 
 // Upsert a full conversation supplied by the client. Used to persist an
@@ -499,6 +534,7 @@ function saveClientConversation(id, title, mode, rawMessages) {
     if (convs.length > MAX_CONVERSATIONS) convs.splice(MAX_CONVERSATIONS);
   }
   saveConversations(convs);
+  broadcastAppEvent("conversation_saved", { id, mode, origin: "client" });
 }
 
 function loadCustomSkills() {
@@ -2516,6 +2552,28 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       send(500, { error: "Failed to load asset." });
     }
+    return;
+  }
+
+  // Global live-sync channel: all clients subscribe here and receive
+  // conversation-change signals from every other client (issue 2.1).
+  if (req.method === "GET" && urlPath === "/api/events/global") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(": connected\n\n");
+    appEventClients.add(res);
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": hb\n\n");
+    }, 15000);
+    heartbeat.unref?.();
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      appEventClients.delete(res);
+    });
     return;
   }
 

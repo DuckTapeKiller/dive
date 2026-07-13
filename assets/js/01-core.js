@@ -1,3 +1,66 @@
+      // Syntax highlighting (issue 2.3): teach marked to run highlight.js over
+      // fenced code blocks so the renderer emits `hljs`-classed spans. The
+      // colours come from a theme-adaptive stylesheet in app.css, so no CDN
+      // stylesheet is needed and the CSP stays intact. Guarded so the app
+      // still renders if either vendor script failed to load.
+      (function configureMarkedHighlighting() {
+        if (typeof marked === "undefined") return;
+        if (typeof hljs === "undefined") return;
+        const highlight = (code, lang) => {
+          try {
+            if (lang && hljs.getLanguage(lang)) {
+              return hljs.highlight(code, {
+                language: lang,
+                ignoreIllegals: true,
+              }).value;
+            }
+            return hljs.highlightAuto(code).value;
+          } catch (_e) {
+            return null;
+          }
+        };
+        const escapeHtml = (s) =>
+          String(s).replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+        try {
+          // marked v18: renderer.code receives a token object. Return a
+          // pre/code with hljs classes so app.css colours it.
+          marked.use({
+            renderer: {
+              code(tokenOrCode, maybeLang) {
+                const text =
+                  typeof tokenOrCode === "object"
+                    ? tokenOrCode.text
+                    : tokenOrCode;
+                const lang =
+                  typeof tokenOrCode === "object"
+                    ? tokenOrCode.lang
+                    : maybeLang;
+                const language = (lang || "").match(/\S*/)[0] || "";
+                const highlighted = highlight(text, language);
+                const cls = language
+                  ? `hljs language-${language}`
+                  : "hljs";
+                const inner =
+                  highlighted != null ? highlighted : escapeHtml(text);
+                return `<pre><code class="${cls}">${inner}</code></pre>\n`;
+              },
+            },
+          });
+        } catch (_e) {
+          /* renderer override unsupported — code still renders unstyled */
+        }
+      })();
+
       const __appLoadStart =
         typeof performance !== "undefined" ? performance.now() : 0;
       const __bootTimings = [];
