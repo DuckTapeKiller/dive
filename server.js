@@ -515,6 +515,8 @@ function loadCustomSkills() {
 function defaultSkillsConfig() {
   return {
     shell_command: false,
+    remember_lesson: true,
+    propose_plugin: false,
     wikipedia: true,
     book_search: true,
     britannica: true,

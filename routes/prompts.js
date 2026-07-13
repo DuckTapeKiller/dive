@@ -50,8 +50,36 @@ module.exports = function createPromptsDomain(deps) {
     }
   }
 
+  const LESSONS_FILE = path.join(DATA_DIR, "lessons.md");
+
   async function handleRequest(ctx) {
     const { req, urlPath, send } = ctx;
+
+    if (req.method === "GET" && urlPath === "/api/lessons") {
+      let text = "";
+      try {
+        text = fs.readFileSync(LESSONS_FILE, "utf8");
+      } catch {
+        text = "";
+      }
+      send(200, { text, path: LESSONS_FILE });
+      return true;
+    }
+
+    if (req.method === "POST" && urlPath === "/api/lessons") {
+      try {
+        const body = await parseJsonBody(req);
+        if (!body || typeof body.text !== "string") {
+          send(400, { error: "text field required" });
+          return true;
+        }
+        fs.writeFileSync(LESSONS_FILE, body.text.slice(0, 100000), "utf8");
+        send(200, { ok: true });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
 
     if (req.method === "GET" && urlPath === "/api/prompts") {
       send(200, loadPrompts());

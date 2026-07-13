@@ -14,6 +14,7 @@ const {
 } = require("../slash_commands.js");
 const {
   executeSkill,
+  readLessons,
   skillRequiresShellConfirmation,
 } = require("../skills.js");
 const { getMcpOllamaTools, executeMcpTool } = require("../mcp.js");
@@ -1222,7 +1223,16 @@ module.exports = function createChatDomain(deps) {
   }
 
   function getSharedAssistantPolicyPrompt(databaseEnabled = false) {
-    return databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT;
+    const base = databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT;
+    // User-taught lessons (~/dive/lessons.md, managed via the remember_lesson
+    // skill or Settings > Skills > Lessons) apply to every non-Pi chat.
+    const lessons = readLessons(DATA_DIR);
+    if (!lessons) return base;
+    return (
+      base +
+      "\n\nLEARNED LESSONS — standing instructions the user taught you in past conversations. Follow them unless the current request explicitly overrides them:\n" +
+      lessons
+    );
   }
 
   const DB_OFF_POLICY_PROMPT = `You are an academic and concise assistant. You get straight to the point. Never use emojis.

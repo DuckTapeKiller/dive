@@ -639,6 +639,8 @@
       }
       const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
         shell_command: false,
+        remember_lesson: true,
+        propose_plugin: false,
         wikipedia: true,
         book_search: true,
         britannica: true,
@@ -654,6 +656,14 @@
       });
       let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
       const ALL_BUILTIN_SKILLS_INFO = {
+        remember_lesson: {
+          desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply to every future non-Pi chat and are editable under Lessons below.",
+          example: '{"lesson": "Always use British spelling."}',
+        },
+        propose_plugin: {
+          desc: "Lets the model DRAFT new plugins (skills) for this app. Drafts are inert until you approve them under Plugins > Drafts. Off by default.",
+          example: '{"name": "weather-lookup"}',
+        },
         wikipedia: {
           desc: "Searches Wikipedia for factual information and summaries.",
           example: '{"query": "Bob Dylan"}',

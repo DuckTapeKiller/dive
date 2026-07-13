@@ -1303,6 +1303,52 @@ When asked about these relationships, ALWAYS query both words and explain the di
   {
     type: "function",
     function: {
+      name: "remember_lesson",
+      description:
+        "Permanently saves a short lesson, correction, or preference the user taught you (e.g. formatting rules, terminology, standing instructions). The lesson is injected into your system prompt in every future conversation. Use when the user corrects you or says something like 'remember this' or 'from now on'.",
+      parameters: {
+        type: "object",
+        properties: {
+          lesson: {
+            type: "string",
+            description:
+              "The lesson as one short imperative sentence, e.g. 'Always answer in Spanish unless asked otherwise.'",
+          },
+        },
+        required: ["lesson"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "propose_plugin",
+      description:
+        "Drafts a new Dive plugin (a reusable skill) for the user to review. The draft is saved DISABLED and only becomes active after the user approves it in Settings > Skills > Plugins. Use when the user asks you to build a new tool/skill/capability for the app.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Plugin name in kebab-case, e.g. 'weather-lookup'",
+          },
+          description: {
+            type: "string",
+            description: "One sentence: what the plugin does.",
+          },
+          code: {
+            type: "string",
+            description:
+              "Complete CommonJS module source for index.js following the Dive plugin format: module.exports = { skills: [{ name, description, parameters, async execute(args, context) { ... } }] }. No external npm dependencies.",
+          },
+        },
+        required: ["name", "description", "code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "local_notes",
       description: "Reads or appends to your local notes file.",
       parameters: {
@@ -2036,6 +2082,87 @@ async function executeBookSearch(
   }
 }
 
+const LESSONS_HEADER =
+  '# Lessons\n\nLines starting with "- " are injected into the system prompt of every non-Pi chat. Edit or delete freely.\n';
+
+function lessonsFilePath(dataDir) {
+  return path.join(dataDir, "lessons.md");
+}
+
+function readLessons(dataDir) {
+  try {
+    const text = fs.readFileSync(lessonsFilePath(dataDir), "utf8");
+    return text
+      .split("\n")
+      .filter((line) => line.trim().startsWith("- "))
+      .join("\n");
+  } catch {
+    return "";
+  }
+}
+
+async function executeRememberLesson(args, dataDir) {
+  if (!dataDir) return "Error: no data directory available.";
+  const lesson = String(args.lesson || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!lesson) return "Error: lesson text is required.";
+  if (lesson.length > 500) {
+    return "Error: keep lessons under 500 characters.";
+  }
+  const file = lessonsFilePath(dataDir);
+  let current = "";
+  try {
+    current = fs.readFileSync(file, "utf8");
+  } catch {
+    current = LESSONS_HEADER;
+  }
+  const entry = `- ${lesson}`;
+  if (current.includes(entry)) {
+    return `Already remembered: "${lesson}"`;
+  }
+  fs.writeFileSync(file, current.trimEnd() + "\n" + entry + "\n", "utf8");
+  return `Remembered: "${lesson}" — this now applies to every future conversation. The user can edit or remove lessons in Settings > Skills > Lessons.`;
+}
+
+async function executeProposePlugin(args, dataDir) {
+  if (!dataDir) return "Error: no data directory available.";
+  const rawName = String(args.name || "").toLowerCase();
+  const name = rawName
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!name) return "Error: a kebab-case plugin name is required.";
+  const code = String(args.code || "");
+  if (!code.includes("module.exports")) {
+    return "Error: code must be a CommonJS module (module.exports = { skills: [...] }).";
+  }
+  try {
+    // Syntax check without executing.
+    new (require("vm").Script)(code, { filename: `${name}/index.js` });
+  } catch (e) {
+    return `Error: the plugin code has a syntax error: ${e.message}`;
+  }
+  const draftDir = path.join(dataDir, "plugin-drafts", name);
+  fs.mkdirSync(draftDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(draftDir, "plugin.json"),
+    JSON.stringify(
+      {
+        name,
+        description: String(args.description || ""),
+        version: "0.1.0",
+        draftedBy: "model",
+        draftedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(path.join(draftDir, "index.js"), code, "utf8");
+  return `Draft plugin "${name}" saved. It is NOT active. Tell the user to review and approve it under Settings > Skills > Plugins > Drafts.`;
+}
+
 async function executeSkill(toolCall, context = {}) {
   const name = toolCall.function.name;
   let args = {};
@@ -2066,6 +2193,10 @@ async function executeSkill(toolCall, context = {}) {
       return await executeCalculator(args);
     case "local_notes":
       return await executeLocalNotes(args, context.dataDir);
+    case "remember_lesson":
+      return await executeRememberLesson(args, context.dataDir);
+    case "propose_plugin":
+      return await executeProposePlugin(args, context.dataDir);
     case "time_and_date":
       return await executeTimeAndDate(args);
     case "shell_command":
@@ -2110,6 +2241,7 @@ async function executeSkill(toolCall, context = {}) {
 }
 
 module.exports = {
+  readLessons,
   ALL_SKILLS,
   executeSkill,
   skillRequiresShellConfirmation,

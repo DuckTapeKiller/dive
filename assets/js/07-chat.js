@@ -1347,6 +1347,7 @@
         appendSettingsGroups("settingsTabSkills", [
           "builtinSkillsGroup",
           "pluginsGroup",
+          "lessonsGroup",
           "customSkillsGroup",
           "bookSearchConfigGroup",
         ]);
