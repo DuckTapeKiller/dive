@@ -4,6 +4,10 @@
       // conversation is open in this client, re-pull and re-render it — unless
       // this client is mid-stream on that conversation, in which case the
       // local live render wins and we skip to avoid clobbering it.
+      // Stable per-tab identity so this client can recognise (and ignore) the
+      // broadcast echoes of its own saves.
+      const APP_CLIENT_ID = `client_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
       let globalAppEventSource = null;
       function subscribeToGlobalAppEvents() {
         try {
@@ -16,7 +20,10 @@
             } catch (_e) {
               return;
             }
-            if (evt.type === "conversation_saved") {
+            if (
+              evt.type === "conversation_saved" ||
+              evt.type === "conversation_deleted"
+            ) {
               handleRemoteConversationSaved(evt);
             }
           };
@@ -26,6 +33,8 @@
       }
 
       function handleRemoteConversationSaved(evt) {
+        // Ignore echoes of this client's own saves entirely.
+        if (evt.clientId && evt.clientId === APP_CLIENT_ID) return;
         // Keep the recent list and open History panel current everywhere.
         if (typeof refreshSidePanelRecent === "function") {
           refreshSidePanelRecent();
@@ -33,6 +42,7 @@
         if (historyOpen && typeof loadHistoryPanel === "function") {
           loadHistoryPanel();
         }
+        if (evt.type === "conversation_deleted") return;
         // Re-render the open conversation only when it is the one that changed
         // and this client is not itself streaming it right now.
         if (!evt.id || evt.id !== currentConvId || evt.mode !== mode) return;
@@ -40,6 +50,11 @@
         if (session.activeAbortController) return; // local run owns the view
         if (mode === "pi" && typeof piChannelRun !== "undefined" && piChannelRun)
           return;
+        // Grace window: server-side saves of THIS client's just-finished or
+        // just-aborted run (which carry no clientId) must not clobber the
+        // locally rendered state — the local view is authoritative right
+        // after its own run.
+        if (Date.now() - (session.lastRunEndedAt || 0) < 3000) return;
         reloadOpenConversationFromServer(evt.id);
       }
 
@@ -1189,7 +1204,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              conv: currentConvId,
+              saveConv: currentConvId,
               command: { type: "abort" },
             }),
           }).catch(() => {});
@@ -1452,6 +1467,7 @@
         appendSettingsGroups("settingsTabPrompts", [
           "promptSettingsGroup",
           "promptManageGroup",
+          "systemPromptsGroup",
         ]);
         appendSettingsGroups("settingsTabSkills", [
           "builtinSkillsGroup",

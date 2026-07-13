@@ -1370,7 +1370,7 @@ module.exports = function createPiDomain(deps) {
         if (!res.writableEnded) res.write(": hb\n\n");
       }, 15000);
       heartbeat.unref?.();
-      req.on("close", () => {
+      res.on("close", () => {
         clearInterval(heartbeat);
         subscribers.delete(res);
         if (subscribers.size === 0) piEventChannels.delete(convId);
@@ -1406,6 +1406,20 @@ module.exports = function createPiDomain(deps) {
           !ALLOWED_PI_COMMANDS.has(command.type)
         ) {
           send(400, { error: "Unsupported Pi command" });
+          return;
+        }
+        // `abort` targets a RUNNING generation: never spawn a fresh Pi
+        // process just to abort nothing — that both misses the real target
+        // and leaks a new process. Absent process = nothing to stop = ok.
+        if (command.type === "abort") {
+          const existing = piConvProcesses.get(convId);
+          if (!existing) {
+            send(200, { ok: true, result: { success: true, noop: true } });
+            return;
+          }
+          if (existing.queue) existing.queue.length = 0;
+          const result = await sendPiCommand(existing, command, 5000);
+          send(200, { ok: result?.success !== false, result });
           return;
         }
         const convProc = getOrCreatePiConvProcess(convId, loadPiSettings());
@@ -1756,10 +1770,24 @@ module.exports = function createPiDomain(deps) {
             persistTimer = null;
           }
           if (session && piRpcSessions.has(session.id)) {
-            // The client went away mid-run (stop button, app closed, reload):
-            // checkpoint whatever the turn produced so far before tearing down.
-            if (!session.done && typeof persistPartial === "function") {
-              persistPartial();
+            // The client went away mid-run (stop button, app closed, reload).
+            // Stop MUST stop: send a real abort RPC to the Pi process
+            // (terminal Esc parity) and drop any queued follow-up prompts,
+            // otherwise Pi keeps generating server-side and the finished
+            // answer resurrects through the SSE channel and checkpoints.
+            if (!session.done) {
+              if (convProc?.queue) convProc.queue.length = 0;
+              try {
+                sendPiCommand(convProc, { type: "abort" }, 5000).catch(
+                  () => {},
+                );
+              } catch (_e) {}
+              // Checkpoint whatever the turn produced so far — but only if it
+              // produced anything; an empty checkpoint would race with (and
+              // clobber) the client's own "Request cancelled" save.
+              if (typeof persistPartial === "function" && session.response) {
+                persistPartial();
+              }
             }
             cleanupPiSession(session.id, "stream_client_disconnected");
           }
@@ -1835,7 +1863,7 @@ module.exports = function createPiDomain(deps) {
         const convId = body.saveConv || "default";
         const convProc = getOrCreatePiConvProcess(convId, piSettings);
         session = sendPiPrompt(convProc, promptMessage, source);
-        req.on("close", () => {
+        res.on("close", () => {
           if (session && !res.writableEnded) {
             cleanupPiSession(session.id, "client_disconnected_start");
           }
@@ -1874,7 +1902,7 @@ module.exports = function createPiDomain(deps) {
           send(404, { error: "Pi RPC session not found or expired" });
           return;
         }
-        req.on("close", () => {
+        res.on("close", () => {
           if (sessionId && !res.writableEnded) {
             cleanupPiSession(sessionId, "client_disconnected_respond");
           }

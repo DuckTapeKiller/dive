@@ -65,6 +65,9 @@ function createFetchStub() {
     }
     if (path === "/api/plugins/drafts") return jsonResponse({ drafts: [] });
     if (path === "/api/lessons") return jsonResponse({ text: "" });
+    if (path === "/api/system-prompts") {
+      return jsonResponse({ dbOff: "", dbOn: "", lessonsApplied: false });
+    }
     if (path === "/api/cloud/settings") {
       return jsonResponse({
         settings: {

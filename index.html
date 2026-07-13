@@ -3227,6 +3227,41 @@
             <div id="customPromptsList"></div>
           </div>
 
+          <div id="systemPromptsGroup" class="setting-group">
+            <label>SYSTEM PROMPTS (TRANSPARENCY)</label>
+            <div class="setting-help">
+              These are the exact system prompts Dive sends to the model in
+              every non-Pi chat, depending on the Database Context toggle.
+              Lessons you have taught the model are appended to both.
+            </div>
+            <label style="margin-top: 10px">DATABASE DISABLED</label>
+            <pre
+              id="systemPromptDbOff"
+              style="
+                max-height: 220px;
+                overflow: auto;
+                padding: 8px 10px;
+                background: var(--flat-fill);
+                font-size: calc(11px * var(--font-scale, 1));
+                white-space: pre-wrap;
+                user-select: text;
+              "
+            ></pre>
+            <label style="margin-top: 10px">DATABASE ENABLED</label>
+            <pre
+              id="systemPromptDbOn"
+              style="
+                max-height: 220px;
+                overflow: auto;
+                padding: 8px 10px;
+                background: var(--flat-fill);
+                font-size: calc(11px * var(--font-scale, 1));
+                white-space: pre-wrap;
+                user-select: text;
+              "
+            ></pre>
+          </div>
+
           <div id="builtinSkillsGroup" class="setting-group">
             <label>BUILT-IN SKILLS</label>
             <div class="setting-help">

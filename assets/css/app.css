@@ -2316,6 +2316,10 @@
       .pi-widget-block ol {
         margin: 4px 0;
       }
+      /* Trace lines are log entries: single-spaced, not full paragraphs. */
+      .thinking-details-body p {
+        margin: 2px 0;
+      }
       .pi-widget-block pre,
       .pi-widget-block code {
         font-family: "Space Mono", monospace;

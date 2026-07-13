@@ -3153,7 +3153,7 @@
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    conv: saveConv || currentConvId,
+                    saveConv: saveConv || currentConvId,
                     command: { type: "abort" },
                   }),
                 }).catch(() => {});
