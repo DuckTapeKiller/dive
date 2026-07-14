@@ -164,8 +164,30 @@ module.exports = function createPiDomain(deps) {
     }
   }
 
+  function storeAsyncWakeTraceEvent(session, event) {
+    if (!session?.captureTraceEvents || !event) return;
+    let skipStore = false;
+    if (event?.type === "pi_widget") {
+      if (Array.isArray(event.lines) && event.lines.length) {
+        for (let i = session.traceEvents.length - 1; i >= 0; i--) {
+          if (
+            session.traceEvents[i].type === "pi_widget" &&
+            session.traceEvents[i].key === event.key
+          ) {
+            session.traceEvents.splice(i, 1);
+          }
+        }
+      } else {
+        skipStore = true;
+      }
+    }
+    const stored = skipStore ? null : sanitizeTraceEventForStorage(event);
+    if (stored) session.traceEvents.push(stored);
+  }
+
   function emitPiSessionEvent(session, event) {
     if (!session || !event) return;
+    storeAsyncWakeTraceEvent(session, event);
     // Push to the conversation's persistent channel regardless of whether a
     // prompt stream is attached — the client dedupes by run state.
     broadcastPiConvEvent(session.convProc?.convId, event);
@@ -441,6 +463,8 @@ module.exports = function createPiDomain(deps) {
               createdAt: Date.now(),
               lastActivityAt: Date.now(),
               queued: false,
+              captureTraceEvents: true,
+              traceEvents: [],
             };
             piRpcSessions.set(captured.id, captured);
             convProc.activeRequestId = captured.id;
@@ -752,6 +776,7 @@ module.exports = function createPiDomain(deps) {
             // save the result now, since this is the only chance to.
             persistAsyncWakeTurn(convId, session.response || "", {
               thinking: session.thinking || "",
+              traceEvents: session.traceEvents || [],
             });
             cleanupPiSession(session.id, "async_wake_completed");
           }

@@ -536,11 +536,17 @@ function persistAsyncWakeTurn(convId, response, metadata = {}) {
       if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
         lastMsg.thinking = metadata.thinking;
       }
+      if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
+        lastMsg.traceEvents = metadata.traceEvents;
+      }
       lastMsg.status = "async_wake";
     } else {
       const assistantMessage = { role: "assistant", content: response };
       if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
         assistantMessage.thinking = metadata.thinking;
+      }
+      if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
+        assistantMessage.traceEvents = metadata.traceEvents;
       }
       assistantMessage.status = "async_wake";
       history.push(assistantMessage);
@@ -965,6 +971,13 @@ function defaultUiSettings() {
       lmstudio: 1,
       llamacpp: 1,
     },
+    thinkingExpanded: {
+      ollama: false,
+      pi: false,
+      cloud: false,
+      lmstudio: false,
+      llamacpp: false,
+    },
     enabledModes: ["lmstudio", "pi", "cloud"],
     defaultMode: "",
   };
@@ -980,6 +993,7 @@ function sanitizeUiSettings(rawInput) {
     palettes: { ...defaults.palettes },
     fonts: { ...defaults.fonts },
     fontScales: { ...defaults.fontScales },
+    thinkingExpanded: { ...defaults.thinkingExpanded },
     enabledModes: [...defaults.enabledModes],
     defaultMode: "",
   };
@@ -1014,6 +1028,18 @@ function sanitizeUiSettings(rawInput) {
       const value = Number(raw.fontScales[modeName]);
       if (Number.isFinite(value)) {
         next.fontScales[modeName] = Math.min(1.6, Math.max(0.7, value));
+      }
+    }
+  }
+
+  if (
+    raw.thinkingExpanded &&
+    typeof raw.thinkingExpanded === "object" &&
+    !Array.isArray(raw.thinkingExpanded)
+  ) {
+    for (const modeName of UI_SETTINGS_MODE_KEYS) {
+      if (typeof raw.thinkingExpanded[modeName] === "boolean") {
+        next.thinkingExpanded[modeName] = raw.thinkingExpanded[modeName];
       }
     }
   }

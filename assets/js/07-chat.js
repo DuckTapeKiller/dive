@@ -78,6 +78,7 @@
 
       async function sendMessage() {
         const runMode = mode;
+        const allowThinkingRemoval = runMode !== "pi";
         const runSession = getActiveModeSession(runMode);
         if (runSession.activeAbortController) return;
         let text = input.value.trim();
@@ -172,6 +173,8 @@
         const thinking = addThinking({
           live: true,
           startedAt: runSession.thinkingStartedAt,
+          modeName: runMode,
+          convId: runConvId,
         });
         runSession.thinkingController = thinking;
 
@@ -320,6 +323,7 @@
               lastUserMessage.slice(0, 40),
               (partialResponse) => {
                 if (
+                  allowThinkingRemoval &&
                   thinking?.isConnected &&
                   !thinking.hadReasoning &&
                   !thinking.hadTrace &&
@@ -363,6 +367,7 @@
               activeLibrarySources.results,
             );
             if (
+              allowThinkingRemoval &&
               thinking?.isConnected &&
               !thinking.hadReasoning &&
               !thinking.hadTrace &&
@@ -656,6 +661,7 @@
       async function regenerate(wrapEl) {
         if (!lastUserMessage || !lastSentMessage) return;
         const runMode = mode;
+        const allowThinkingRemoval = runMode !== "pi";
         const runSession = getActiveModeSession(runMode);
         if (runSession.activeAbortController) return;
         const runConvId = currentConvId || "conv_" + Date.now();
@@ -675,6 +681,8 @@
         const thinking = addThinking({
           live: true,
           startedAt: runSession.thinkingStartedAt,
+          modeName: runMode,
+          convId: runConvId,
         });
         runSession.thinkingController = thinking;
 
@@ -722,6 +730,7 @@
         };
         const handlePartial = (partialResponse) => {
           if (
+            runMode !== "pi" &&
             thinking?.isConnected &&
             !thinking.hadReasoning &&
             !thinking.hadTrace &&
@@ -831,6 +840,7 @@
               activeLibrarySources.results,
             );
             if (
+              allowThinkingRemoval &&
               thinking?.isConnected &&
               !thinking.hadReasoning &&
               !thinking.hadTrace &&
@@ -1428,6 +1438,13 @@
           resizerEl.style.display = "block";
           closePromptEditor();
           refreshDiagnostics();
+          // Lessons are per-mode: every open must snap the Lessons dropdown
+          // to the CURRENT mode and load that mode's file, or a selection
+          // made in one mode would still be showing when another mode opens
+          // Settings (boot-time loading alone left it stale).
+          if (typeof loadLessonsUi === "function") {
+            loadLessonsUi().catch(() => {});
+          }
         } else {
           panel.classList.remove("open");
           resizerEl.style.display = "none";
@@ -1835,6 +1852,9 @@
         updateThemeUI();
 
         await __timed("loadUiSettings", loadUiSettings);
+        if (typeof wireThinkingExpandedSettings === "function") {
+          wireThinkingExpandedSettings();
+        }
         loadOllamaOptionsFromStorage();
         document.getElementById("settingOllamaPalette").value = ollamaPalette;
         document.getElementById("settingPiPalette").value = piPalette;

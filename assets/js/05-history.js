@@ -806,6 +806,11 @@
           .trim();
       }
 
+      function isThinkingExpandedByDefault(modeName) {
+        if (modeName === "pi") return !!piSettings.streamThinkingExpanded;
+        return !!thinkingExpandedByMode[modeName];
+      }
+
       function addThinking(initialSnapshot = {}) {
         const wrap = document.createElement("div");
         wrap.className = "thinking-wrap";
@@ -841,7 +846,7 @@
         const debugSummary = document.createElement("summary");
         debugSummary.textContent = "Execution Trace";
         const debugBody = document.createElement("div");
-        debugBody.className = "thinking-details-body";
+        debugBody.className = "thinking-details-body execution-trace-body";
         debugBody.style.maxHeight = "220px";
         debugBody.style.overflow = "auto";
         debugBody.style.fontSize = "calc(11px * var(--font-scale, 1))";
@@ -961,29 +966,42 @@
         // answer and reasoning tokens interleave). If that happens the wrap is
         // detached; re-attach it so reasoning still renders and EXPANDS rather
         // than vanishing (issue 1.1).
+        const ownerMode = initialSnapshot.modeName || mode;
+        const ownerConvId = initialSnapshot.convId || currentConvId;
+        const isActiveView = () =>
+          mode === ownerMode &&
+          (!ownerConvId || currentConvId === ownerConvId);
+
         const ensureAttached = () => {
+          if (!isActiveView()) return false;
           if (!wrap.isConnected) {
             chat.appendChild(wrap);
           }
+          return true;
         };
         const controller = {
           addReasoningChunk(chunk) {
             if (!chunk) return;
-            ensureAttached();
+            const canRender = ensureAttached();
             if (!hasReasoning) {
               hasReasoning = true;
-              plain.style.display = "none";
-              details.style.display = "block";
-              details.open = !!piSettings.streamThinkingExpanded;
+              if (canRender) {
+                plain.style.display = "none";
+                details.style.display = "block";
+                details.open = isThinkingExpandedByDefault(ownerMode);
+              }
             }
             reasoningText += chunk;
-            body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
-            scrollChatToBottom();
+            if (canRender) {
+              body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
+              scrollChatToBottom();
+            }
           },
           setPassages(passagesArray) {
             if (!Array.isArray(passagesArray) || passagesArray.length === 0)
               return;
             currentPassages = [...passagesArray];
+            if (!isActiveView()) return;
             passagesDetails.style.display = "block";
             passagesBody.innerHTML = "";
             passagesArray.forEach((passage, idx) => {
@@ -1033,6 +1051,7 @@
           setPhase(label) {
             if (!label) return;
             currentPhase = String(label);
+            if (!isActiveView()) return;
             if (plain.style.display !== "none") {
               const s = Math.max(
                 0,
@@ -1045,10 +1064,11 @@
           },
           addTraceLine(line, opts = {}) {
             if (!line) return;
-            ensureAttached();
+            const canRender = ensureAttached();
             traceCount += 1;
             if (opts.failure) hasFailure = true;
             traceLines.push(String(line));
+            if (!canRender) return;
             debugDetails.style.display = "block";
             debugSummary.textContent = hasFailure
               ? `Execution Trace (${traceCount}, failed)`
@@ -1101,6 +1121,7 @@
             traceEvents.push(copy);
           },
           setLiveWidget(key, lines) {
+            if (!isActiveView()) return;
             if (Array.isArray(lines) && lines.length) {
               let pre = liveWidgets.get(key);
               if (!pre) {
@@ -1207,7 +1228,7 @@
             return hasReasoning;
           },
           get hadTrace() {
-            return traceLines.length > 0;
+            return traceLines.length > 0 || liveWidgets.size > 0;
           },
           get hadPassages() {
             return currentPassages.length > 0;
@@ -1239,7 +1260,7 @@
         if (hasReasoning) {
           plain.style.display = "none";
           details.style.display = "block";
-          details.open = !!piSettings.streamThinkingExpanded;
+          details.open = isThinkingExpandedByDefault(ownerMode);
           body.innerHTML = DOMPurify.sanitize(marked.parse(reasoningText));
         }
         if (traceLines.length > 0) {
@@ -1282,6 +1303,8 @@
             ...metadata,
             live: liveOptions.live === true,
             startedAt: liveOptions.startedAt,
+            modeName: liveOptions.modeName || mode,
+            convId: liveOptions.convId || session?.convId || currentConvId,
           });
           if (session) session.thinkingController = thinking;
         }
@@ -1340,6 +1363,8 @@
           renderAssistantHistoryMessage(session.draftAssistant, session, {
             live: !!session.activeAbortController,
             startedAt: session.thinkingStartedAt,
+            modeName: mode,
+            convId: session.convId || currentConvId,
           });
         }
 
@@ -1350,6 +1375,8 @@
               ...(activeThinkingSnapshot || {}),
               live: true,
               startedAt: session.thinkingStartedAt,
+              modeName: mode,
+              convId: session.convId || currentConvId,
             });
           }
           if (session.drumPending) {
@@ -1782,6 +1809,7 @@
           Number(piSettings.permissionUx?.decisionTimeoutMs) || 0;
         document.getElementById("piThinkingExpandedInput").checked =
           !!piSettings.streamThinkingExpanded;
+        thinkingExpandedByMode.pi = !!piSettings.streamThinkingExpanded;
 
         const runtimeSummary = document.getElementById("piRuntimeSummary");
         if (runtimeSummary) {
@@ -1813,6 +1841,32 @@
         const folderPath = piRuntimeInfo?.projectDir || "";
         document.getElementById("ollamaPiChatFolderPath").textContent =
           folderPath;
+      }
+
+      function wireThinkingExpandedSettings() {
+        const entries = [
+          { id: "ollamaThinkingExpandedInput", mode: "ollama" },
+          { id: "cloudThinkingExpandedInput", mode: "cloud" },
+          { id: "lmStudioThinkingExpandedInput", mode: "lmstudio" },
+          { id: "llamaCppThinkingExpandedInput", mode: "llamacpp" },
+        ];
+        entries.forEach(({ id, mode }) => {
+          const input = document.getElementById(id);
+          if (!input) return;
+          input.checked = !!thinkingExpandedByMode[mode];
+          if (input.dataset.bound === "true") return;
+          input.dataset.bound = "true";
+          input.addEventListener("change", () => {
+            thinkingExpandedByMode[mode] = input.checked;
+            localStorage.setItem(
+              `ollama-pi-chat-${mode}-thinking-expanded`,
+              String(input.checked),
+            );
+            if (typeof saveUiSettingsSoon === "function") {
+              saveUiSettingsSoon();
+            }
+          });
+        });
       }
 
       function collectPiSettingsFromForm() {
@@ -2034,10 +2088,44 @@
       }
 
       // ---- LESSONS (persistent instructions injected into system prompts) ----
+      // Lessons are STRICTLY per-mode: every load and save carries the mode
+      // from the dropdown, so one mode's lessons can never leak into another.
+      let lessonsLoadToken = 0;
+
+      function selectedLessonsMode() {
+        const sel = document.getElementById("lessonsModeSelect");
+        return sel && sel.value ? sel.value : "ollama";
+      }
+
+      async function fetchLessonsForSelectedMode() {
+        const box = document.getElementById("lessonsTextarea");
+        if (!box) return;
+        const forMode = selectedLessonsMode();
+        const token = ++lessonsLoadToken;
+        try {
+          const res = await fetch(
+            apiUrl("/api/lessons?mode=" + encodeURIComponent(forMode)),
+          );
+          const payload = await readJsonResponse(res, "Load lessons");
+          // Ignore stale responses if the dropdown changed mid-flight.
+          if (token !== lessonsLoadToken) return;
+          box.value = payload?.text || "";
+        } catch (error) {
+          console.error("Could not load lessons", error);
+        }
+      }
+
       async function loadLessonsUi() {
         const box = document.getElementById("lessonsTextarea");
         const btn = document.getElementById("lessonsSaveBtn");
+        const modeSel = document.getElementById("lessonsModeSelect");
         if (!box) return;
+        if (modeSel && !modeSel.dataset.wired) {
+          modeSel.dataset.wired = "1";
+          modeSel.addEventListener("change", () => {
+            fetchLessonsForSelectedMode().catch(() => {});
+          });
+        }
         if (btn && !btn.dataset.wired) {
           btn.dataset.wired = "1";
           btn.addEventListener("click", async () => {
@@ -2045,7 +2133,10 @@
               await fetch(apiUrl("/api/lessons"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text: box.value }),
+                body: JSON.stringify({
+                  text: box.value,
+                  mode: selectedLessonsMode(),
+                }),
               });
               btn.textContent = "SAVED";
               setTimeout(() => (btn.textContent = "SAVE LESSONS"), 1200);
@@ -2058,13 +2149,20 @@
             }
           });
         }
-        try {
-          const res = await fetch(apiUrl("/api/lessons"));
-          const payload = await readJsonResponse(res, "Load lessons");
-          box.value = payload?.text || "";
-        } catch (error) {
-          console.error("Could not load lessons", error);
+        // Default the dropdown to the app's current mode so opening Skills in
+        // LM Studio shows LM Studio's lessons (Pi has no lessons file: keep
+        // whatever mode was already selected).
+        if (
+          modeSel &&
+          modeSel.value !== mode &&
+          Array.from(modeSel.options).some((opt) => opt.value === mode)
+        ) {
+          modeSel.value = mode;
+          // The visible dropdown is a custom-select widget built from the
+          // native select: rebuild it so its trigger shows the new value.
+          if (typeof syncCustomSelect === "function") syncCustomSelect(modeSel);
         }
+        await fetchLessonsForSelectedMode();
       }
 
       // ---- MODEL-DRAFTED PLUGINS AWAITING APPROVAL ----

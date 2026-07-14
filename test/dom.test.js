@@ -64,7 +64,9 @@ function createFetchStub() {
       return jsonResponse({ directory: "/tmp/plugins", plugins: [] });
     }
     if (path === "/api/plugins/drafts") return jsonResponse({ drafts: [] });
-    if (path === "/api/lessons") return jsonResponse({ text: "" });
+    if (path === "/api/lessons" || path.startsWith("/api/lessons?")) {
+      return jsonResponse({ text: "" });
+    }
     if (path === "/api/system-prompts") {
       return jsonResponse({ dbOff: "", dbOn: "", lessonsApplied: false });
     }

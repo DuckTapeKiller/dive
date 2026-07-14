@@ -407,6 +407,8 @@
           const controller = addThinking({
             live: true,
             startedAt: session.thinkingStartedAt,
+            modeName: "pi",
+            convId: session.convId || currentConvId,
           });
           session.thinkingController = controller;
           controller.addTraceLine(
@@ -440,6 +442,12 @@
           finalizePiChannelRun();
           return;
         }
+        // Widget frames are stored by the run's controller (addEvent) and
+        // committed with the wake turn in finalizePiChannelRun. They must
+        // never be merged into the PREVIOUS assistant message: the subagent
+        // fleet always repaints under the same widget key, so a cross-turn
+        // merge deduped by key silently destroyed the prior turn's stored
+        // widget in history (and duplicated the new one).
         handleStreamEventTrace(evt, run.controller);
         if (evt.type === "thinking_delta") return;
       }

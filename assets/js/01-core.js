@@ -204,6 +204,13 @@
         lmstudio: 1,
         llamacpp: 1,
       };
+      const thinkingExpandedByMode = {
+        ollama: false,
+        pi: false,
+        cloud: false,
+        lmstudio: false,
+        llamacpp: false,
+      };
       function normalizeFontScale(value) {
         const n = Number(value);
         if (!Number.isFinite(n)) return 1;
