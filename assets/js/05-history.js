@@ -1234,8 +1234,11 @@
             return currentPassages.length > 0;
           },
         };
-        // Replay persisted tool events into the timeline (history and aborted
-        // runs re-render from their traceEvents snapshot).
+        // Replay persisted tool events into the timeline AND the per-tool
+        // progress panels (history and aborted runs re-render from their
+        // traceEvents snapshot). The panels must be rebuilt with the exact
+        // frames the live stream painted, or every tool's output block
+        // vanishes from the transcript on mode switch / history load.
         if (traceEvents.length) {
           for (const evt of traceEvents) {
             if (evt.type === "tool_start") {
@@ -1243,11 +1246,25 @@
                 evt.toolName || "tool",
                 evt.argsPreview || "",
               );
+              controller.setLiveWidget(
+                toolWidgetKey(evt),
+                toolWidgetStartLines(evt),
+              );
+            } else if (evt.type === "tool_update") {
+              controller.setLiveWidget(
+                toolWidgetKey(evt),
+                toolWidgetUpdateLines(evt),
+              );
             } else if (evt.type === "tool_end") {
               controller.completeTimelineStep(
                 evt.toolName || "tool",
                 evt.isError === true,
               );
+              controller.setLiveWidget(
+                toolWidgetKey(evt),
+                toolWidgetEndLines(evt),
+              );
+              controller.setLiveWidget(toolWidgetKey(evt), null);
             } else if (evt.type === "pi_widget" && Array.isArray(evt.lines)) {
               controller.setLiveWidget(evt.key || "widget", evt.lines);
             }
@@ -2664,6 +2681,32 @@
         return "";
       }
 
+      // Per-tool progress panel frames. Shared by the live stream handler and
+      // the history replay loop so the panels survive re-renders identically.
+      function toolWidgetKey(evt) {
+        return `tool · ${evt.toolName || "tool"}`;
+      }
+      function toolWidgetStartLines(evt) {
+        const tool = evt.toolName || "tool";
+        return [`▶ ${tool} running…`].concat(
+          evt.argsPreview ? [evt.argsPreview.slice(0, 300)] : [],
+        );
+      }
+      function toolWidgetUpdateLines(evt) {
+        const tool = evt.toolName || "tool";
+        const lines = String(evt.outputPreview || "")
+          .split("\n")
+          .slice(-16);
+        return [`▶ ${tool} running…`, ""].concat(lines);
+      }
+      function toolWidgetEndLines(evt) {
+        const tool = evt.toolName || "tool";
+        const lines = String(evt.outputPreview || "")
+          .split("\n")
+          .slice(-16);
+        return [`${evt.isError ? "✗" : "✓"} ${tool}`, ""].concat(lines);
+      }
+
       function handleStreamEventTrace(evt, thinking) {
         if (!evt || !thinking) return;
         // Keep-alive frames are transport noise — never record or render them.
@@ -2853,28 +2896,19 @@
           // Open a live progress panel for the running tool — web searches,
           // subagent fleets etc. stream here in place, like the terminal.
           if (typeof thinking.setLiveWidget === "function") {
-            thinking.setLiveWidget(
-              `tool · ${tool}`,
-              [`▶ ${tool} running…`].concat(
-                evt.argsPreview ? [evt.argsPreview.slice(0, 300)] : [],
-              ),
-            );
+            thinking.setLiveWidget(toolWidgetKey(evt), toolWidgetStartLines(evt));
           }
           thinking.addTraceLine(`Tool start: ${tool}${args}`);
           return;
         }
 
         if (evt.type === "tool_update") {
-          const tool = evt.toolName || "tool";
           // Stream the tool's live progress into its panel instead of
           // spamming the execution trace with partial dumps.
           if (typeof thinking.setLiveWidget === "function") {
-            const lines = String(evt.outputPreview || "")
-              .split("\n")
-              .slice(-16);
             thinking.setLiveWidget(
-              `tool · ${tool}`,
-              [`▶ ${tool} running…`, ""].concat(lines),
+              toolWidgetKey(evt),
+              toolWidgetUpdateLines(evt),
             );
           }
           return;
@@ -2891,14 +2925,8 @@
           }
           // Freeze the tool's live panel at its final output, muted.
           if (typeof thinking.setLiveWidget === "function") {
-            const lines = String(evt.outputPreview || "")
-              .split("\n")
-              .slice(-16);
-            thinking.setLiveWidget(
-              `tool · ${tool}`,
-              [`${evt.isError ? "✗" : "✓"} ${tool}`, ""].concat(lines),
-            );
-            thinking.setLiveWidget(`tool · ${tool}`, null);
+            thinking.setLiveWidget(toolWidgetKey(evt), toolWidgetEndLines(evt));
+            thinking.setLiveWidget(toolWidgetKey(evt), null);
           }
           thinking.addTraceLine(`Tool end: ${tool}${suffix}${output}`, {
             failure: evt.isError === true,
