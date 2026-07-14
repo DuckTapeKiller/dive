@@ -423,6 +423,7 @@
             llamacpp: llamacppFont,
           },
           fontScales: { ...fontScales },
+          thinkingExpanded: { ...thinkingExpandedByMode },
           enabledModes: [...enabledModes],
           defaultMode: defaultLaunchMode,
         };
@@ -672,6 +673,29 @@
         localStorage.setItem("ollama-pi-chat-ollama-font", ollamaFont);
         localStorage.setItem("ollama-pi-chat-pi-font", piFont);
         localStorage.setItem("ollama-pi-chat-cloud-font", cloudFont);
+
+        const storedThinkingExpanded =
+          settings.thinkingExpanded &&
+          typeof settings.thinkingExpanded === "object" &&
+          !Array.isArray(settings.thinkingExpanded)
+            ? settings.thinkingExpanded
+            : {};
+        for (const id of Object.keys(thinkingExpandedByMode)) {
+          const raw =
+            useServer && storedThinkingExpanded[id] !== undefined
+              ? storedThinkingExpanded[id]
+              : localStorage.getItem(
+                  `ollama-pi-chat-${id}-thinking-expanded`,
+                );
+          if (raw !== null && raw !== undefined && raw !== "") {
+            thinkingExpandedByMode[id] =
+              raw === true || String(raw).toLowerCase() === "true";
+          }
+          localStorage.setItem(
+            `ollama-pi-chat-${id}-thinking-expanded`,
+            String(thinkingExpandedByMode[id]),
+          );
+        }
 
         let storedEnabledModes = null;
         if (useServer && Array.isArray(settings.enabledModes)) {

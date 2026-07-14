@@ -2320,6 +2320,13 @@
       .thinking-details-body p {
         margin: 2px 0;
       }
+      /* The execution trace holds marked-rendered HTML: the pre-wrap
+         inherited from .thinking-details-body would turn the newlines marked
+         emits between block tags into extra blank lines (double spacing).
+         Whitespace inside code blocks keeps its own pre-wrap rule above. */
+      .execution-trace-body {
+        white-space: normal;
+      }
       .pi-widget-block pre,
       .pi-widget-block code {
         font-family: "Space Mono", monospace;
