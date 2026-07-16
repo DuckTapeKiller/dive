@@ -2334,6 +2334,52 @@
       .pi-widget-block.finished {
         opacity: 0.55;
       }
+      /* Widget disclosures: collapsed by default with the native summary
+         chevron (same pattern as Thinking / Execution Trace). The WHOLE
+         bubble carries the tinted accent surface, and its edge glows green
+         while the tool/subagent is running, dimming to red once it's over. */
+      .pi-widget-details {
+        background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+        border-left: 3px solid
+          color-mix(in srgb, var(--accent) 55%, transparent);
+      }
+      /* Activity dot at the end of the summary line: glowing green while
+         the tool/subagent is running, dim red once it's over. */
+      .pi-widget-details summary::after {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-left: 8px;
+        vertical-align: middle;
+        background: rgb(46, 220, 100);
+        box-shadow: 0 0 6px rgba(46, 220, 100, 0.9);
+        animation: widget-dot-glow 1.5s ease-in-out infinite;
+      }
+      @keyframes widget-dot-glow {
+        0%,
+        100% {
+          box-shadow: 0 0 3px rgba(46, 220, 100, 0.5);
+        }
+        50% {
+          box-shadow: 0 0 10px rgba(46, 220, 100, 1);
+        }
+      }
+      .pi-widget-details.finished {
+        opacity: 0.55;
+      }
+      .pi-widget-details.finished summary::after {
+        background: rgba(255, 80, 80, 0.75);
+        box-shadow: 0 0 3px rgba(255, 80, 80, 0.4);
+        animation: none;
+      }
+      .pi-widget-details > .pi-widget-block {
+        margin-top: 8px;
+        background: transparent;
+        border-left: none;
+        padding: 0;
+      }
       .agent-timeline-title {
         font-size: calc(11px * var(--font-scale, 1));
         font-weight: 700;

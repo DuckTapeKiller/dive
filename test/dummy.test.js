@@ -2,6 +2,6 @@ const test = require("node:test");
 const assert = require("node:assert");
 const pkg = require("../package.json");
 
-test("package version is 4.0.0 for this release", () => {
-  assert.strictEqual(pkg.version, "4.0.0");
+test("package version is 4.0.1 for this release", () => {
+  assert.strictEqual(pkg.version, "4.0.1");
 });

@@ -3364,21 +3364,15 @@
           </div>
 
           <div id="lessonsGroup" class="setting-group">
-            <label>LESSONS</label>
+            <label id="lessonsLabel">LESSONS</label>
             <div class="setting-help">
               Standing instructions the model has learned (via the
               remember_lesson skill or /remember) or that you write here
-              yourself. Lines starting with "- " are added to the system prompt
-              of that mode's chats. Each mode keeps its own independent lessons
-              file (~/dive/lessons); Pi is excluded — it uses its own AGENTS.md
-              context system.
+              yourself — one lesson per line. Every non-empty line is added to
+              the system prompt of this mode's chats. Lessons are strictly
+              per-mode (~/dive/lessons) and never shared between modes; Pi is
+              excluded — it uses its own AGENTS.md context system.
             </div>
-            <select id="lessonsModeSelect" style="margin-top: 8px">
-              <option value="ollama">Ollama</option>
-              <option value="lmstudio">LM Studio</option>
-              <option value="llamacpp">llama.cpp</option>
-              <option value="cloud">Cloud</option>
-            </select>
             <textarea
               id="lessonsTextarea"
               rows="8"

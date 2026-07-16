@@ -2093,19 +2093,29 @@ function lessonModeKey(mode) {
 }
 
 function lessonsHeader(mode) {
-  return `# ${lessonModeKey(mode)} lessons\n\nLines starting with "- " are injected into the system prompt of every ${lessonModeKey(mode)} chat. Edit or delete freely.\n`;
+  return `# ${lessonModeKey(mode)} lessons\n# One lesson per line: every non-empty line below (except "#" comments) is injected into the system prompt of every ${lessonModeKey(mode)} chat. Edit or delete freely.\n`;
 }
 
 function lessonsFilePath(dataDir, mode) {
   return path.join(dataDir, "lessons", `${lessonModeKey(mode)}-lessons.md`);
 }
 
+// Files written before v4 carried this description as a plain (non-comment)
+// line; skip it so an old file never injects its own header as a lesson.
+const LEGACY_LESSONS_HEADER_RE =
+  /^Lines starting with "- " are injected into the system prompt/;
+
 function readLessons(dataDir, mode) {
   try {
     const text = fs.readFileSync(lessonsFilePath(dataDir, mode), "utf8");
     return text
       .split("\n")
-      .filter((line) => line.trim().startsWith("- "))
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line && !line.startsWith("#") && !LEGACY_LESSONS_HEADER_RE.test(line),
+      )
+      .map((line) => (line.startsWith("- ") ? line : `- ${line}`))
       .join("\n");
   } catch {
     return "";

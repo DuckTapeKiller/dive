@@ -4,7 +4,7 @@
 
 ## A Local-First Chat & Agent Interface for LM Studio, Ollama, Pi, llama.cpp, and Cloud Models
 
-**Version 3.0.7**
+**Version 4.0.1**
 
 Dive is a local-first desktop app (and web UI) with a flat, brutalist interface for working with local AI backends, terminal-grade agents, and — optionally — your own cloud API keys. The server and app run entirely on your machine; local modes need no internet at all.
 

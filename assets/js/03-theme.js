@@ -2919,9 +2919,9 @@
         ensurePiEventChannel();
         updateTokenCounter();
         updateSendButtonState();
-        // Lessons are per-mode: entering a mode re-syncs the Lessons dropdown
-        // and textarea to THIS mode, so a selection made in another mode can
-        // never carry over (covers switching modes while Settings is open).
+        // Lessons are per-mode: entering a mode rebinds the Lessons editor
+        // to THIS mode's file, so another mode's lessons can never carry
+        // over (covers switching modes while Settings is open).
         if (typeof loadLessonsUi === "function") {
           loadLessonsUi().catch(() => {});
         }
