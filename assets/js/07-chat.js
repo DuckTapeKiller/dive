@@ -185,6 +185,27 @@
         runSession.lastUserMessage = lastUserMessage;
         runSession.lastSentMessage = messageToSend;
         runSession.lastExchangePersisted = persistToHistory;
+        // Register the conversation in History IMMEDIATELY. The server only
+        // saves it when the stream finishes, so without this early snapshot
+        // a brand-new conversation stays invisible in the History panel for
+        // the whole run — and navigating to another conversation mid-reply
+        // would leave no way back to it. The end-of-run save (server on
+        // done, client on abort/error) later replaces this snapshot with
+        // the full exchange.
+        if (saveConvId) {
+          persistConversationSnapshot(
+            saveConvId,
+            runMode,
+            runSession.history,
+            lastUserMessage.slice(0, 40),
+          );
+          setTimeout(() => {
+            refreshSidePanelRecent();
+            if (historyOpen && typeof loadHistoryPanel === "function") {
+              loadHistoryPanel();
+            }
+          }, 400);
+        }
         const runAbortController = new AbortController();
         runSession.activeAbortController = runAbortController;
         runSession.activeRunId = `${runMode}_${Date.now()}_${Math.random()}`;
@@ -1438,10 +1459,9 @@
           resizerEl.style.display = "block";
           closePromptEditor();
           refreshDiagnostics();
-          // Lessons are per-mode: every open must snap the Lessons dropdown
-          // to the CURRENT mode and load that mode's file, or a selection
-          // made in one mode would still be showing when another mode opens
-          // Settings (boot-time loading alone left it stale).
+          // Lessons are per-mode: every open must rebind the Lessons editor
+          // to the CURRENT mode and load that mode's file (boot-time loading
+          // alone left it stale).
           if (typeof loadLessonsUi === "function") {
             loadLessonsUi().catch(() => {});
           }

@@ -75,18 +75,55 @@
         if (targetMode !== mode) {
           setMode(targetMode);
         }
-        history = conv.history || [];
-        currentConvId = conv.id;
         const session = getActiveModeSession(targetMode);
-        session.convId = conv.id;
-        session.history = [...history];
-        session.lastUserMessage = null;
-        session.lastSentMessage = null;
-        session.lastExchangePersisted = true;
-        session.draftAssistant = null;
-        renderSessionTranscript(session);
+        const runActive = !!session.activeAbortController;
+        if (runActive && session.convId === conv.id) {
+          // Returning to the conversation that is still streaming: the
+          // in-memory session is authoritative (it holds the pending user
+          // turn and the live draft) — re-render it instead of clobbering
+          // it with the older on-disk copy.
+          currentConvId = conv.id;
+          history = [...session.history];
+          renderSessionTranscript(session);
+        } else if (runActive) {
+          // A run is still streaming ANOTHER conversation of this mode. The
+          // run owns the session: leave it bound to its own conversation so
+          // the reply lands there (the server saves it under the run's conv
+          // id) and can never leak into the one being opened. Render the
+          // requested conversation as a detached, read-only-state view; the
+          // setDraftAssistant/thinking guards (convId mismatch) keep the
+          // stream out of this DOM. Stop the live thinking timer first —
+          // its nodes are about to be detached by the re-render.
+          session.thinkingController?.stopTimer?.();
+          currentConvId = conv.id;
+          history = conv.history ? [...conv.history] : [];
+          lastUserMessage = null;
+          lastSentMessage = null;
+          renderSessionTranscript({ history: [...history] });
+        } else {
+          // No active run: bind the mode's session to the loaded conversation.
+          history = conv.history || [];
+          currentConvId = conv.id;
+          session.convId = conv.id;
+          session.history = [...history];
+          session.lastUserMessage = null;
+          session.lastSentMessage = null;
+          session.lastExchangePersisted = true;
+          session.draftAssistant = null;
+          lastUserMessage = null;
+          lastSentMessage = null;
+          renderSessionTranscript(session);
+        }
         if (typeof updateTokenCounter === "function") updateTokenCounter();
-        if (conv.mode === "pi" && conv.piSessionFile) {
+        // Never send switch_session into a conversation whose Pi process is
+        // mid-generation: reloading the session file resets the agent and
+        // cancels the in-flight turn. The live process already has its
+        // session open — there is nothing to load.
+        if (
+          conv.mode === "pi" &&
+          conv.piSessionFile &&
+          !(runActive && session.convId === conv.id)
+        ) {
           fetch(apiUrl("/api/pi/load-session"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -551,6 +588,22 @@
         };
       }
 
+      // Pi's setStatus is a keyed, replaceable status line that extensions
+      // re-emit unchanged every turn (e.g. the sandbox banner). Conversations
+      // saved before deduplication carry those repeats in their stored trace
+      // lines — collapse them at the read boundary: a "Status · key:" line
+      // is kept only when its text differs from that key's previous line.
+      function dedupeStatusTraceLines(lines) {
+        const lastByKey = new Map();
+        return lines.filter((line) => {
+          const m = /^Status · ([^:]*): ([\s\S]*)$/.exec(String(line || ""));
+          if (!m) return true;
+          if (lastByKey.get(m[1]) === m[2]) return false;
+          lastByKey.set(m[1], m[2]);
+          return true;
+        });
+      }
+
       function getAssistantMetadataFromMessage(message) {
         if (!message || typeof message !== "object") {
           return cloneAssistantMetadata();
@@ -558,12 +611,13 @@
         const traceEvents = Array.isArray(message.traceEvents)
           ? message.traceEvents
           : [];
-        const derivedTraceLines =
+        const derivedTraceLines = dedupeStatusTraceLines(
           Array.isArray(message.traceLines) && message.traceLines.length
             ? message.traceLines
             : traceEvents
                 .map((evt) => formatStreamEventTraceLine(evt))
-                .filter(Boolean);
+                .filter(Boolean),
+        );
         return cloneAssistantMetadata({
           thinking:
             typeof message.thinking === "string" ? message.thinking : "",
@@ -1123,23 +1177,39 @@
           setLiveWidget(key, lines) {
             if (!isActiveView()) return;
             if (Array.isArray(lines) && lines.length) {
-              let pre = liveWidgets.get(key);
-              if (!pre) {
-                pre = document.createElement("div");
-                pre.className = "pi-widget-block";
-                liveWidgets.set(key, pre);
-                widgetsBox.appendChild(pre);
+              let box = liveWidgets.get(key);
+              if (!box) {
+                // Each widget is a collapsed-by-default disclosure (native
+                // chevron via <summary>, same pattern as Thinking / Execution
+                // Trace): the status line stays visible and updates in place,
+                // the full output expands on demand. The open state belongs
+                // to the user — frames never force it.
+                box = document.createElement("details");
+                box.className = "thinking-details pi-widget-details";
+                const summaryEl = document.createElement("summary");
+                const bodyEl = document.createElement("div");
+                bodyEl.className = "pi-widget-block";
+                box.appendChild(summaryEl);
+                box.appendChild(bodyEl);
+                liveWidgets.set(key, box);
+                widgetsBox.appendChild(box);
               }
-              pre.classList.remove("finished");
+              box.classList.remove("finished");
+              // First line is the widget's status line — it becomes the
+              // always-visible summary; the rest is the expandable body.
+              const summaryText = String(lines[0] || key);
+              const bodyLines = lines.slice(1);
+              box.querySelector("summary").textContent = summaryText;
               // Subagent output is Markdown — render it, don't dump the source.
-              pre.innerHTML = DOMPurify.sanitize(marked.parse(lines.join("\n")));
+              box.querySelector(".pi-widget-block").innerHTML =
+                DOMPurify.sanitize(marked.parse(bodyLines.join("\n")));
               widgetsBox.style.display = "block";
               scrollChatToBottom();
             } else {
               // Cleared: keep the final state visible but muted instead of
               // erasing what the background agents just did.
-              const pre = liveWidgets.get(key);
-              if (pre) pre.classList.add("finished");
+              const box = liveWidgets.get(key);
+              if (box) box.classList.add("finished");
             }
           },
           finishLiveWidgets() {
@@ -1405,6 +1475,16 @@
       function syncCurrentSessionState() {
         if (!modeSession[mode]) return;
         const session = getActiveModeSession(mode);
+        // An active run owns its session. When the user is viewing a
+        // DIFFERENT conversation of this mode (detached view), leaving the
+        // mode must not rebind the run's session to the viewed conversation
+        // — the streaming reply would leak into it. Keep only the composer
+        // draft; returning to this mode snaps back to the streaming
+        // conversation (setMode restores currentConvId from session.convId).
+        if (session.activeAbortController && session.convId !== currentConvId) {
+          session.draft = input.value;
+          return;
+        }
         session.convId = currentConvId;
         session.history = [...history];
         session.draft = input.value;
@@ -2105,27 +2185,41 @@
       }
 
       // ---- LESSONS (persistent instructions injected into system prompts) ----
-      // Lessons are STRICTLY per-mode: every load and save carries the mode
-      // from the dropdown, so one mode's lessons can never leak into another.
+      // Lessons are STRICTLY per-mode and always bound to the ACTIVE mode:
+      // the editor shows, loads and saves only the current mode's file, so
+      // one mode's lessons can never leak into another. Pi is excluded — it
+      // has its own AGENTS.md context system, so the editor hides entirely.
       let lessonsLoadToken = 0;
+      // The mode whose lessons the textarea is currently showing. Saves
+      // always target this mode, never one switched to mid-edit.
+      let lessonsEditorMode = null;
 
-      function selectedLessonsMode() {
-        const sel = document.getElementById("lessonsModeSelect");
-        return sel && sel.value ? sel.value : "ollama";
+      const LESSONS_MODE_LABELS = {
+        ollama: "OLLAMA",
+        lmstudio: "LM STUDIO",
+        llamacpp: "LLAMA.CPP",
+        cloud: "CLOUD",
+      };
+
+      function currentLessonsMode() {
+        return Object.prototype.hasOwnProperty.call(LESSONS_MODE_LABELS, mode)
+          ? mode
+          : null;
       }
 
-      async function fetchLessonsForSelectedMode() {
+      async function fetchLessonsForCurrentMode() {
         const box = document.getElementById("lessonsTextarea");
-        if (!box) return;
-        const forMode = selectedLessonsMode();
+        const forMode = currentLessonsMode();
+        if (!box || !forMode) return;
         const token = ++lessonsLoadToken;
         try {
           const res = await fetch(
             apiUrl("/api/lessons?mode=" + encodeURIComponent(forMode)),
           );
           const payload = await readJsonResponse(res, "Load lessons");
-          // Ignore stale responses if the dropdown changed mid-flight.
+          // Ignore stale responses if the mode changed mid-flight.
           if (token !== lessonsLoadToken) return;
+          lessonsEditorMode = forMode;
           box.value = payload?.text || "";
         } catch (error) {
           console.error("Could not load lessons", error);
@@ -2133,26 +2227,29 @@
       }
 
       async function loadLessonsUi() {
+        const group = document.getElementById("lessonsGroup");
         const box = document.getElementById("lessonsTextarea");
         const btn = document.getElementById("lessonsSaveBtn");
-        const modeSel = document.getElementById("lessonsModeSelect");
+        const label = document.getElementById("lessonsLabel");
         if (!box) return;
-        if (modeSel && !modeSel.dataset.wired) {
-          modeSel.dataset.wired = "1";
-          modeSel.addEventListener("change", () => {
-            fetchLessonsForSelectedMode().catch(() => {});
-          });
+        const forMode = currentLessonsMode();
+        if (group) group.style.display = forMode ? "" : "none";
+        if (!forMode) return;
+        if (label) {
+          label.textContent = `LESSONS — ${LESSONS_MODE_LABELS[forMode]}`;
         }
         if (btn && !btn.dataset.wired) {
           btn.dataset.wired = "1";
           btn.addEventListener("click", async () => {
+            const saveMode = lessonsEditorMode || currentLessonsMode();
+            if (!saveMode) return;
             try {
               await fetch(apiUrl("/api/lessons"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   text: box.value,
-                  mode: selectedLessonsMode(),
+                  mode: saveMode,
                 }),
               });
               btn.textContent = "SAVED";
@@ -2166,20 +2263,7 @@
             }
           });
         }
-        // Default the dropdown to the app's current mode so opening Skills in
-        // LM Studio shows LM Studio's lessons (Pi has no lessons file: keep
-        // whatever mode was already selected).
-        if (
-          modeSel &&
-          modeSel.value !== mode &&
-          Array.from(modeSel.options).some((opt) => opt.value === mode)
-        ) {
-          modeSel.value = mode;
-          // The visible dropdown is a custom-select widget built from the
-          // native select: rebuild it so its trigger shows the new value.
-          if (typeof syncCustomSelect === "function") syncCustomSelect(modeSel);
-        }
-        await fetchLessonsForSelectedMode();
+        await fetchLessonsForCurrentMode();
       }
 
       // ---- MODEL-DRAFTED PLUGINS AWAITING APPROVAL ----
@@ -2688,7 +2772,10 @@
       }
       function toolWidgetStartLines(evt) {
         const tool = evt.toolName || "tool";
-        return [`▶ ${tool} running…`].concat(
+        // No text arrow: the running state is shown by the widget's green
+        // glow (see .pi-widget-details CSS), and the disclosure chevron
+        // already sits at the start of the summary line.
+        return [`${tool} running…`].concat(
           evt.argsPreview ? [evt.argsPreview.slice(0, 300)] : [],
         );
       }
@@ -2697,7 +2784,7 @@
         const lines = String(evt.outputPreview || "")
           .split("\n")
           .slice(-16);
-        return [`▶ ${tool} running…`, ""].concat(lines);
+        return [`${tool} running…`, ""].concat(lines);
       }
       function toolWidgetEndLines(evt) {
         const tool = evt.toolName || "tool";
@@ -2772,7 +2859,16 @@
 
         if (evt.type === "pi_status") {
           if (evt.text) {
-            thinking.addTraceLine(`Status · ${evt.key || ""}: ${evt.text}`);
+            // setStatus is a keyed, REPLACEABLE status line in Pi's terminal
+            // UI; extensions re-emit it unchanged at every turn/tool boundary
+            // (e.g. the sandbox banner). Only append a trace line when the
+            // text for that key actually changed.
+            const statusKey = evt.key || "status";
+            if (!thinking.lastStatusByKey) thinking.lastStatusByKey = {};
+            if (thinking.lastStatusByKey[statusKey] !== evt.text) {
+              thinking.lastStatusByKey[statusKey] = evt.text;
+              thinking.addTraceLine(`Status · ${statusKey}: ${evt.text}`);
+            }
           }
           return;
         }

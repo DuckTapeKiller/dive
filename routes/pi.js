@@ -1487,6 +1487,14 @@ module.exports = function createPiDomain(deps) {
         const resolvedPath = path.resolve(sessionFile.trim());
 
         const convProc = getOrCreatePiConvProcess(convId);
+        // A switch_session sent to a process that is mid-turn resets the
+        // agent and cancels the in-flight generation. Refuse instead: the
+        // running turn already owns the session, and the file can be loaded
+        // once the turn has finished.
+        if (convProc.activeRequestId) {
+          send(200, { ok: false, busy: true });
+          return;
+        }
         convProc.proc.stdin.write(
           JSON.stringify({
             type: "switch_session",

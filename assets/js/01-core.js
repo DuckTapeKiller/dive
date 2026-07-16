@@ -727,7 +727,7 @@
       let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
       const ALL_BUILTIN_SKILLS_INFO = {
         remember_lesson: {
-          desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply to every future non-Pi chat and are editable under Lessons below.",
+          desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply only to future chats of the CURRENT mode (each mode keeps its own) and are editable under Lessons below.",
           example: '{"lesson": "Always use British spelling."}',
         },
         propose_plugin: {
