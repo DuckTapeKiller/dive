@@ -67,8 +67,21 @@ function createFetchStub() {
     if (path === "/api/lessons" || path.startsWith("/api/lessons?")) {
       return jsonResponse({ text: "" });
     }
-    if (path === "/api/system-prompts") {
-      return jsonResponse({ dbOff: "", dbOn: "", lessonsApplied: false });
+    if (
+      path === "/api/system-prompts" ||
+      path.startsWith("/api/system-prompts?")
+    ) {
+      return jsonResponse({
+        mode: "ollama",
+        editable: true,
+        dbOffDefault: "",
+        dbOnDefault: "",
+        dbOffOverride: "",
+        dbOnOverride: "",
+        dbOff: "",
+        dbOn: "",
+        lessonsApplied: false,
+      });
     }
     if (path === "/api/cloud/settings") {
       return jsonResponse({

@@ -2925,6 +2925,11 @@
         if (typeof loadLessonsUi === "function") {
           loadLessonsUi().catch(() => {});
         }
+        // Same for the editable system prompts: rebind to this mode's own
+        // override files.
+        if (typeof loadSystemPromptsUi === "function") {
+          loadSystemPromptsUi().catch(() => {});
+        }
       }
 
       function clearChat() {

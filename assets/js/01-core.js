@@ -548,6 +548,14 @@
       let libraryIndexPollTimer = null;
       let promptsList = [];
       let activePromptId = "";
+      // Saved prompt currently open in the editor, or null when the editor is
+      // creating a new one. Editing updates the entry in place (same id).
+      let editingPromptId = null;
+      // Ollama builds its system prompt client-side, so its per-mode base
+      // prompt overrides (Settings > Prompt) are cached here. dboff replaces
+      // the policy preamble, dbon replaces the Database Context prompt.
+      // Refreshed at init and after every save/reset.
+      let ollamaPromptOverrides = { dboff: "", dbon: "" };
       // Prompts are per-mode and independent: each prompt belongs to the mode it
       // was created in, and each mode has its own active prompt. Prompts apply to
       // the modes that use a system-prompt overlay (Ollama + the local modes).
@@ -862,12 +870,21 @@ When the tool results contain rich material, write a COMPREHENSIVE, well-structu
 SOURCES:
 Do NOT write source links, a "Source:" line, a "References" section, or URLs in your answer. The app shows every source used as a clickable pill automatically. Just write the answer itself.`;
 
-      function getOllamaBasePolicyPrompt() {
+      function getOllamaBasePolicyPrompt(promptOverlay) {
         // Each mode independently selects its prompt from its own Database
         // Context toggle: ON -> strict library-only prompt; OFF -> the academic
         // assistant with tool access.
+        // Base text precedence (DB off): selected custom Prompt (full
+        // replacement of the policy preamble) > user-edited override file >
+        // hardcoded default. The tools list and tool-calling instructions
+        // below are appended separately, are rebuilt from the live skills
+        // config on every call, and are never affected by any of these.
         if (isDatabaseContextEnabledNow()) {
-          return DB_ON_PROMPT;
+          // Database Context ON: the strict library-grounding prompt (or the
+          // user's edited DB-on override) always wins; a selected custom
+          // Prompt is deliberately suppressed — it would break the
+          // passages-only contract.
+          return ollamaPromptOverrides.dbon || DB_ON_PROMPT;
         }
 
         let toolText = "Available tools:\n";
@@ -894,7 +911,11 @@ Do NOT write source links, a "Source:" line, a "References" section, or URLs in 
         const workflow = ollamaAgentMode
           ? dbOffAgentWorkflow(ollamaAgentMaxRounds)
           : DB_OFF_RESEARCH_CHAIN;
-        return `${DB_OFF_POLICY_PREAMBLE}\n\n${toolText}\n${DB_OFF_TOOL_TAIL_HEAD}\n\n${workflow}\n\n${DB_OFF_TOOL_TAIL_STYLE}${customSkillsText}`;
+        const preamble =
+          (typeof promptOverlay === "string" && promptOverlay.trim()) ||
+          ollamaPromptOverrides.dboff ||
+          DB_OFF_POLICY_PREAMBLE;
+        return `${preamble}\n\n${toolText}\n${DB_OFF_TOOL_TAIL_HEAD}\n\n${workflow}\n\n${DB_OFF_TOOL_TAIL_STYLE}${customSkillsText}`;
       }
       const PROOFREAD_HARD_MODE_PROMPT = `You are a dedicated, context-blind text-correction engine. You are NOT an assistant and you have no conversation with anyone.
 

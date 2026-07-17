@@ -1946,6 +1946,12 @@
         // 2. Load models & Prompts (timed for slow-startup diagnostics)
         await __timed("loadModels", loadModels);
         await __timed("loadPrompts", loadPrompts);
+        // Ollama's system prompt is built client-side: its base-prompt
+        // overrides must be cached before the first message can be sent.
+        await __timed(
+          "refreshOllamaPromptOverrides",
+          refreshOllamaPromptOverrides,
+        );
         await __timed("loadCustomSkills", loadCustomSkills);
         await __timed("loadPiSettings", loadPiSettings);
         await __timed("loadCloudSettings", loadCloudSettings);

@@ -3180,13 +3180,16 @@
           </div>
 
           <div id="promptSettingsGroup" class="setting-group">
-            <label>CUSTOM OVERLAY PROMPT</label>
+            <label>CUSTOM SYSTEM PROMPT</label>
             <select id="settingActivePrompt">
               <option value="">None (Built-in Default)</option>
             </select>
             <div class="setting-help">
-              Adds your selected custom instructions on top of the built-in
-              Ollama policy for normal chats.
+              Selecting a prompt REPLACES the entire default system prompt for
+              this mode — including its language and style rules. Skills and
+              tool instructions are added separately and are never affected.
+              When Database Context is ON, the Database prompt below is used
+              instead.
             </div>
             <div style="margin-top: 8px">
               <button id="refactored_btn_8" class="settings-action-btn">
@@ -3261,45 +3264,87 @@
           <div id="promptManageGroup" class="setting-group">
             <label>MANAGE SYSTEM PROMPTS</label>
             <div class="setting-help">
-              Delete prompt overlays you no longer want available in the
-              selector.
+              Click a prompt's name to edit it in the editor above; × deletes
+              it.
             </div>
             <div id="customPromptsList"></div>
           </div>
 
           <div id="systemPromptsGroup" class="setting-group">
-            <label>SYSTEM PROMPTS (TRANSPARENCY)</label>
+            <label>SYSTEM PROMPTS (EDITABLE)</label>
             <div class="setting-help">
-              These are the exact system prompts Dive sends to the model in
-              every non-Pi chat, depending on the Database Context toggle.
-              Lessons you have taught the model are appended to both.
+              The exact base system prompts this mode sends to the model,
+              depending on the Database Context toggle. Edit and save to
+              override; Restore Default reverts to the built-in text. Skills and
+              tool instructions are appended automatically and cannot be edited
+              here. Lessons you have taught the model are appended to both.
             </div>
             <label style="margin-top: 10px">DATABASE DISABLED</label>
-            <pre
+            <textarea
               id="systemPromptDbOff"
+              rows="10"
               style="
-                max-height: 220px;
-                overflow: auto;
+                width: 100%;
+                margin-top: 6px;
                 padding: 8px 10px;
                 background: var(--flat-fill);
+                color: var(--text-inverse);
+                border: none;
+                font-family: inherit;
                 font-size: calc(11px * var(--font-scale, 1));
-                white-space: pre-wrap;
-                user-select: text;
+                resize: vertical;
+                outline: none;
               "
-            ></pre>
+            ></textarea>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button
+                id="systemPromptDbOffSaveBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                SAVE
+              </button>
+              <button
+                id="systemPromptDbOffResetBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                RESTORE DEFAULT
+              </button>
+            </div>
             <label style="margin-top: 10px">DATABASE ENABLED</label>
-            <pre
+            <textarea
               id="systemPromptDbOn"
+              rows="10"
               style="
-                max-height: 220px;
-                overflow: auto;
+                width: 100%;
+                margin-top: 6px;
                 padding: 8px 10px;
                 background: var(--flat-fill);
+                color: var(--text-inverse);
+                border: none;
+                font-family: inherit;
                 font-size: calc(11px * var(--font-scale, 1));
-                white-space: pre-wrap;
-                user-select: text;
+                resize: vertical;
+                outline: none;
               "
-            ></pre>
+            ></textarea>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button
+                id="systemPromptDbOnSaveBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                SAVE
+              </button>
+              <button
+                id="systemPromptDbOnResetBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                RESTORE DEFAULT
+              </button>
+            </div>
           </div>
 
           <div id="builtinSkillsGroup" class="setting-group">
