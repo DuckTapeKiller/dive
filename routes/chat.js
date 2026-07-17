@@ -4,7 +4,9 @@
 // endpoints. The heavy helper web is injected from server.js and will
 // migrate here incrementally.
 const { randomUUID } = require("crypto");
+const fs = require("fs");
 const http = require("http");
+const path = require("path");
 const { buildChatLibraryContext } = require("../library/store");
 const {
   buildForcedSkillToolCall,
@@ -149,9 +151,14 @@ module.exports = function createChatDomain(deps) {
         typeof body.systemOverride === "string"
           ? body.systemOverride.trim()
           : "";
+      // The user's selected custom Prompt (topbar prompt dropdown). It fully
+      // REPLACES the base policy text for this request; the skills message
+      // below is separate and unaffected.
+      const promptOverlay =
+        typeof body.promptOverlay === "string" ? body.promptOverlay.trim() : "";
       let requestMessages = systemOverride
         ? [{ role: "system", content: systemOverride }, ...messages]
-        : withSharedSystemPrompt(messages, false, modeId);
+        : withSharedSystemPrompt(messages, false, modeId, promptOverlay);
       let librarySourceResults = [];
       let libraryPassages = [];
       let databaseContextEnabled = false;
@@ -197,6 +204,10 @@ module.exports = function createChatDomain(deps) {
           );
           if (libraryContext.enabled) {
             databaseContextEnabled = true;
+            // Database Context ON: the strict library-grounding prompt (or the
+            // user's edited DB-on override) always wins. A selected custom
+            // Prompt is deliberately NOT applied here — it would break the
+            // passages-only contract — so no promptOverlay is passed.
             requestMessages[0] = {
               role: "system",
               content: getSharedAssistantPolicyPrompt(true, modeId),
@@ -221,23 +232,6 @@ module.exports = function createChatDomain(deps) {
           }
         } catch (e) {
           emit({ type: "library_error", error: e.message });
-        }
-
-        // Optional user-selected system prompt overlay (topbar prompt dropdown),
-        // applied only when Database Context is off, right after the base policy.
-        const promptOverlay =
-          typeof body.promptOverlay === "string"
-            ? body.promptOverlay.trim()
-            : "";
-        if (promptOverlay && !databaseContextEnabled) {
-          requestMessages = [
-            requestMessages[0],
-            {
-              role: "system",
-              content: `Additional user-selected overlay instructions (secondary to the built-in default policy):\n\n${promptOverlay}`,
-            },
-            ...requestMessages.slice(1),
-          ];
         }
 
         // Skills work exactly like Cloud: offered only when Database Context is off
@@ -1240,22 +1234,92 @@ module.exports = function createChatDomain(deps) {
     );
   }
 
-  function withSharedSystemPrompt(messages, databaseEnabled = false, modeName) {
+  // ---- Editable base-policy prompts (Settings > Prompt) ----
+  // The DB-off and DB-on base prompts are user-editable per mode, stored as
+  // plain files mirroring the per-mode lessons pattern. Only the base policy
+  // text is editable: the skills message (getCloudSkillsPolicyPrompt) is a
+  // separate system message, rebuilt from the live skills config on every
+  // request, and is never affected by these overrides. "Restore Default"
+  // simply deletes the override file — the hardcoded constants are the
+  // permanent fallback and are never modified.
+  const SYSTEM_PROMPT_OVERRIDE_MODES = ["ollama", "lmstudio", "llamacpp"];
+  const SYSTEM_PROMPTS_DIR = path.join(DATA_DIR, "system-prompts");
+
+  function systemPromptOverrideFile(modeName, databaseEnabled) {
+    if (!SYSTEM_PROMPT_OVERRIDE_MODES.includes(modeName)) return null;
+    const suffix = databaseEnabled === true ? "dbon" : "dboff";
+    return path.join(SYSTEM_PROMPTS_DIR, `${modeName}-${suffix}.md`);
+  }
+
+  function readSystemPromptOverride(modeName, databaseEnabled) {
+    const file = systemPromptOverrideFile(modeName, databaseEnabled);
+    if (!file) return "";
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {
+      return "";
+    }
+  }
+
+  function writeSystemPromptOverride(modeName, databaseEnabled, text) {
+    const file = systemPromptOverrideFile(modeName, databaseEnabled);
+    if (!file) return false;
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) {
+      // Empty text means "restore default": remove the override file so the
+      // hardcoded constant takes over again.
+      try {
+        fs.rmSync(file, { force: true });
+      } catch {
+        /* already gone */
+      }
+      return false;
+    }
+    fs.mkdirSync(SYSTEM_PROMPTS_DIR, { recursive: true });
+    fs.writeFileSync(file, trimmed.slice(0, 100000), "utf8");
+    return true;
+  }
+
+  function withSharedSystemPrompt(
+    messages,
+    databaseEnabled = false,
+    modeName,
+    promptOverlay = "",
+  ) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     return [
       {
         role: "system",
-        content: getSharedAssistantPolicyPrompt(databaseEnabled, modeName),
+        content: getSharedAssistantPolicyPrompt(
+          databaseEnabled,
+          modeName,
+          promptOverlay,
+        ),
       },
       ...sourceMessages,
     ];
   }
 
-  function getSharedAssistantPolicyPrompt(databaseEnabled = false, modeName) {
-    const base = databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT;
+  function getSharedAssistantPolicyPrompt(
+    databaseEnabled = false,
+    modeName,
+    promptOverlay = "",
+  ) {
+    // Base text precedence (highest first):
+    //   1. promptOverlay — the user's selected custom Prompt. It fully
+    //      REPLACES the base policy text (identity, language rules, everything);
+    //      callers only pass it on DB-off turns, so under Database Context the
+    //      strict library-grounding prompt always wins.
+    //   2. The user-edited per-mode override file (~/dive/system-prompts).
+    //   3. The hardcoded default constant.
+    // The skills system message is separate and unaffected by all of these.
+    const base =
+      (typeof promptOverlay === "string" && promptOverlay.trim()) ||
+      readSystemPromptOverride(modeName, databaseEnabled) ||
+      (databaseEnabled === true ? DB_ON_PROMPT : DB_OFF_POLICY_PROMPT);
     // User-taught lessons (~/dive/lessons/<mode>-lessons.md, managed via the
     // remember_lesson skill or Settings > Skills > Lessons) are strictly
-    // per-mode: this prompt only ever carries the current mode's lessons.
+    // per-mode, and are appended to whichever base text is in effect.
     const lessons = readLessons(DATA_DIR, modeName);
     if (!lessons) return base;
     return (
@@ -1283,16 +1347,56 @@ module.exports = function createChatDomain(deps) {
   async function dispatch(ctx) {
     const { req, res, urlPath, send } = ctx;
 
-    // Transparency: expose the exact system prompts sent to non-Pi models so
-    // the Prompt settings section can display them verbatim.
+    // The exact base system prompts sent to non-Pi models, now editable per
+    // mode. Defaults are the hardcoded constants (for Ollama the client shows
+    // its own composite-preamble default instead); overrides are the saved
+    // per-mode files. Lessons and the skills message are managed separately.
     if (req.method === "GET" && urlPath === "/api/system-prompts") {
       const promptMode = ctx.requestUrl?.searchParams?.get("mode") || "ollama";
+      const dbOffOverride = readSystemPromptOverride(promptMode, false);
+      const dbOnOverride = readSystemPromptOverride(promptMode, true);
       send(200, {
         mode: promptMode,
-        dbOff: getSharedAssistantPolicyPrompt(false, promptMode),
-        dbOn: getSharedAssistantPolicyPrompt(true, promptMode),
+        editable: SYSTEM_PROMPT_OVERRIDE_MODES.includes(promptMode),
+        dbOffDefault: DB_OFF_POLICY_PROMPT,
+        dbOnDefault: DB_ON_PROMPT,
+        dbOffOverride,
+        dbOnOverride,
+        dbOff: dbOffOverride || DB_OFF_POLICY_PROMPT,
+        dbOn: dbOnOverride || DB_ON_PROMPT,
         lessonsApplied: Boolean(readLessons(DATA_DIR, promptMode)),
       });
+      return;
+    }
+
+    // Save or reset a per-mode base-prompt override. An empty text or
+    // reset:true deletes the override file (restore default); the hardcoded
+    // constants are never touched.
+    if (req.method === "POST" && urlPath === "/api/system-prompts") {
+      try {
+        const body = await parseJsonBody(req);
+        const promptMode = typeof body?.mode === "string" ? body.mode : "";
+        const which = body?.which === "dbon" ? "dbon" : "dboff";
+        if (!SYSTEM_PROMPT_OVERRIDE_MODES.includes(promptMode)) {
+          send(400, {
+            error: `mode must be one of: ${SYSTEM_PROMPT_OVERRIDE_MODES.join(", ")}`,
+          });
+          return;
+        }
+        const text = body?.reset === true ? "" : body?.text;
+        if (body?.reset !== true && typeof text !== "string") {
+          send(400, { error: "text field required (or reset: true)" });
+          return;
+        }
+        const overridden = writeSystemPromptOverride(
+          promptMode,
+          which === "dbon",
+          text,
+        );
+        send(200, { ok: true, mode: promptMode, which, overridden });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
       return;
     }
 

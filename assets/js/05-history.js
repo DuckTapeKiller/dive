@@ -2169,19 +2169,167 @@
         loadSystemPromptsUi().catch(() => {});
       }
 
-      // ---- SYSTEM PROMPT TRANSPARENCY ----
+      // ---- EDITABLE SYSTEM PROMPTS (Settings > Prompt) ----
+      // The DB-off and DB-on base prompts are editable per mode, mirroring
+      // the per-mode Lessons editor. Only the base policy text is editable:
+      // the skills/tool instructions are separate, always appended
+      // automatically, and never touched by these overrides.
+      let systemPromptsLoadToken = 0;
+      // The mode whose prompts the textareas are currently showing. Saves
+      // always target this mode, never one switched to mid-edit.
+      let systemPromptsEditorMode = null;
+      // Defaults for the mode currently shown, used by "Restore Default".
+      let systemPromptEditorDefaults = { dboff: "", dbon: "" };
+
+      function currentSystemPromptsMode() {
+        return PROMPT_MODE_KEYS.includes(mode) ? mode : null;
+      }
+
+      // Ollama's real prompt is built client-side: its DB-off default base is
+      // the composite's policy preamble, not the server constant.
+      function systemPromptDefaultsFor(forMode, payload) {
+        if (forMode === "ollama") {
+          return { dboff: DB_OFF_POLICY_PREAMBLE, dbon: DB_ON_PROMPT };
+        }
+        return {
+          dboff: payload?.dbOffDefault || "",
+          dbon: payload?.dbOnDefault || "",
+        };
+      }
+
+      // Keeps the runtime cache for Ollama's client-built prompt in sync.
+      async function refreshOllamaPromptOverrides() {
+        try {
+          const res = await fetch(apiUrl("/api/system-prompts?mode=ollama"));
+          const payload = await readJsonResponse(res, "Load system prompts");
+          ollamaPromptOverrides = {
+            dboff: payload?.dbOffOverride || "",
+            dbon: payload?.dbOnOverride || "",
+          };
+        } catch (error) {
+          console.error("Could not load Ollama prompt overrides", error);
+        }
+      }
+
       async function loadSystemPromptsUi() {
+        const group = document.getElementById("systemPromptsGroup");
         const offEl = document.getElementById("systemPromptDbOff");
         const onEl = document.getElementById("systemPromptDbOn");
         if (!offEl || !onEl) return;
+        const forMode = currentSystemPromptsMode();
+        if (group) group.style.display = forMode ? "" : "none";
+        if (!forMode) return;
+        wireSystemPromptButtons();
+        const token = ++systemPromptsLoadToken;
         try {
-          const res = await fetch(apiUrl("/api/system-prompts"));
+          const res = await fetch(
+            apiUrl("/api/system-prompts?mode=" + encodeURIComponent(forMode)),
+          );
           const payload = await readJsonResponse(res, "Load system prompts");
-          offEl.textContent = payload?.dbOff || "";
-          onEl.textContent = payload?.dbOn || "";
+          // Ignore stale responses if the mode changed mid-flight.
+          if (token !== systemPromptsLoadToken) return;
+          systemPromptsEditorMode = forMode;
+          systemPromptEditorDefaults = systemPromptDefaultsFor(
+            forMode,
+            payload,
+          );
+          offEl.value =
+            payload?.dbOffOverride || systemPromptEditorDefaults.dboff;
+          onEl.value = payload?.dbOnOverride || systemPromptEditorDefaults.dbon;
+          if (forMode === "ollama") {
+            ollamaPromptOverrides = {
+              dboff: payload?.dbOffOverride || "",
+              dbon: payload?.dbOnOverride || "",
+            };
+          }
         } catch (error) {
           console.error("Could not load system prompts", error);
         }
+      }
+
+      async function saveSystemPromptOverride(which) {
+        const box = document.getElementById(
+          which === "dbon" ? "systemPromptDbOn" : "systemPromptDbOff",
+        );
+        const saveMode = systemPromptsEditorMode || currentSystemPromptsMode();
+        if (!box || !saveMode) return;
+        const text = box.value.trim();
+        const defaultText =
+          which === "dbon"
+            ? systemPromptEditorDefaults.dbon
+            : systemPromptEditorDefaults.dboff;
+        // Saving the unchanged default (or an empty box) just clears the
+        // override so the built-in text stays the live fallback.
+        const isReset = !text || text === defaultText;
+        const res = await fetch(apiUrl("/api/system-prompts"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            isReset
+              ? { mode: saveMode, which, reset: true }
+              : { mode: saveMode, which, text },
+          ),
+        });
+        await readJsonResponse(res, "Save system prompt");
+        if (saveMode === "ollama") await refreshOllamaPromptOverrides();
+      }
+
+      async function resetSystemPromptOverride(which) {
+        const saveMode = systemPromptsEditorMode || currentSystemPromptsMode();
+        if (!saveMode) return;
+        const res = await fetch(apiUrl("/api/system-prompts"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: saveMode, which, reset: true }),
+        });
+        await readJsonResponse(res, "Restore system prompt");
+        if (saveMode === "ollama") await refreshOllamaPromptOverrides();
+        await loadSystemPromptsUi();
+      }
+
+      function wireSystemPromptButtons() {
+        const wire = (id, handler, savedLabel, normalLabel) => {
+          const btn = document.getElementById(id);
+          if (!btn || btn.dataset.wired) return;
+          btn.dataset.wired = "1";
+          btn.addEventListener("click", async () => {
+            try {
+              await handler();
+              btn.textContent = savedLabel;
+              setTimeout(() => (btn.textContent = normalLabel), 1200);
+            } catch (error) {
+              console.error(error);
+              await appAlert(
+                error.message || "Failed to update system prompt.",
+                "System Prompts",
+              );
+            }
+          });
+        };
+        wire(
+          "systemPromptDbOffSaveBtn",
+          () => saveSystemPromptOverride("dboff"),
+          "SAVED",
+          "SAVE",
+        );
+        wire(
+          "systemPromptDbOnSaveBtn",
+          () => saveSystemPromptOverride("dbon"),
+          "SAVED",
+          "SAVE",
+        );
+        wire(
+          "systemPromptDbOffResetBtn",
+          () => resetSystemPromptOverride("dboff"),
+          "RESTORED",
+          "RESTORE DEFAULT",
+        );
+        wire(
+          "systemPromptDbOnResetBtn",
+          () => resetSystemPromptOverride("dbon"),
+          "RESTORED",
+          "RESTORE DEFAULT",
+        );
       }
 
       // ---- LESSONS (persistent instructions injected into system prompts) ----
@@ -2602,23 +2750,15 @@
         const conversationHistory = baseHistory.filter(
           (m) => m.role !== "system",
         );
-        const selectedPrompt = activePromptId
-          ? promptsList.find((p) => p.id === activePromptId)
-          : null;
-
+        // The selected custom Prompt REPLACES the base policy text inside
+        // getOllamaBasePolicyPrompt (never the tools section, which is
+        // appended separately there). No secondary system message anymore.
         const systemMessages = [
           {
             role: "system",
-            content: getOllamaBasePolicyPrompt(),
+            content: getOllamaBasePolicyPrompt(getActivePromptContent()),
           },
         ];
-
-        if (selectedPrompt?.content) {
-          systemMessages.push({
-            role: "system",
-            content: `Additional user-selected overlay instructions (secondary to the built-in default policy):\n\n${selectedPrompt.content}`,
-          });
-        }
 
         const hm = checkHardModeTriggers(rawMessage);
         if (hm) {
@@ -2652,6 +2792,9 @@
           const name = document.createElement("span");
           name.className = "prompt-item-name";
           name.textContent = p.name;
+          name.title = "Edit prompt";
+          name.style.cursor = "pointer";
+          name.onclick = () => beginEditPrompt(p.id);
 
           const del = document.createElement("button");
           del.className = "prompt-item-del";
@@ -3132,11 +3275,27 @@
         if (topSelect) topSelect.value = id;
       }
 
+      // "+ NEW PROMPT": open the editor blank, in create mode.
       function openPromptEditor() {
+        editingPromptId = null;
+        document.getElementById("promptName").value = "";
+        document.getElementById("promptContent").value = "";
+        document.getElementById("promptEditor").style.display = "flex";
+      }
+
+      // Click on a saved prompt's name: open the editor pre-filled with it.
+      // Save then updates that entry in place instead of creating a new one.
+      function beginEditPrompt(id) {
+        const prompt = promptsList.find((p) => p.id === id);
+        if (!prompt) return;
+        editingPromptId = id;
+        document.getElementById("promptName").value = prompt.name;
+        document.getElementById("promptContent").value = prompt.content;
         document.getElementById("promptEditor").style.display = "flex";
       }
 
       function closePromptEditor() {
+        editingPromptId = null;
         document.getElementById("promptEditor").style.display = "none";
       }
 
@@ -3253,15 +3412,23 @@
         const content = document.getElementById("promptContent").value.trim();
         if (!name || !content) return;
 
-        const newPrompt = {
-          id: "prompt_" + Date.now(),
-          name: name,
-          content: content,
-          // Belongs to the mode it was created in (Ollama / LM Studio / llama.cpp).
-          mode: PROMPT_MODE_KEYS.includes(mode) ? mode : "ollama",
-        };
+        const editing = editingPromptId
+          ? promptsList.find((p) => p.id === editingPromptId)
+          : null;
+        if (editing) {
+          // Update in place: same id, same mode, new name/content.
+          editing.name = name;
+          editing.content = content;
+        } else {
+          promptsList.push({
+            id: "prompt_" + Date.now(),
+            name: name,
+            content: content,
+            // Belongs to the mode it was created in (Ollama / LM Studio / llama.cpp).
+            mode: PROMPT_MODE_KEYS.includes(mode) ? mode : "ollama",
+          });
+        }
 
-        promptsList.push(newPrompt);
         try {
           const res = await fetch(apiUrl("/api/prompts"), {
             method: "POST",
@@ -3294,6 +3461,7 @@
           activePromptId = "";
           localStorage.setItem(activePromptStorageKey(mode), "");
         }
+        if (editingPromptId === id) closePromptEditor();
         try {
           const res = await fetch(apiUrl("/api/prompts"), {
             method: "POST",
