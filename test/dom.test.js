@@ -160,6 +160,7 @@ function createFetchStub() {
           },
           chatModes: {
             ollama: { enabled: true },
+            llamacpp: { enabled: true },
             pi: { enabled: false },
             cloud: { enabled: true },
           },
@@ -370,9 +371,10 @@ test("frontend boots without network fetch crashes", async () => {
       .value,
     "5",
   );
+  // MAIN, MODES, DATABASE, PROMPTS, SKILLS + the llama.cpp-only MODELS tab.
   assert.strictEqual(
     dom.window.document.querySelectorAll(".settings-tab").length,
-    5,
+    6,
   );
   assert.strictEqual(
     dom.window.document.getElementById("ollamaFontGroup").parentElement.id,
@@ -447,7 +449,7 @@ test("palette change listener updates UI state", async () => {
       "1.0.5",
   );
 
-  const select = dom.window.document.getElementById("lmStudioPaletteSelect");
+  const select = dom.window.document.getElementById("llamaCppPaletteSelect");
   select.value = "calmblue";
   select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
 
@@ -508,10 +510,16 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
       .display,
     "",
   );
+  // Cloud is a prompt mode: the PROMPTS tab and its subsections are visible,
+  // with its own independent prompts, active selection, and base overrides.
   assert.strictEqual(
     dom.window.document.querySelector('[data-settings-tab="prompts"]').style
       .display,
-    "none",
+    "",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("promptSettingsGroup").style.display,
+    "",
   );
   assert.strictEqual(
     dom.window.document.getElementById("piSettingsGroup").style.display,

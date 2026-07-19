@@ -136,7 +136,7 @@ module.exports = function createChatDomain(deps) {
         model = await resolveAutomaticLocalModel(modeId, baseUrl);
       }
       // Prefer params from the request; fall back to the saved per-mode config.
-      const params = sanitizeLocalParams(body.params || conf.params);
+      const params = sanitizeLocalParams(body.params || conf.params, modeId);
       const { history = [], saveConv, convTitle, library } = body;
       const originalMessage = body.message;
       const slashCommand = parseSlashCommand(originalMessage);
@@ -709,7 +709,10 @@ module.exports = function createChatDomain(deps) {
     if (requiresShellConfirmation) {
       executeAllowed = await requestShellConfirmation({
         emit,
-        title: "Shell Command Execution Request",
+        title:
+          toolCall.function.name === "run_code"
+            ? "Code Execution Request"
+            : "Shell Command Execution Request",
         command: toolCall.function.arguments,
         toolName: toolCall.function.name,
       });
@@ -764,7 +767,7 @@ module.exports = function createChatDomain(deps) {
         request: {
           method: "confirm",
           title,
-          message: `The AI wants to run the following shell command:\n\n${command}\n\nDo you want to allow this?`,
+          message: `The AI wants to run the following ${toolName === "run_code" ? "JavaScript code" : "shell command"}:\n\n${command}\n\nDo you want to allow this?`,
           requireUserInteraction: true,
           danger: true,
         },
@@ -887,7 +890,15 @@ module.exports = function createChatDomain(deps) {
       : Array.isArray(data?.data)
         ? data.data
         : [];
-    const allIds = modelsList.map((m) => m?.key || m?.id).filter(Boolean);
+    // Newer llama.cpp builds list models as { name, model } (a file path)
+    // instead of the OpenAI { id }; accept both and show just the file name —
+    // llama.cpp ignores the request's model field, so the basename is safe.
+    const allIds = modelsList
+      .map((m) => m?.key || m?.id || m?.name || m?.model)
+      .filter(Boolean)
+      .map((id) =>
+        modeId === "llamacpp" ? String(id).split("/").pop() : String(id),
+      );
     // Embedding models (e.g. LM Studio's bundled
     // text-embedding-nomic-embed-text-v1.5) are listed by /v1/models but cannot
     // chat — keep them out of the chat dropdown and report them separately so
@@ -909,11 +920,19 @@ module.exports = function createChatDomain(deps) {
             loadedModel.loaded_instances[0].config?.context_length;
         }
       } else {
-        const r = await fetch(root + "/props", { method: "GET" });
-        if (r.ok) {
-          const d = await r.json().catch(() => null);
-          const n = d?.default_generation_settings?.n_ctx ?? d?.n_ctx;
-          if (typeof n === "number") contextLength = n;
+        // Router-mode llama-server reports the loaded model's real context in
+        // /v1/models meta.n_ctx (its /props answers n_ctx 0). Prefer that;
+        // classic single-model servers still fall through to /props.
+        const withMeta = modelsList.find((m) => Number(m?.meta?.n_ctx) > 0);
+        if (withMeta) {
+          contextLength = Number(withMeta.meta.n_ctx);
+        } else {
+          const r = await fetch(root + "/props", { method: "GET" });
+          if (r.ok) {
+            const d = await r.json().catch(() => null);
+            const n = d?.default_generation_settings?.n_ctx ?? d?.n_ctx;
+            if (typeof n === "number" && n > 0) contextLength = n;
+          }
         }
       }
     } catch (_e) {
@@ -1064,6 +1083,12 @@ module.exports = function createChatDomain(deps) {
     local_notes: '{"action": "read"}',
     time_and_date: '{"timezone": "Australia/Sydney"}',
     shell_command: '{"command": "ls"}',
+    http_request:
+      '{"url": "https://api.example.com/v1/items", "method": "GET", "headers": {"Authorization": "Bearer TOKEN"}}',
+    run_code:
+      '{"code": "const data = [1, 2, 3]; console.log(data.reduce((a, b) => a + b, 0));"}',
+    file_operations:
+      '{"action": "write", "path": "reports/summary.md", "content": "# Report"}',
   };
 
   function getLocalNativeTools() {
@@ -1242,7 +1267,12 @@ module.exports = function createChatDomain(deps) {
   // request, and is never affected by these overrides. "Restore Default"
   // simply deletes the override file — the hardcoded constants are the
   // permanent fallback and are never modified.
-  const SYSTEM_PROMPT_OVERRIDE_MODES = ["ollama", "lmstudio", "llamacpp"];
+  const SYSTEM_PROMPT_OVERRIDE_MODES = [
+    "ollama",
+    "cloud",
+    "lmstudio",
+    "llamacpp",
+  ];
   const SYSTEM_PROMPTS_DIR = path.join(DATA_DIR, "system-prompts");
 
   function systemPromptOverrideFile(modeName, databaseEnabled) {
@@ -1547,9 +1577,16 @@ module.exports = function createChatDomain(deps) {
           typeof body.systemOverride === "string"
             ? body.systemOverride.trim()
             : "";
+        // The user's selected custom Prompt for Cloud mode (topbar prompt
+        // dropdown). Fully REPLACES the base policy text for this request; the
+        // skills message merged below is separate and unaffected.
+        const promptOverlay =
+          typeof body.promptOverlay === "string"
+            ? body.promptOverlay.trim()
+            : "";
         let requestMessages = systemOverride
           ? [{ role: "system", content: systemOverride }, ...messages]
-          : withSharedSystemPrompt(messages, false, "cloud");
+          : withSharedSystemPrompt(messages, false, "cloud", promptOverlay);
         let librarySourceResults = [];
         let libraryPassages = [];
         let databaseContextEnabled = false;

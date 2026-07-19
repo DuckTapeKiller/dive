@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light" data-mode="lmstudio" data-palette="carbon">
+<html lang="en" data-theme="light" data-mode="llamacpp" data-palette="carbon">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -16,11 +16,73 @@
     <div id="topbar">
       <div class="toggle">
         <button
-          id="btnLmStudio"
+          id="btnLlamaCpp"
           class="active"
-          title="LM Studio"
-          aria-label="LM Studio mode"
+          title="llama.cpp"
+          aria-label="llama.cpp mode"
         >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="mode-icon-llamacpp"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M11.264 2.205A4 4 0 0 0 6.42 4.211l-4 8a4 4 0 0 0 1.359 5.117l6 4a4 4 0 0 0 4.438 0l6-4a4 4 0 0 0 1.576-4.592l-2-6a4 4 0 0 0-2.53-2.53z"
+            />
+            <path d="M11.99 22 14 12l7.822 3.184" />
+            <path d="M14 12 8.47 2.302" />
+          </svg>
+        </button>
+        <button id="btnPi" title="Pi" aria-label="Pi mode">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="lucide lucide-pi-icon lucide-pi"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <line x1="9" x2="9" y1="4" y2="20" />
+            <path d="M4 7c0-1.7 1.3-3 3-3h13" />
+            <path d="M18 20c-1.7 0-3-1.3-3-3V4" />
+          </svg>
+        </button>
+        <button id="btnCloud" title="Cloud" aria-label="Cloud mode">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="lucide lucide-cloud-drizzle-icon lucide-cloud-drizzle"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path
+              d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"
+            />
+            <path d="M8 19v1" />
+            <path d="M8 14v1" />
+            <path d="M16 19v1" />
+            <path d="M16 14v1" />
+            <path d="M12 21v1" />
+            <path d="M12 16v1" />
+          </svg>
+        </button>
+        <button id="btnLmStudio" title="LM Studio" aria-label="LM Studio mode">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24"
@@ -71,67 +133,6 @@
               d="M0 0 C2.0360882 1.27754554 4.04109119 2.60699818 6 4 C10.02757055 4.39211447 10.02757055 4.39211447 12.75 2 C17.09409581 -0.67328973 18.96500027 -0.71928568 24 0 C27.64184981 2.55704348 28.77792202 4.22272709 30 8.5 C30 12.58464363 29.57248653 13.86478204 27 17 C26.44183594 17.35578125 25.88367188 17.7115625 25.30859375 18.078125 C23.02377197 19.58543957 21.60254774 20.75164944 20 23 C19.30908013 26.43323071 18.88137169 29.68617964 18.70678711 33.17504883 C18.4110789 38.02848273 17.45350623 40.55950133 14 44 C10.79826746 45.60086627 7.47422941 45.49917089 4 45 C1.1899654 43.20636089 -0.50940468 41.98119065 -2 39 C-2 37.17984456 -1.99848828 35.35966561 -1.98632812 33.53955078 C-1.9779707 26.44402698 -1.9779707 26.44402698 -5.03125 20.234375 C-7.27309187 18.3188772 -9.56561919 16.65725155 -12 15 C-13.55024464 11.89951072 -13.28992015 9.42105782 -13 6 C-9.30298192 0.33123894 -6.70067405 -0.5583895 0 0 Z"
               fill="currentColor"
               transform="translate(311,324)"
-            />
-          </svg>
-        </button>
-        <button id="btnPi" title="Pi" aria-label="Pi mode">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-pi-icon lucide-pi"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <line x1="9" x2="9" y1="4" y2="20" />
-            <path d="M4 7c0-1.7 1.3-3 3-3h13" />
-            <path d="M18 20c-1.7 0-3-1.3-3-3V4" />
-          </svg>
-        </button>
-        <button id="btnCloud" title="Cloud" aria-label="Cloud mode">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="lucide lucide-cloud-drizzle-icon lucide-cloud-drizzle"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path
-              d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"
-            />
-            <path d="M8 19v1" />
-            <path d="M8 14v1" />
-            <path d="M16 19v1" />
-            <path d="M16 14v1" />
-            <path d="M12 21v1" />
-            <path d="M12 16v1" />
-          </svg>
-        </button>
-        <button
-          id="btnLlamaCpp"
-          title="llama.cpp"
-          aria-label="llama.cpp mode"
-          style="display: none"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 512 512"
-            fill="currentColor"
-            class="mode-icon-llamacpp"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path
-              d="m356.4 201.3-32.8 58.3c-43.3-33.3-107.4-38.2-150.7-2.4-69.8 57.6-64.9 190.8 43.7 191.6 30.4 0 56.2-14.3 83.9-23.8l14.6 58.1c-24.6 11.4-49.6 23.1-76.6 26.7-246 33.5-231.9-321.6-9.5-340.1 46.7-3.9 87.8 8.3 127.6 31.6zm-169.9-55.9c-37.4 11.2-72.2 31.8-98.5 60.8-4.9-58.8 8.3-177.7 73.7-201 9.7-3.4 43-11.9 42.1 5.3-1 17.3-24.1 46.9-29.7 63-9.7 28.2-.7 47.6 12.6 72.2zm92.4 252.8h-36.5v-41.3h-41.3v-34h37.7l3.6-3.6v-40.1h36.5V323h38.9v34h-38.9zm133.7-41.3v41.3h-36.5v-41.3h-38.9v-34h38.9v-43.8h36.5v40.1l3.6 3.6h37.7v34h-41.3zM305.4 31.4c4.9 7.3-22.6 38.7-27 46.7-12.6 23.8-4.1 37.4 5.3 60-27.5-4.1-53-.7-80.2 2.4C209.6 88.3 239 12.2 305.4 31.4"
             />
           </svg>
         </button>
@@ -923,6 +924,16 @@
             >
               SKILLS
             </button>
+            <button
+              type="button"
+              class="settings-tab"
+              data-settings-tab="llamamodels"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabLlamaModels"
+            >
+              MODELS
+            </button>
           </div>
           <div
             id="settingsTabMain"
@@ -953,6 +964,12 @@
             id="settingsTabSkills"
             class="settings-tab-panel"
             data-settings-panel="skills"
+            role="tabpanel"
+          ></div>
+          <div
+            id="settingsTabLlamaModels"
+            class="settings-tab-panel"
+            data-settings-panel="llamamodels"
             role="tabpanel"
           ></div>
           <div id="modesSettingsGroup" class="setting-group">
@@ -1073,17 +1090,17 @@
               <option value="forest">Forest Sage</option>
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
-              <option value="nordic">Nordic Light</option>
-              <option value="carbon">Carbon (Default)</option>
+              <option value="nordic">Nordic Light (Default)</option>
+              <option value="carbon">Carbon</option>
             </select>
             <div class="setting-help">Theme used in LM Studio mode.</div>
             <label>FONT FAMILY</label>
             <select id="lmStudioFontPreset">
-              <option value="marcellus">Marcellus (Default)</option>
+              <option value="marcellus">Marcellus</option>
               <option value="space-mono">Space Mono</option>
               <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
-              <option value="sen">Sen</option>
+              <option value="sen">Sen (Default)</option>
               <option value="ia-writer-duo-s">iA Writer Duo S</option>
               <option value="ibm-plex-serif">IBM Plex Serif</option>
               <option value="ibarra-real-nova">Ibarra Real Nova</option>
@@ -1094,7 +1111,7 @@
             <input
               id="lmStudioFontCustom"
               type="text"
-              placeholder="Marcellus, serif"
+              placeholder="Sen, sans-serif"
               style="display: none"
             />
             <div class="setting-help">Font used in LM Studio mode.</div>
@@ -1141,15 +1158,16 @@
             class="setting-group"
             style="display: none"
           >
-            <label>LLAMA.CPP SERVER URL</label>
-            <input
-              id="llamaCppBaseUrl"
-              type="text"
-              placeholder="http://127.0.0.1:8080/v1"
-            />
+            <label>MODEL LIBRARY (MANAGED SERVER)</label>
+            <div id="llamaCppManagerStatus" class="setting-help"></div>
+            <div id="llamaCppManagerModels"></div>
             <div class="setting-help">
-              Base URL of the llama.cpp `llama-server` (OpenAI-compatible,
-              default port 8080).
+              LOAD loads that model — on your external llama-server (router)
+              when one is running on the port, otherwise by starting
+              llama-server inside Dive. UNLOAD frees a router model's memory.
+              LOAD also connects this mode to it — no terminal needed.
+              Downloads, memory settings, eviction policy and deletion live in
+              the MODELS tab.
             </div>
             <label>MODEL</label>
             <select id="llamaCppModelSelect"></select>
@@ -1234,19 +1252,17 @@
               <option value="orange">Cyber Orange</option>
               <option value="grey">Brutalist Slate</option>
               <option value="solarised">Solarised Everforest</option>
-              <option value="forest">Forest Sage (Default)</option>
+              <option value="forest">Forest Sage</option>
               <option value="calmblue">Gentle Blue</option>
               <option value="retro">Retro Amber</option>
               <option value="nordic">Nordic Light</option>
-              <option value="carbon">Carbon</option>
+              <option value="carbon">Carbon (Default)</option>
             </select>
             <div class="setting-help">Theme used in llama.cpp mode.</div>
             <label>FONT FAMILY</label>
             <select id="llamaCppFontPreset">
               <option value="space-mono">Space Mono</option>
-              <option value="ia-writer-quattro-s">
-                iA Writer Quattro S (Default)
-              </option>
+              <option value="ia-writer-quattro-s">iA Writer Quattro S</option>
               <option value="montserrat">Montserrat</option>
               <option value="sen">Sen</option>
               <option value="ia-writer-duo-s">iA Writer Duo S</option>
@@ -1254,13 +1270,13 @@
               <option value="ibarra-real-nova">Ibarra Real Nova</option>
               <option value="lora">Lora</option>
               <option value="ia-writer-mono-s">iA Writer Mono S</option>
-              <option value="marcellus">Marcellus</option>
+              <option value="marcellus">Marcellus (Default)</option>
               <option value="custom">Custom…</option>
             </select>
             <input
               id="llamaCppFontCustom"
               type="text"
-              placeholder="Montserrat, sans-serif"
+              placeholder="Marcellus, serif"
               style="display: none"
             />
             <div class="setting-help">Font used in llama.cpp mode.</div>
@@ -1300,6 +1316,115 @@
             <div class="setting-help">
               Passed to llama.cpp on each request (temperature, top-p/k, min-p,
               penalties, seed, max tokens).
+            </div>
+          </div>
+          <div
+            id="llamaCppModelsGroup"
+            class="setting-group"
+            style="display: none"
+          >
+            <label>MANAGED SERVERS</label>
+            <div id="llamaCppTabStatus" class="setting-help"></div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="llamaCppEvictInput" type="checkbox" />
+                EVICT LOADED MODEL WHEN A NEW MODEL IS LOADED
+              </label>
+            </div>
+            <div class="setting-help">
+              On (default): loading a chat model unloads the previous one first,
+              so only one chat model uses memory at a time. Off: a load is
+              refused until you stop the running model yourself. Embedding
+              models are exempt either way — they run in their own server (port
+              +1) and are never evicted by chat loads.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="llamaCppAutostartInput" type="checkbox" />
+                LOAD LAST MODEL WHEN DIVE STARTS
+              </label>
+            </div>
+            <div class="setting-help">
+              Reloads the most recently loaded chat model automatically when the
+              Dive server starts. Combined with running Dive at login
+              (install-launchagent.sh), llama.cpp comes up with your laptop.
+            </div>
+            <label>MODEL LIBRARY</label>
+            <div id="llamaCppTabModels"></div>
+            <div class="setting-help">
+              CONTEXT is a slider capped at the model's trained maximum (read
+              from the GGUF header); KV-cache memory grows with it. GPU LAYERS
+              controls memory placement: 99 = everything on the GPU (fastest),
+              lower values move layers to CPU RAM to save GPU memory, 0 = CPU
+              only. EMBED marks the file as an embedding model (runs with
+              --embedding in the separate embedding server). Changes apply on
+              the next load. × deletes the file from disk.
+            </div>
+            <label>MODELS FOLDER</label>
+            <input id="llamaCppModelsDir" type="text" />
+            <div class="setting-help">
+              Folder scanned for .gguf model files. Hugging Face downloads are
+              saved here. Default: ~/models
+            </div>
+            <label>SERVER PORT</label>
+            <input
+              id="llamaCppPortInput"
+              type="number"
+              min="1024"
+              max="65534"
+            />
+            <div class="setting-help">
+              Port the managed llama-server listens on (default 8130). The
+              embedding server uses this port +1. Applies on the next load.
+            </div>
+            <label>LLAMA-SERVER BINARY</label>
+            <input id="llamaCppBinaryPath" type="text" />
+            <div class="setting-help">
+              Full path to the llama-server executable. Leave empty to
+              auto-detect from PATH (e.g. a Homebrew install).
+            </div>
+            <label>EXTRA ARGUMENTS</label>
+            <input
+              id="llamaCppExtraArgs"
+              type="text"
+              placeholder="e.g. --no-mmap --seed 42"
+            />
+            <div class="setting-help">
+              Extra command-line flags appended to every llama-server launch,
+              for options not covered above. See `llama-server --help`.
+            </div>
+            <label>DOWNLOAD MODELS FROM HUGGING FACE</label>
+            <div class="setting-row-inline">
+              <input
+                id="llamaCppHfQuery"
+                type="text"
+                placeholder="e.g. TinyLlama, Qwen2.5 3B Instruct, Gemma 2"
+                style="flex: 1"
+              />
+              <button
+                id="llamaCppHfSearchBtn"
+                type="button"
+                class="settings-action-btn"
+              >
+                SEARCH
+              </button>
+            </div>
+            <div id="llamaCppHfResults"></div>
+            <div id="llamaCppHfDownload"></div>
+            <div class="setting-help">
+              Search GGUF repositories, pick a quantization (Q4_K_M is the usual
+              balance of quality and size), and the file lands in your models
+              folder ready to load.
+            </div>
+            <label>SERVER URL (ADVANCED)</label>
+            <input
+              id="llamaCppBaseUrl"
+              type="text"
+              placeholder="http://127.0.0.1:8080/v1"
+            />
+            <div class="setting-help">
+              Managed automatically when you LOAD a model. Only change this if
+              you run your own external `llama-server`.
             </div>
           </div>
           <div id="piPaletteGroup" class="setting-group">
@@ -2124,9 +2249,9 @@
                 <button
                   type="button"
                   class="search-algo-mode-btn"
-                  data-search-algo-mode="ollama"
+                  data-search-algo-mode="llamacpp"
                 >
-                  OLLAMA
+                  LLAMA.CPP
                 </button>
                 <button
                   type="button"
@@ -2152,9 +2277,9 @@
                 <button
                   type="button"
                   class="search-algo-mode-btn"
-                  data-search-algo-mode="llamacpp"
+                  data-search-algo-mode="ollama"
                 >
-                  LLAMA.CPP
+                  OLLAMA
                 </button>
               </div>
               <div class="setting-help">

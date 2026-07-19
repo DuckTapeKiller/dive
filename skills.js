@@ -600,28 +600,34 @@ async function executeFactCheck({ claim, language = "en" }, context = {}) {
   return `### Wikipedia findings:\n${wiki}\n\n### Britannica findings:\n${brit}\n\n### Web search findings:\n${ddg}`;
 }
 
-// Read a URL's main content as clean text. SSRF-guarded. Tries Jina Reader for
-// LLM-ready markdown, then a direct fetch + boilerplate strip. Returns
-// { ok, text } or { ok:false, error }. Shared by web_scraper and deep_research.
-async function readUrlContent(url, maxChars = 6000) {
+// SSRF guard shared by web_scraper, deep_research and http_request: only
+// http(s), and never local or private network addresses. Returns an error
+// string, or null when the URL is safe to fetch.
+function urlGuardError(url) {
   let parsed;
   try {
     parsed = new URL(url);
   } catch {
-    return { ok: false, error: "Invalid URL." };
+    return "Invalid URL.";
   }
   if (!["http:", "https:"].includes(parsed.protocol)) {
-    return { ok: false, error: "Only http and https URLs are allowed." };
+    return "Only http and https URLs are allowed.";
   }
   const h = parsed.hostname.toLowerCase();
   const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
   const PRIVATE_RANGES = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
   if (BLOCKED_HOSTS.has(h) || PRIVATE_RANGES.test(h)) {
-    return {
-      ok: false,
-      error: "Access to local or private network addresses is not allowed.",
-    };
+    return "Access to local or private network addresses is not allowed.";
   }
+  return null;
+}
+
+// Read a URL's main content as clean text. SSRF-guarded. Tries Jina Reader for
+// LLM-ready markdown, then a direct fetch + boilerplate strip. Returns
+// { ok, text } or { ok:false, error }. Shared by web_scraper and deep_research.
+async function readUrlContent(url, maxChars = 6000) {
+  const guardError = urlGuardError(url);
+  if (guardError) return { ok: false, error: guardError };
   // 1) Jina Reader (clean markdown, no key). Falls through on JSON error.
   try {
     const md = await fetchHtml(`https://r.jina.ai/${url}`, {
@@ -1078,6 +1084,383 @@ async function executeShellCommand({ command }) {
   });
 }
 
+// ============================================================================
+// HTTP REQUEST — agent-grade HTTP client. Unlike web_scraper (which extracts
+// readable text for humans), this returns the raw response with status code
+// and headers, supports every method, custom headers, request bodies, and
+// per-session cookie jars so multi-step API flows (login -> fetch) work.
+// SSRF-guarded like web_scraper. In-memory jars only; nothing is persisted.
+// ============================================================================
+
+const HTTP_SESSION_JARS = new Map(); // session name -> Map(host -> Map(cookieName -> value))
+const HTTP_BODY_MAX_CHARS = 8000;
+
+function jarFor(session, host) {
+  if (!HTTP_SESSION_JARS.has(session))
+    HTTP_SESSION_JARS.set(session, new Map());
+  const byHost = HTTP_SESSION_JARS.get(session);
+  if (!byHost.has(host)) byHost.set(host, new Map());
+  return byHost.get(host);
+}
+
+function storeSetCookies(jar, setCookieHeaders) {
+  for (const raw of setCookieHeaders || []) {
+    const pair = String(raw).split(";")[0];
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+}
+
+function cookieHeaderFrom(jar) {
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+// One raw request; resolves { statusCode, headers, body } with the body
+// decompressed. Does NOT follow redirects itself — the caller does, so each
+// hop's Set-Cookie lands in the jar.
+function rawHttpRequest(url, { method, headers, body, timeout }) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith("https") ? https : http;
+    const req = lib.request(url, { method, headers }, (res) => {
+      const enc = String(res.headers["content-encoding"] || "").toLowerCase();
+      let stream = res;
+      if (enc === "gzip") stream = res.pipe(zlib.createGunzip());
+      else if (enc === "deflate") stream = res.pipe(zlib.createInflate());
+      else if (enc === "br") stream = res.pipe(zlib.createBrotliDecompress());
+      const chunks = [];
+      stream.on("data", (c) => chunks.push(c));
+      stream.on("end", () =>
+        resolve({
+          statusCode: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString("utf8"),
+        }),
+      );
+      stream.on("error", reject);
+    });
+    req.setTimeout(timeout, () => req.destroy(new Error("Request timed out")));
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+async function executeHttpRequest({
+  url,
+  method = "GET",
+  headers = {},
+  body,
+  timeout_ms,
+  follow_redirects = true,
+  session,
+}) {
+  try {
+    const verb = String(method || "GET").toUpperCase();
+    if (
+      !["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(
+        verb,
+      )
+    ) {
+      return `HTTP Request Error: unsupported method "${method}".`;
+    }
+    const timeout = Math.max(
+      1000,
+      Math.min(Number(timeout_ms) || REQUEST_TIMEOUT_MS, 60000),
+    );
+    const sessionName =
+      typeof session === "string" && session.trim() ? session.trim() : "";
+    let currentUrl = url;
+    let payload =
+      body === undefined || body === null
+        ? undefined
+        : typeof body === "string"
+          ? body
+          : JSON.stringify(body);
+    let response = null;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const guardError = urlGuardError(currentUrl);
+      if (guardError) return `HTTP Request Error: ${guardError}`;
+      const host = new URL(currentUrl).hostname.toLowerCase();
+      const jar = sessionName ? jarFor(sessionName, host) : null;
+      const reqHeaders = {
+        "User-Agent": "Dive-Agent/1.0",
+        "Accept-Encoding": "gzip, deflate, br",
+        ...(headers && typeof headers === "object" ? headers : {}),
+      };
+      if (
+        payload !== undefined &&
+        !("Content-Type" in reqHeaders) &&
+        !("content-type" in reqHeaders)
+      ) {
+        reqHeaders["Content-Type"] =
+          typeof body === "object" ? "application/json" : "text/plain";
+      }
+      if (jar && jar.size && !reqHeaders.Cookie && !reqHeaders.cookie) {
+        reqHeaders.Cookie = cookieHeaderFrom(jar);
+      }
+      response = await rawHttpRequest(currentUrl, {
+        method: verb,
+        headers: reqHeaders,
+        body: payload,
+        timeout,
+      });
+      if (jar) storeSetCookies(jar, response.headers["set-cookie"]);
+      const isRedirect =
+        response.statusCode >= 300 &&
+        response.statusCode < 400 &&
+        response.headers.location;
+      if (!isRedirect || follow_redirects === false) break;
+      if (hop === MAX_REDIRECTS)
+        return "HTTP Request Error: too many redirects.";
+      currentUrl = new URL(response.headers.location, currentUrl).toString();
+      // Per HTTP semantics, redirects after POST are re-requested as GET.
+      if (verb !== "GET" && verb !== "HEAD") payload = undefined;
+    }
+    const shownHeaders = {};
+    for (const key of [
+      "content-type",
+      "content-length",
+      "location",
+      "retry-after",
+      "x-ratelimit-remaining",
+      "www-authenticate",
+    ]) {
+      if (response.headers[key]) shownHeaders[key] = response.headers[key];
+    }
+    let bodyText = String(response.body || "");
+    const contentType = String(response.headers["content-type"] || "");
+    if (/json/i.test(contentType)) {
+      try {
+        bodyText = JSON.stringify(JSON.parse(bodyText), null, 2);
+      } catch {
+        /* leave the body as-is */
+      }
+    }
+    if (bodyText.length > HTTP_BODY_MAX_CHARS) {
+      bodyText =
+        bodyText.slice(0, HTTP_BODY_MAX_CHARS) + "\n... [BODY TRUNCATED]";
+    }
+    let out = `HTTP ${response.statusCode} — ${verb} ${currentUrl}\n`;
+    out += `Headers: ${JSON.stringify(shownHeaders)}\n`;
+    if (sessionName) {
+      out += `Cookie session: "${sessionName}" (cookies persist across http_request calls with this session name)\n`;
+    }
+    out += `\n${bodyText || "(empty body)"}`;
+    return out;
+  } catch (e) {
+    return `HTTP Request Error: ${e.message}`;
+  }
+}
+
+// ============================================================================
+// RUN CODE — executes a model-written JavaScript snippet in an isolated
+// worker_threads Worker with a hard timeout and memory limits. Same isolation
+// caveats as custom JS skills (workers can require Node built-ins), which is
+// why every call is gated behind the same explicit user confirmation as
+// shell_command. Console output is captured and returned with the result.
+// ============================================================================
+
+function executeRunCode({ code, timeout_ms }) {
+  const source = String(code || "");
+  if (!source.trim()) {
+    return Promise.resolve("Run Code Error: no code provided.");
+  }
+  const timeout = Math.max(1000, Math.min(Number(timeout_ms) || 15000, 60000));
+  return new Promise((resolve) => {
+    const workerSrc = `
+      const { parentPort } = require('worker_threads');
+      const logs = [];
+      const fmt = (v) => {
+        if (typeof v === 'string') return v;
+        try { return JSON.stringify(v); } catch { return String(v); }
+      };
+      for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+        console[level] = (...a) => logs.push(a.map(fmt).join(' '));
+      }
+      (async () => {
+        ${source}
+      })()
+        .then((result) => parentPort.postMessage({ ok: true, result, logs }))
+        .catch((err) => parentPort.postMessage({
+          ok: false, error: (err && err.stack) || String(err), logs,
+        }));
+    `;
+    let worker;
+    try {
+      worker = new Worker(workerSrc, {
+        eval: true,
+        resourceLimits: {
+          maxOldGenerationSizeMb: 128,
+          maxYoungGenerationSizeMb: 32,
+        },
+      });
+    } catch (e) {
+      return resolve(`Run Code Error: failed to start worker: ${e.message}`);
+    }
+    const finish = (text) => {
+      clearTimeout(timer);
+      worker.terminate();
+      resolve(text);
+    };
+    const timer = setTimeout(
+      () => finish(`Run Code Error: timed out after ${timeout}ms.`),
+      timeout,
+    );
+    worker.on("message", ({ ok, result, logs, error }) => {
+      let out = "";
+      if (logs && logs.length) out += `Console output:\n${logs.join("\n")}\n\n`;
+      if (ok) {
+        const value =
+          result === undefined
+            ? ""
+            : typeof result === "object"
+              ? JSON.stringify(result, null, 2)
+              : String(result);
+        if (value) out += `Return value:\n${value}`;
+        finish(
+          out.trim() ||
+            "Code ran successfully with no output. Use console.log or a return statement to produce output.",
+        );
+      } else {
+        finish((out + `Error:\n${error}`).trim());
+      }
+    });
+    worker.on("error", (err) => finish(`Run Code Error: ${err.message}`));
+    worker.on("exit", (exitCode) => {
+      if (exitCode !== 0)
+        finish(`Run Code Error: worker exited with code ${exitCode}.`);
+    });
+  });
+}
+
+// ============================================================================
+// FILE OPERATIONS — read/write/list/find inside a dedicated workspace folder
+// (DATA_DIR/workspace). Everything is confined to that folder by a resolved-
+// path check, which is why this skill does not need the shell confirmation
+// gate: it can touch nothing outside its sandbox.
+// ============================================================================
+
+const FILE_READ_MAX_CHARS = 50000;
+const FILE_FIND_MAX_RESULTS = 100;
+
+function resolveWorkspacePath(dataDir, relPath) {
+  const root = path.join(dataDir, "workspace");
+  const target = path.resolve(root, String(relPath || "."));
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    return {
+      error: "Path escapes the workspace. Use relative paths inside it.",
+    };
+  }
+  return { root, target };
+}
+
+function walkWorkspace(dir, root, matcher, results) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (results.length >= FILE_FIND_MAX_RESULTS) return;
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const full = path.join(dir, entry.name);
+    if (matcher(entry.name)) {
+      results.push(
+        path.relative(root, full) + (entry.isDirectory() ? "/" : ""),
+      );
+    }
+    if (entry.isDirectory()) walkWorkspace(full, root, matcher, results);
+  }
+}
+
+async function executeFileOperations(
+  { action, path: relPath, content, pattern },
+  dataDir,
+) {
+  if (!dataDir) return "File Operations Error: no data directory available.";
+  const resolved = resolveWorkspacePath(dataDir, relPath);
+  if (resolved.error) return `File Operations Error: ${resolved.error}`;
+  const { root, target } = resolved;
+  const rel = path.relative(root, target) || ".";
+  try {
+    fs.mkdirSync(root, { recursive: true });
+    switch (action) {
+      case "list": {
+        const entries = fs.readdirSync(target, { withFileTypes: true });
+        if (!entries.length) return `Directory "${rel}" is empty.`;
+        const lines = entries.map((e) => {
+          if (e.isDirectory()) return `${e.name}/`;
+          const size = fs.statSync(path.join(target, e.name)).size;
+          return `${e.name} (${size} bytes)`;
+        });
+        return `Contents of workspace/${rel}:\n${lines.join("\n")}`;
+      }
+      case "read": {
+        const text = fs.readFileSync(target, "utf8");
+        return text.length > FILE_READ_MAX_CHARS
+          ? text.slice(0, FILE_READ_MAX_CHARS) + "\n... [FILE TRUNCATED]"
+          : text || "(empty file)";
+      }
+      case "write":
+      case "append": {
+        if (typeof content !== "string") {
+          return "File Operations Error: 'content' (string) is required for write/append.";
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        if (action === "append") fs.appendFileSync(target, content, "utf8");
+        else fs.writeFileSync(target, content, "utf8");
+        return `${action === "append" ? "Appended to" : "Wrote"} workspace/${rel} (${content.length} chars).`;
+      }
+      case "delete": {
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) fs.rmdirSync(target);
+        else fs.unlinkSync(target);
+        return `Deleted workspace/${rel}.`;
+      }
+      case "mkdir": {
+        fs.mkdirSync(target, { recursive: true });
+        return `Created directory workspace/${rel}.`;
+      }
+      case "info": {
+        const stat = fs.statSync(target);
+        return (
+          `workspace/${rel}: ${stat.isDirectory() ? "directory" : "file"}, ` +
+          `${stat.size} bytes, modified ${stat.mtime.toISOString()}`
+        );
+      }
+      case "find": {
+        const glob = String(pattern || "*");
+        const re = new RegExp(
+          "^" +
+            glob
+              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+              .replace(/\*/g, ".*")
+              .replace(/\?/g, ".") +
+            "$",
+          "i",
+        );
+        const results = [];
+        walkWorkspace(target, root, (name) => re.test(name), results);
+        if (!results.length)
+          return `No files matching "${glob}" under workspace/${rel}.`;
+        let out = `Files matching "${glob}":\n${results.join("\n")}`;
+        if (results.length >= FILE_FIND_MAX_RESULTS)
+          out += "\n... [MORE RESULTS OMITTED]";
+        return out;
+      }
+      default:
+        return "File Operations Error: invalid action. Use list, read, write, append, delete, mkdir, info, or find.";
+    }
+  } catch (e) {
+    if (e.code === "ENOENT")
+      return `File Operations Error: "${rel}" does not exist.`;
+    if (e.code === "ENOTEMPTY")
+      return `File Operations Error: directory "${rel}" is not empty.`;
+    return `File Operations Error: ${e.message}`;
+  }
+}
+
 function findCustomSkill(name, dataDir) {
   if (!dataDir) return null;
   const customSkillsFile = path.join(dataDir, "custom_skills.json");
@@ -1088,7 +1471,7 @@ function findCustomSkill(name, dataDir) {
 }
 
 function skillRequiresShellConfirmation(name, dataDir) {
-  if (name === "shell_command") return true;
+  if (name === "shell_command" || name === "run_code") return true;
   try {
     return findCustomSkill(name, dataDir)?.type === "shell";
   } catch (_error) {
@@ -1401,6 +1784,114 @@ When asked about these relationships, ALWAYS query both words and explain the di
           },
         },
         required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description:
+        "Full-control HTTP client for calling APIs: any method, custom headers (auth tokens, API keys, Accept), request body, timeout, and optional named cookie sessions that persist across calls (login then fetch). Returns the status code, key response headers, and the raw body (JSON pretty-printed). Use this for REST/JSON APIs and endpoints that need specific headers; use web_scraper instead when you just want the readable text of a web page.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The full URL to request." },
+          method: {
+            type: "string",
+            enum: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+            description: "HTTP method. Defaults to GET.",
+          },
+          headers: {
+            type: "object",
+            description:
+              'Request headers, e.g. {"Authorization": "Bearer ...", "Accept": "application/json"}.',
+          },
+          body: {
+            type: ["string", "object"],
+            description:
+              "Request body. Objects are sent as JSON with Content-Type application/json.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: "Timeout in milliseconds (1000-60000, default 15000).",
+          },
+          follow_redirects: {
+            type: "boolean",
+            description:
+              "Follow 3xx redirects (default true). Set false to inspect the redirect response itself.",
+          },
+          session: {
+            type: "string",
+            description:
+              "Optional cookie-session name. Calls sharing the same name share cookies (Set-Cookie is stored and replayed), enabling login flows.",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_code",
+      description:
+        "Executes a JavaScript (Node.js) snippet in an isolated worker and returns its console output and return value. Use it to parse or transform data, run real calculations or simulations, test logic, or format output — anything too complex for the calculator. The snippet runs inside an async function: use console.log(...) for output and 'return' for a final value; await is allowed. Each call requires the user's explicit confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: {
+            type: "string",
+            description:
+              "The JavaScript code to run. Log results with console.log or end with a return statement.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: "Timeout in milliseconds (1000-60000, default 15000).",
+          },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "file_operations",
+      description:
+        "Reads, writes and organizes files inside a dedicated workspace folder (sandboxed; it cannot touch anything outside it). Use it to save reports or drafts, keep scratch data between steps, and read files back later. Actions: list, read, write, append, delete, mkdir, info, and find (glob pattern like '*.md'). Paths are relative to the workspace root.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "list",
+              "read",
+              "write",
+              "append",
+              "delete",
+              "mkdir",
+              "info",
+              "find",
+            ],
+            description: "The operation to perform.",
+          },
+          path: {
+            type: "string",
+            description:
+              "Path relative to the workspace root, e.g. 'reports/summary.md'. Defaults to the root.",
+          },
+          content: {
+            type: "string",
+            description: "Text to write (required for write/append).",
+          },
+          pattern: {
+            type: "string",
+            description: "Filename glob for find, e.g. '*.json' (default '*').",
+          },
+        },
+        required: ["action"],
       },
     },
   },
@@ -2265,6 +2756,15 @@ async function executeSkill(toolCall, context = {}) {
         return "Error: shell command execution requires explicit user confirmation.";
       }
       return await executeShellCommand(args);
+    case "http_request":
+      return await executeHttpRequest(args);
+    case "run_code":
+      if (!context.allowShellCommand) {
+        return "Error: code execution requires explicit user confirmation.";
+      }
+      return await executeRunCode(args);
+    case "file_operations":
+      return await executeFileOperations(args, context.dataDir);
     default: {
       // Plugin skills (loaded from ~/dive/plugins) take precedence over the
       // UI-defined custom skills; executePluginSkill returns null when no

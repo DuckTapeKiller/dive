@@ -139,6 +139,132 @@ test("Custom JS Skill Worker", async () => {
   }
 });
 
+test("Run Code Skill - executes JS with confirmation gate", async () => {
+  const denied = await executeSkill(
+    {
+      function: {
+        name: "run_code",
+        arguments: JSON.stringify({ code: "return 1 + 1;" }),
+      },
+    },
+    {},
+  );
+  assert.match(denied, /requires explicit user confirmation/);
+  assert.strictEqual(skillRequiresShellConfirmation("run_code", null), true);
+
+  const allowed = await executeSkill(
+    {
+      function: {
+        name: "run_code",
+        arguments: JSON.stringify({
+          code: "console.log('sum:', [1,2,3].reduce((a,b)=>a+b,0)); return 'done';",
+        }),
+      },
+    },
+    { allowShellCommand: true },
+  );
+  assert.match(allowed, /sum: 6/);
+  assert.match(allowed, /done/);
+
+  const failed = await executeSkill(
+    {
+      function: {
+        name: "run_code",
+        arguments: JSON.stringify({ code: "throw new Error('boom');" }),
+      },
+    },
+    { allowShellCommand: true },
+  );
+  assert.match(failed, /boom/);
+});
+
+test("File Operations Skill - sandboxed workspace", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chat-test-"));
+  const call = (args) =>
+    executeSkill(
+      {
+        function: {
+          name: "file_operations",
+          arguments: JSON.stringify(args),
+        },
+      },
+      { dataDir: tmpDir },
+    );
+  try {
+    const write = await call({
+      action: "write",
+      path: "reports/summary.md",
+      content: "# Report",
+    });
+    assert.match(write, /Wrote workspace\/reports\/summary\.md/);
+    assert.strictEqual(
+      fs.readFileSync(
+        path.join(tmpDir, "workspace", "reports", "summary.md"),
+        "utf8",
+      ),
+      "# Report",
+    );
+
+    const read = await call({ action: "read", path: "reports/summary.md" });
+    assert.strictEqual(read, "# Report");
+
+    const list = await call({ action: "list", path: "reports" });
+    assert.match(list, /summary\.md/);
+
+    const found = await call({ action: "find", pattern: "*.md" });
+    assert.match(found, /reports\/summary\.md/);
+
+    const escape = await call({
+      action: "read",
+      path: "../custom_skills.json",
+    });
+    assert.match(escape, /escapes the workspace/);
+
+    const missing = await call({ action: "read", path: "nope.txt" });
+    assert.match(missing, /does not exist/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("HTTP Request Skill - guards and validation", async () => {
+  const local = await executeSkill(
+    {
+      function: {
+        name: "http_request",
+        arguments: JSON.stringify({ url: "http://127.0.0.1:8080/admin" }),
+      },
+    },
+    {},
+  );
+  assert.match(local, /local or private network/);
+
+  const badProto = await executeSkill(
+    {
+      function: {
+        name: "http_request",
+        arguments: JSON.stringify({ url: "file:///etc/passwd" }),
+      },
+    },
+    {},
+  );
+  assert.match(badProto, /Only http and https/);
+
+  const badMethod = await executeSkill(
+    {
+      function: {
+        name: "http_request",
+        arguments: JSON.stringify({
+          url: "https://example.com",
+          method: "TRACE",
+        }),
+      },
+    },
+    {},
+  );
+  assert.match(badMethod, /unsupported method/);
+});
+
 test("Custom shell skills require explicit confirmation", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chat-test-"));
   try {

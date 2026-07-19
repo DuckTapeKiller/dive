@@ -1513,6 +1513,7 @@
           "customSkillsGroup",
           "bookSearchConfigGroup",
         ]);
+        appendSettingsGroups("settingsTabLlamaModels", ["llamaCppModelsGroup"]);
 
         const settingsBody = document.getElementById("settingsBody");
         const settingsFooter = document.querySelector(".settings-footer");
@@ -1521,7 +1522,14 @@
       }
 
       function switchSettingsTab(tabName) {
-        const validTabs = ["main", "modes", "database", "prompts", "skills"];
+        const validTabs = [
+          "main",
+          "modes",
+          "database",
+          "prompts",
+          "skills",
+          "llamamodels",
+        ];
         const nextTab = validTabs.includes(tabName) ? tabName : "main";
         activeSettingsTab = nextTab;
 
@@ -1545,7 +1553,9 @@
           typeof state === "object" && state.isCloudMode === true;
         const isLocalMode =
           typeof state === "object" && state.isLocalMode === true;
-        const promptsVisible = isOllamaMode || isLocalMode;
+        const isLlamaCppMode =
+          typeof state === "object" && state.isLlamaCppMode === true;
+        const promptsVisible = isOllamaMode || isCloudMode || isLocalMode;
         const skillsVisible = isOllamaMode || isCloudMode || isLocalMode;
         const promptsTab = document.querySelector(
           '.settings-tab[data-settings-tab="prompts"]',
@@ -1553,11 +1563,18 @@
         const skillsTab = document.querySelector(
           '.settings-tab[data-settings-tab="skills"]',
         );
+        const llamaModelsTab = document.querySelector(
+          '.settings-tab[data-settings-tab="llamamodels"]',
+        );
         if (promptsTab) promptsTab.style.display = promptsVisible ? "" : "none";
         if (skillsTab) skillsTab.style.display = skillsVisible ? "" : "none";
+        if (llamaModelsTab) {
+          llamaModelsTab.style.display = isLlamaCppMode ? "" : "none";
+        }
         if (
           (activeSettingsTab === "prompts" && !promptsVisible) ||
-          (activeSettingsTab === "skills" && !skillsVisible)
+          (activeSettingsTab === "skills" && !skillsVisible) ||
+          (activeSettingsTab === "llamamodels" && !isLlamaCppMode)
         ) {
           switchSettingsTab("main");
         }
@@ -1896,7 +1913,7 @@
         // means the leftmost enabled mode — never a stale initial value.
         mode = enabledModes.includes(defaultLaunchMode)
           ? defaultLaunchMode
-          : enabledModes[0] || "lmstudio";
+          : enabledModes[0] || "llamacpp";
         applyPalette(
           mode === "ollama"
             ? ollamaPalette

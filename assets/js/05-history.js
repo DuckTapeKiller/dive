@@ -3424,7 +3424,7 @@
             id: "prompt_" + Date.now(),
             name: name,
             content: content,
-            // Belongs to the mode it was created in (Ollama / LM Studio / llama.cpp).
+            // Belongs to the mode it was created in (Ollama / Cloud / LM Studio / llama.cpp).
             mode: PROMPT_MODE_KEYS.includes(mode) ? mode : "ollama",
           });
         }

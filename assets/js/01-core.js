@@ -106,20 +106,20 @@
         }
       }
 
-      let mode = "ollama";
+      let mode = "llamacpp";
       // Registry of selectable chat modes. Each entry drives the top-left mode
       // switcher and the "Enabled Modes" settings checkboxes. New modes are
       // added here (and given their button in the .toggle block).
-      // Registry order matches the topbar toggle: LM Studio is the first mode,
+      // Registry order matches the topbar toggle: llama.cpp is the first mode,
       // so "First enabled" and normalizeEnabledModes resolve to it by default.
       const MODE_DEFS = [
-        { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
-        { id: "ollama", label: "Ollama", btnId: "btnOllama" },
+        { id: "llamacpp", label: "llama.cpp", btnId: "btnLlamaCpp" },
         { id: "pi", label: "Pi", btnId: "btnPi" },
         { id: "cloud", label: "Cloud", btnId: "btnCloud" },
-        { id: "llamacpp", label: "llama.cpp", btnId: "btnLlamaCpp" },
+        { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
+        { id: "ollama", label: "Ollama", btnId: "btnOllama" },
       ];
-      const DEFAULT_ENABLED_MODES = ["lmstudio", "pi", "cloud"];
+      const DEFAULT_ENABLED_MODES = ["llamacpp", "pi", "cloud"];
       const ENABLED_MODES_STORAGE_KEY = "ollama-pi-chat-enabled-modes";
       const DEFAULT_MODE_STORAGE_KEY = "ollama-pi-chat-default-mode";
       let enabledModes = [...DEFAULT_ENABLED_MODES];
@@ -189,8 +189,8 @@
       let ollamaPalette = "nordic";
       let piPalette = "orange";
       let cloudPalette = "solarised";
-      let lmstudioPalette = "carbon";
-      let llamacppPalette = "forest";
+      let lmstudioPalette = "nordic";
+      let llamacppPalette = "carbon";
       // Per-mode font-size multiplier (1 = designed sizes). Every font-size in
       // the UI is calc(Npx * var(--font-scale)), so nudging the scale resizes
       // all text — chat, settings, notes — while keeping their proportions.
@@ -325,9 +325,15 @@
           help: "Fix the random seed for reproducible output. -1 = random each request.",
         },
       ];
-      function defaultLocalParams() {
+      // llama.cpp mode ships tighter, more deterministic defaults; LM Studio
+      // keeps the generic ones.
+      const LOCAL_PARAM_MODE_DEFAULTS = {
+        llamacpp: { temperature: 0.2, top_p: 0.5, top_k: 30 },
+      };
+      function defaultLocalParams(modeId) {
         const p = {};
         for (const d of LOCAL_PARAM_DEFS) p[d.key] = d.def;
+        Object.assign(p, LOCAL_PARAM_MODE_DEFAULTS[modeId] || {});
         return p;
       }
       // Per-mode config for local OpenAI-compatible modes.
@@ -335,7 +341,7 @@
         lmstudio: {
           baseUrl: "http://127.0.0.1:1234/v1",
           model: "",
-          params: defaultLocalParams(),
+          params: defaultLocalParams("lmstudio"),
           nativeTools: true,
           agentMode: false,
           agentMaxRounds: 25,
@@ -343,7 +349,7 @@
         llamacpp: {
           baseUrl: "http://127.0.0.1:8080/v1",
           model: "",
-          params: defaultLocalParams(),
+          params: defaultLocalParams("llamacpp"),
           nativeTools: true,
           agentMode: false,
           agentMaxRounds: 25,
@@ -358,8 +364,8 @@
       let ollamaFont = DEFAULT_UI_FONTS.ollama;
       let piFont = DEFAULT_UI_FONTS.pi;
       let cloudFont = DEFAULT_UI_FONTS.cloud;
-      let lmstudioFont = "Marcellus, serif";
-      let llamacppFont = '"iA Writer Quattro S", serif';
+      let lmstudioFont = "Sen, sans-serif";
+      let llamacppFont = "Marcellus, serif";
       let piStatusInfo = null;
       let cloudStreamState = "IDLE";
       const OLLAMA_DEFAULT_OPTIONS = Object.freeze({
@@ -558,8 +564,9 @@
       let ollamaPromptOverrides = { dboff: "", dbon: "" };
       // Prompts are per-mode and independent: each prompt belongs to the mode it
       // was created in, and each mode has its own active prompt. Prompts apply to
-      // the modes that use a system-prompt overlay (Ollama + the local modes).
-      const PROMPT_MODE_KEYS = ["ollama", "lmstudio", "llamacpp"];
+      // the modes that use a system-prompt overlay (Ollama, Cloud + the local
+      // modes). Nothing is shared between modes.
+      const PROMPT_MODE_KEYS = ["ollama", "cloud", "lmstudio", "llamacpp"];
       function promptModeOf(p) {
         return PROMPT_MODE_KEYS.includes(p && p.mode) ? p.mode : "ollama";
       }
@@ -731,6 +738,9 @@
         time_and_date: true,
         fact_check: true,
         local_notes: true,
+        http_request: true,
+        run_code: true,
+        file_operations: true,
       });
       let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
       const ALL_BUILTIN_SKILLS_INFO = {
@@ -794,6 +804,19 @@
         local_notes: {
           desc: "Reads and writes plain-text notes to the local system.",
           example: '{"action": "write", "content": "My new note"}',
+        },
+        http_request: {
+          desc: "Full-control HTTP client for APIs: any method, custom headers (auth tokens), request bodies, timeouts, and named cookie sessions that persist across calls. Returns status code, headers and raw body.",
+          example:
+            '{"url": "https://api.example.com/v1/items", "headers": {"Authorization": "Bearer TOKEN"}}',
+        },
+        run_code: {
+          desc: "Runs a JavaScript (Node.js) snippet in an isolated worker for data parsing, calculations and simulations. Every execution asks for your confirmation first, like shell commands.",
+          example: '{"code": "console.log([1, 2, 3].reduce((a, b) => a + b, 0));"}',
+        },
+        file_operations: {
+          desc: "Lets the model read, write, list, search and organize files inside a sandboxed workspace folder in the app's data directory. It cannot touch anything outside that folder.",
+          example: '{"action": "write", "path": "reports/summary.md", "content": "# Report"}',
         },
       };
 

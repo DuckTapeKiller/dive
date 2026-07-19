@@ -4,7 +4,7 @@
 
 ## A Local-First Chat & Agent Interface for LM Studio, Ollama, Pi, llama.cpp, and Cloud Models
 
-**Version 4.0.2**
+**Version 4.0.3**
 
 Dive is a local-first desktop app (and web UI) with a flat, brutalist interface for working with local AI backends, terminal-grade agents, and — optionally — your own cloud API keys. The server and app run entirely on your machine; local modes need no internet at all.
 
@@ -115,6 +115,176 @@ chmod +x install-launchagent.sh && ./install-launchagent.sh
 Installs a LaunchAgent at `~/Library/LaunchAgents/com.user.dive.plist`; the server starts at login.
 
 **D. Standalone binary**: `./build-sea.sh` builds a single-file executable (advanced).
+
+---
+
+## llama.cpp Ideal Settings
+
+Dive can start and stop `llama-server` for you, but that server lives and dies with Dive: close the app and your models go offline for every other program too. This section sets up llama.cpp **the ideal way** — as a tiny background service that starts when you log in and serves your models to _everything_ (Dive, Obsidian plugins, coding agents, any OpenAI-compatible app), with smart rules applied automatically:
+
+- **Models load only when asked for** — the service idles at ~50 MB of RAM.
+- **One chat model at a time** — asking for a different model automatically unloads the previous one (no two 8 GB models fighting for memory).
+- **Idle models unload themselves after 1 hour** — walk away, and your RAM comes back.
+- **Embedding models live on a separate port** — semantic/library searches never kick your chat model out of memory.
+- **Zero maintenance** — drop a new `.gguf` file into your models folder and it is served immediately, with all the rules above. No config editing, ever.
+
+You will create **four small text files**. Copy them exactly as shown, changing only one thing: replace `YOURNAME` with your macOS username everywhere it appears. (Not sure what it is? Open Terminal and type `whoami`.)
+
+### Step 1 — Install llama.cpp
+
+```bash
+brew install llama.cpp
+```
+
+This installs the `llama-server` program. Nothing else is needed from llama.cpp itself.
+
+### Step 2 — Create the models folder
+
+```bash
+mkdir -p ~/models
+```
+
+This is where **all** your `.gguf` model files live — chat models and embedding models alike, straight in the folder (no subfolders). Dive's llama.cpp mode uses this same folder by default, so models you download through Dive's MODELS tab land here automatically.
+
+### Step 3 — The chat rules file
+
+Create a plain-text file at `~/models/llama-server-chat.ini` with exactly this content:
+
+```ini
+; Global rules for every chat model. New .gguf files in ~/models are
+; discovered automatically and get these settings — nothing to add here.
+
+[*]
+ctx-size = 0
+n-gpu-layers = 99
+jinja = true
+sleep-idle-seconds = 3600
+```
+
+What each line means:
+
+| Setting                     | Meaning                                                                |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `[*]`                       | "apply to every model" — this is what makes the setup zero-maintenance |
+| `ctx-size = 0`              | each model uses its own maximum context window automatically           |
+| `n-gpu-layers = 99`         | run fully on the GPU (Apple Silicon Metal) — fastest option            |
+| `jinja = true`              | enables modern chat templates, required for tool calling               |
+| `sleep-idle-seconds = 3600` | unload a model after 1 hour of no use                                  |
+
+### Step 4 — The embedding rules file
+
+Create `~/models/llama-server-embed.ini`. This one names its model explicitly (the name must stay stable, because search indexes in Dive and other apps are tied to it). Adjust the `model =` line to match your embedding model's actual filename:
+
+```ini
+; Embedding model, served separately so library searches never evict
+; the chat model.
+
+[text-embedding-nomic-embed-text-v2-moe]
+model = /Users/YOURNAME/models/nomic-embed-text-v2-moe.f16.gguf
+ctx-size = 512
+n-gpu-layers = 99
+embeddings = true
+sleep-idle-seconds = 3600
+```
+
+### Step 5 — The two startup files
+
+These tell macOS to run the servers automatically at login. Create `~/Library/LaunchAgents/com.user.llamacpp-router.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.llamacpp-router</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/llama-server</string>
+    <string>--models-dir</string>
+    <string>/Users/YOURNAME/models</string>
+    <string>--models-preset</string>
+    <string>/Users/YOURNAME/models/llama-server-chat.ini</string>
+    <string>--models-max</string>
+    <string>1</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8130</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>
+```
+
+And `~/Library/LaunchAgents/com.user.llamacpp-embed-router.plist` — identical except for three lines (the label, the preset file, the port) and **no** `--models-dir`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.llamacpp-embed-router</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/llama-server</string>
+    <string>--models-preset</string>
+    <string>/Users/YOURNAME/models/llama-server-embed.ini</string>
+    <string>--models-max</string>
+    <string>1</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8131</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>
+```
+
+The key line is `--models-max 1`: it is what makes loading a new chat model automatically **evict** the previous one. `--models-dir` is what makes new downloads appear with zero configuration.
+
+> [!NOTE]
+> On an Intel Mac, Homebrew lives at `/usr/local` instead of `/opt/homebrew` — change the first `<string>` in both files to `/usr/local/bin/llama-server`. Confirm with `which llama-server`.
+
+### Step 6 — Turn it on
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.user.llamacpp-router.plist
+launchctl load ~/Library/LaunchAgents/com.user.llamacpp-embed-router.plist
+```
+
+From now on both services start by themselves at every login. You never run these commands again.
+
+### Step 7 — Check it works
+
+```bash
+curl http://127.0.0.1:8130/v1/models
+```
+
+You should see JSON listing every model file in `~/models`. That's your chat server. Port `8131` is the embedding server. If `launchctl list | grep llama` shows both entries, everything is running.
+
+### Daily use
+
+- **New chat model?** Download it into `~/models` (Dive's MODELS tab does this for you) — it is served instantly with all the rules. Nothing to edit.
+- **Model names**: apps see each model by its filename without `.gguf` (e.g. `gemma-4-E4B-it-Q8_0.gguf` → `gemma-4-E4B-it-Q8_0`).
+- **Connecting apps**: point any OpenAI-compatible app at `http://127.0.0.1:8130` (chat) and `http://127.0.0.1:8131` (embeddings). Dive's llama.cpp mode detects the servers on these ports automatically.
+- **One exception**: multi-part models (files named like `-00001-of-00003.gguf`) need to go in a subfolder of `~/models` to be picked up correctly.
 
 ---
 

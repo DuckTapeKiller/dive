@@ -1415,6 +1415,73 @@
         transform: scale(1);
       }
 
+      /* Same square Dive checkbox, usable outside .setting-row-inline (e.g.
+         JS-built rows in the llama.cpp model manager). */
+      input[type="checkbox"].dive-check {
+        width: 14px;
+        height: 14px;
+        margin: 0;
+        appearance: none;
+        -webkit-appearance: none;
+        color: var(--text-inverse);
+        background: var(--flat-fill-strong);
+        border-radius: 0;
+        display: inline-grid;
+        place-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      input[type="checkbox"].dive-check::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        background: var(--text-inverse);
+        transform: scale(0);
+        transition: transform 0.08s ease-out;
+      }
+      input[type="checkbox"].dive-check:checked::before {
+        transform: scale(1);
+      }
+
+      /* Indeterminate progress bar for llama.cpp model loading. */
+      .dive-progress {
+        height: 6px;
+        background: var(--flat-fill);
+        border-radius: 0;
+        overflow: hidden;
+        position: relative;
+      }
+      .dive-progress::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 35%;
+        background: var(--accent);
+        animation: dive-progress-slide 1.1s ease-in-out infinite;
+      }
+      @keyframes dive-progress-slide {
+        0% {
+          left: -35%;
+        }
+        100% {
+          left: 100%;
+        }
+      }
+      /* Determinate variant (downloads, which report bytes). */
+      .dive-progress-bar {
+        height: 6px;
+        background: var(--flat-fill);
+        overflow: hidden;
+      }
+      .dive-progress-bar > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.3s ease-out;
+      }
+
       /* Brutalist Toggles */
       input[type="checkbox"].brutalist-toggle {
         appearance: none;

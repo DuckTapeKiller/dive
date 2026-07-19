@@ -190,8 +190,8 @@ const DEFAULT_UI_FONTS = Object.freeze({
   ollama: '"iA Writer Quattro S", serif',
   pi: "Montserrat, sans-serif",
   cloud: "Sen, sans-serif",
-  lmstudio: "Marcellus, serif",
-  llamacpp: "Montserrat, sans-serif",
+  lmstudio: "Sen, sans-serif",
+  llamacpp: "Marcellus, serif",
 });
 // Every mode that has its own persisted palette/font.
 const UI_SETTINGS_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
@@ -766,6 +766,9 @@ function defaultSkillsConfig() {
     time_and_date: true,
     fact_check: true,
     local_notes: true,
+    http_request: true,
+    run_code: true,
+    file_operations: true,
   };
 }
 
@@ -958,8 +961,8 @@ function defaultUiSettings() {
       ollama: "carbon",
       pi: "orange",
       cloud: "calmblue",
-      lmstudio: "carbon",
-      llamacpp: "forest",
+      lmstudio: "nordic",
+      llamacpp: "carbon",
     },
     fonts: {
       ...DEFAULT_UI_FONTS,
@@ -978,7 +981,7 @@ function defaultUiSettings() {
       lmstudio: false,
       llamacpp: false,
     },
-    enabledModes: ["lmstudio", "pi", "cloud"],
+    enabledModes: ["llamacpp", "pi", "cloud"],
     defaultMode: "",
   };
 }
@@ -1301,15 +1304,21 @@ const LOCAL_PARAM_SPEC = {
   seed: { min: -1, max: 2147483647, def: -1 },
 };
 const LOCAL_PARAM_KEYS = Object.keys(LOCAL_PARAM_SPEC);
+// llama.cpp mode ships tighter, more deterministic defaults; LM Studio keeps
+// the generic ones. Mirrors LOCAL_PARAM_MODE_DEFAULTS in assets/js/01-core.js.
+const LOCAL_PARAM_MODE_DEFAULTS = {
+  llamacpp: { temperature: 0.2, top_p: 0.5, top_k: 30 },
+};
 
-function defaultLocalParams() {
+function defaultLocalParams(modeId) {
   const p = {};
   for (const k of LOCAL_PARAM_KEYS) p[k] = LOCAL_PARAM_SPEC[k].def;
+  Object.assign(p, LOCAL_PARAM_MODE_DEFAULTS[modeId] || {});
   return p;
 }
 
-function sanitizeLocalParams(raw) {
-  const out = defaultLocalParams();
+function sanitizeLocalParams(raw, modeId) {
+  const out = defaultLocalParams(modeId);
   if (raw && typeof raw === "object") {
     for (const k of LOCAL_PARAM_KEYS) {
       const v = raw[k];
@@ -1330,7 +1339,7 @@ function defaultLocalModelSettings() {
     out[id] = {
       baseUrl: LOCAL_MODE_DEFAULTS[id].baseUrl,
       model: "",
-      params: defaultLocalParams(),
+      params: defaultLocalParams(id),
       // Offer skills/MCP as native OpenAI tools (XML fallback stays available).
       nativeTools: true,
       // Agent mode: plan-first prompting and a larger tool-call budget.
@@ -1355,7 +1364,7 @@ function sanitizeLocalModelSettings(raw) {
           );
         }
         if (typeof entry.model === "string") out[id].model = entry.model.trim();
-        out[id].params = sanitizeLocalParams(entry.params);
+        out[id].params = sanitizeLocalParams(entry.params, id);
         out[id].nativeTools = entry.nativeTools !== false;
         out[id].agentMode = entry.agentMode === true;
         const rounds = Number(entry.agentMaxRounds);
@@ -2638,6 +2647,13 @@ const libraryDomain = require("./routes/library")({
   appendFileWithRotation,
   openPathInFileManager,
 });
+const llamaCppDomain = require("./routes/llamacpp")({
+  DATA_DIR,
+  parseJsonBody,
+  buildExecutablePath,
+  loadLocalModelSettings,
+  saveLocalModelSettings,
+});
 
 const server = http.createServer(async (req, res) => {
   // CORS & Host check for security
@@ -2848,6 +2864,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (await chatDomain.handleRequest({ req, res, urlPath, requestUrl, send })) {
+    return;
+  }
+
+  if (await llamaCppDomain.handleRequest({ req, urlPath, requestUrl, send })) {
     return;
   }
 

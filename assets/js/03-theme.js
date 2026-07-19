@@ -2819,12 +2819,13 @@
           }
         });
         // Topbar model dropdown: Ollama, LM Studio, llama.cpp, and Cloud all
-        // pick a model here (Pi has none). Prompt dropdown: Ollama + local modes.
-        // Pi now feeds the shared model picker too (via its RPC bridge).
+        // pick a model here (Pi has none). Prompt dropdown: every prompt mode
+        // (Ollama, Cloud, local modes). Pi now feeds the shared model picker
+        // too (via its RPC bridge).
         modelSelect.classList.toggle("mode-hidden", false);
         topbarPromptSelect.classList.toggle(
           "mode-hidden",
-          !(isOllamaMode || isLocalMode),
+          !PROMPT_MODE_KEYS.includes(m),
         );
         populateTopbarModelSelect();
         if (isPiMode && !piAvailableModels.length) {
@@ -2833,10 +2834,14 @@
         if (isLocalMode && (localModelsCache[m] || []).length === 0) {
           fetchLocalModelList(m).catch(() => {});
         }
+        if (m === "llamacpp" && typeof refreshLlamaCppManager === "function") {
+          refreshLlamaCppManager().catch(() => {});
+        }
         updateSettingsTabAvailability({
           isOllamaMode,
           isCloudMode,
           isLocalMode,
+          isLlamaCppMode: m === "llamacpp",
         });
         piPaletteGroup.style.display = isPiMode ? "" : "none";
         cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
@@ -2887,6 +2892,11 @@
         }
         if (llamaCppSettingsGroup) {
           llamaCppSettingsGroup.style.display = m === "llamacpp" ? "" : "none";
+        }
+        const llamaCppModelsGroup =
+          document.getElementById("llamaCppModelsGroup");
+        if (llamaCppModelsGroup) {
+          llamaCppModelsGroup.style.display = m === "llamacpp" ? "" : "none";
         }
         if (!isPiMode) {
           piPermissionBtn.style.display = "none";
@@ -3503,6 +3513,9 @@
             mode: "cloud",
             library: getLibraryRequestPayload(),
             images: images || undefined,
+            promptOverlay: systemOverride
+              ? undefined
+              : getActivePromptContent() || undefined,
             systemOverride: systemOverride || undefined,
           }),
           signal,

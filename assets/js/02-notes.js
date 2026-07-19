@@ -460,7 +460,7 @@
         });
         updateSearchAlgorithmModeTabs();
         if (!enabledModes.includes(mode)) {
-          setMode(enabledModes[0] || "lmstudio");
+          setMode(enabledModes[0] || "llamacpp");
         }
       }
 
@@ -481,7 +481,7 @@
           typeof activeSearchAlgorithmMode === "function" &&
           !enabledModes.includes(activeSearchAlgorithmMode())
         ) {
-          selectSearchAlgorithmMode(enabledModes[0] || "lmstudio");
+          selectSearchAlgorithmMode(enabledModes[0] || "llamacpp");
         }
       }
 
@@ -608,11 +608,11 @@
           ? palettes.cloud || "solarised"
           : localStorage.getItem("ollama-pi-chat-cloud-palette") || "solarised";
         lmstudioPalette = useServer
-          ? palettes.lmstudio || "carbon"
-          : localStorage.getItem("ollama-pi-chat-lmstudio-palette") || "carbon";
+          ? palettes.lmstudio || "nordic"
+          : localStorage.getItem("ollama-pi-chat-lmstudio-palette") || "nordic";
         llamacppPalette = useServer
-          ? palettes.llamacpp || "forest"
-          : localStorage.getItem("ollama-pi-chat-llamacpp-palette") || "forest";
+          ? palettes.llamacpp || "carbon"
+          : localStorage.getItem("ollama-pi-chat-llamacpp-palette") || "carbon";
         const legacyFontsUntouched =
           normalizeFontStack(fonts.ollama) === LEGACY_DEFAULT_UI_FONT &&
           normalizeFontStack(fonts.pi) === LEGACY_DEFAULT_UI_FONT &&
@@ -644,12 +644,12 @@
         lmstudioFont = normalizeFontStack(
           (useServer && fonts.lmstudio) ||
             localStorage.getItem("ollama-pi-chat-lmstudio-font") ||
-            "Marcellus, serif",
+            "Sen, sans-serif",
         );
         llamacppFont = normalizeFontStack(
           (useServer && fonts.llamacpp) ||
             localStorage.getItem("ollama-pi-chat-llamacpp-font") ||
-            '"iA Writer Quattro S", serif',
+            "Marcellus, serif",
         );
 
         const storedScales = settings.fontScales || {};
