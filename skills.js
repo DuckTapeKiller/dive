@@ -2128,6 +2128,86 @@ async function executeMacosControl(args) {
 }
 
 // ============================================================================
+// TASK PLAN — a lightweight checklist the model creates at the start of a
+// multi-step agent task and updates as it works. Purely in-memory (plans are
+// scratch state for one session, keyed by plan id since conversation ids do
+// not reach executeSkill); entries expire after 2 hours.
+// ============================================================================
+
+const TASK_PLANS = new Map(); // plan id -> { steps, createdAt, updatedAt }
+const TASK_PLAN_TTL_MS = 2 * 60 * 60 * 1000;
+const TASK_PLAN_MAX_PLANS = 50;
+const TASK_PLAN_STATUSES = new Set(["pending", "done", "failed", "skipped"]);
+
+function pruneTaskPlans() {
+  const now = Date.now();
+  for (const [id, plan] of TASK_PLANS) {
+    if (now - plan.updatedAt > TASK_PLAN_TTL_MS) TASK_PLANS.delete(id);
+  }
+  while (TASK_PLANS.size > TASK_PLAN_MAX_PLANS) {
+    const oldest = [...TASK_PLANS.entries()].sort(
+      (a, b) => a[1].updatedAt - b[1].updatedAt,
+    )[0];
+    TASK_PLANS.delete(oldest[0]);
+  }
+}
+
+function renderTaskPlan(id, plan) {
+  const marks = { pending: "[ ]", done: "[x]", failed: "[!]", skipped: "[-]" };
+  const lines = plan.steps.map(
+    (step, i) =>
+      `${marks[step.status]} ${i + 1}. ${step.text}${step.note ? ` — ${step.note}` : ""}`,
+  );
+  const doneCount = plan.steps.filter((s) => s.status !== "pending").length;
+  return `Plan ${id} (${doneCount}/${plan.steps.length} steps resolved):\n${lines.join("\n")}`;
+}
+
+function executeTaskPlan({ action, plan_id, steps, step, status, note }) {
+  pruneTaskPlans();
+  const act = ["create", "update", "show"].includes(action) ? action : null;
+  if (!act) return "Task Plan Error: action must be create, update, or show.";
+
+  if (act === "create") {
+    const list = (Array.isArray(steps) ? steps : [])
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .slice(0, 20);
+    if (!list.length) {
+      return "Task Plan Error: create needs steps (an array of short step descriptions).";
+    }
+    const id = `plan-${Math.random().toString(36).slice(2, 7)}`;
+    const plan = {
+      steps: list.map((text) => ({ text, status: "pending", note: "" })),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    TASK_PLANS.set(id, plan);
+    return `${renderTaskPlan(id, plan)}\n\nWork through the steps in order. After finishing each one, call task_plan with action:"update", plan_id:"${id}", the step number, and status done/failed/skipped.`;
+  }
+
+  const id = String(plan_id || "").trim();
+  const plan = TASK_PLANS.get(id);
+  if (!plan) {
+    return `Task Plan Error: no plan "${id}" (it may have expired). Create a new one with action:"create".`;
+  }
+
+  if (act === "show") return renderTaskPlan(id, plan);
+
+  const index = Number(step) - 1;
+  if (!Number.isInteger(index) || index < 0 || index >= plan.steps.length) {
+    return `Task Plan Error: step must be 1-${plan.steps.length}.`;
+  }
+  const newStatus = TASK_PLAN_STATUSES.has(status) ? status : "done";
+  plan.steps[index].status = newStatus;
+  if (note && String(note).trim()) {
+    plan.steps[index].note = String(note).trim().slice(0, 200);
+  }
+  plan.updatedAt = Date.now();
+  const remaining = plan.steps.filter((s) => s.status === "pending").length;
+  return `${renderTaskPlan(id, plan)}\n\n${remaining === 0 ? "All steps resolved — write the final answer now." : `${remaining} step(s) remaining.`}`;
+}
+
+// ============================================================================
 // HTTP REQUEST — agent-grade HTTP client. Unlike web_scraper (which extracts
 // readable text for humans), this returns the raw response with status code
 // and headers, supports every method, custom headers, request bodies, and
@@ -3016,6 +3096,47 @@ When asked about these relationships, ALWAYS query both words and explain the di
           pattern: {
             type: "string",
             description: "Filename glob for find, e.g. '*.json' (default '*').",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_plan",
+      description:
+        "Tracks a checklist for multi-step tasks. At the START of any task needing 3+ steps, call with action:'create' and steps:[...] (short imperative phrases); it returns a plan id. After finishing each step call action:'update' with plan_id, step (number), and status done/failed/skipped (optional note). action:'show' redisplays the checklist. Keeps you on track and shows the user your progress.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create", "update", "show"],
+            description: "The plan operation.",
+          },
+          steps: {
+            type: "array",
+            items: { type: "string" },
+            description: "Step descriptions for create (max 20).",
+          },
+          plan_id: {
+            type: "string",
+            description: "Plan id returned by create (for update/show).",
+          },
+          step: {
+            type: "number",
+            description: "1-based step number for update.",
+          },
+          status: {
+            type: "string",
+            enum: ["done", "failed", "skipped"],
+            description: "New status for the step (default done).",
+          },
+          note: {
+            type: "string",
+            description: "Short note about the outcome of the step.",
           },
         },
         required: ["action"],
@@ -4060,6 +4181,8 @@ async function executeSkill(toolCall, context = {}) {
       return await executeMacosControl(args);
     case "code_search":
       return await executeCodeSearch(args);
+    case "task_plan":
+      return executeTaskPlan(args);
     case "git_tools":
       return await executeGitTools(args);
     case "file_operations":

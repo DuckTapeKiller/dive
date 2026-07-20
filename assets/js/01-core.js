@@ -741,6 +741,13 @@
         http_request: true,
         run_code: true,
         file_operations: true,
+        academic_search: true,
+        fetch_paper: true,
+        code_search: true,
+        git_tools: true,
+        run_python: true,
+        macos_control: false,
+        task_plan: true,
       });
       let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
       const ALL_BUILTIN_SKILLS_INFO = {
@@ -817,6 +824,34 @@
         file_operations: {
           desc: "Lets the model read, write, list, search and organize files inside a sandboxed workspace folder in the app's data directory. It cannot touch anything outside that folder.",
           example: '{"action": "write", "path": "reports/summary.md", "content": "# Report"}',
+        },
+        academic_search: {
+          desc: "Scholarly search across OpenAlex, Crossref, arXiv, Semantic Scholar and PubMed in one keyless call — papers with authors, year, venue, DOI, citation counts, abstracts and open-access PDF links.",
+          example: '{"query": "sleep deprivation working memory", "year_from": 2018}',
+        },
+        fetch_paper: {
+          desc: "Fetches a paper by DOI, arXiv link or URL: reads its text/abstract and saves the open-access PDF into workspace/papers/.",
+          example: '{"url_or_doi": "10.1038/s41586-021-03819-2"}',
+        },
+        code_search: {
+          desc: "Read-only code exploration (grep, find, read, tree) confined to the directories allowed in ~/dive/allowed-dirs.json.",
+          example: '{"action": "grep", "path": "~/dive/workspace", "pattern": "TODO"}',
+        },
+        git_tools: {
+          desc: "Read-only git inspection (status, log, diff, show, branch, blame) of repositories inside the allowed directories. Mutating git goes through Shell Command.",
+          example: '{"action": "status", "repo": "~/dive/workspace/my-project"}',
+        },
+        run_python: {
+          desc: "Runs a Python script with python3 (or the venv set in ~/dive/coding-settings.json). Every execution asks for your confirmation first, like shell commands.",
+          example: '{"code": "print(2 ** 10)"}',
+        },
+        macos_control: {
+          desc: "Controls the Mac: AppleScript, open files/URLs/apps, notifications, list or kill processes. Every action asks for your confirmation first. Off by default.",
+          example: '{"action": "notify", "message": "Build finished"}',
+        },
+        task_plan: {
+          desc: "Lets the model keep a step-by-step checklist during multi-step agent tasks (create, update, show). Pure bookkeeping — no system access.",
+          example: '{"action": "create", "steps": ["Search sources", "Write summary"]}',
         },
       };
 

@@ -22,6 +22,15 @@ const {
 const { getMcpOllamaTools, executeMcpTool } = require("../mcp.js");
 const { getPluginToolDefs } = require("../plugins.js");
 
+// Skills the exact-repeat loop guard must not block: agent sessions
+// legitimately call these many times with identical arguments (plan updates,
+// playback controls, clock reads).
+const REPEATABLE_SKILLS = new Set([
+  "task_plan",
+  "control_reading_aloud",
+  "time_and_date",
+]);
+
 module.exports = function createChatDomain(deps) {
   const {
     DATA_DIR,
@@ -349,7 +358,10 @@ module.exports = function createChatDomain(deps) {
           .replace(/\s+/g, "")
           .toLowerCase()}`;
         let result;
-        if (seenSkillCalls.has(callKey)) {
+        if (
+          seenSkillCalls.has(callKey) &&
+          !REPEATABLE_SKILLS.has(toolCall.function.name)
+        ) {
           result = `You already ran ${toolCall.function.name} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
         } else {
           seenSkillCalls.add(callKey);
@@ -1059,10 +1071,11 @@ module.exports = function createChatDomain(deps) {
       lines.push(
         `AGENT WORKFLOW (up to ${agentMaxRounds} tool calls for this request):`,
         "For any task that needs multiple steps (research, comparing sources, gathering material, writing notes):",
-        "1. FIRST think through a short numbered plan of the steps you intend to take. Keep it to one line per step.",
-        "2. Execute the plan one tool call at a time. After each result, decide whether the plan still holds; revise it if a step failed or a result changed the picture.",
+        "1. FIRST create a checklist with the task_plan skill (action:'create', steps: one short line per step). For trivial 1-2 step requests, skip the plan and just do the work.",
+        "2. Execute the plan step by step. After finishing each step, call task_plan action:'update' with the step number and status (done/failed/skipped) before moving on; revise your approach if a step failed or a result changed the picture.",
         "3. Never repeat a call that already failed with the same arguments — change the approach instead.",
-        "4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.",
+        "4. When every step is resolved (or further calls stop adding information), write the final answer synthesizing everything you found.",
+        "PARALLEL CALLS: when several tool calls are independent of each other (e.g. three searches on different topics), you may issue them together in one round instead of one at a time.",
         "CRITICAL — WHERE TO WRITE WHAT: the plan and your notes between steps belong in your reasoning/thinking, NEVER in the reply text. While you still intend to call more tools, output NOTHING as reply text — no plan, no progress notes, no partial answers. The ONLY prose you ever write as reply text is the single final answer, after your last tool call.",
         "AMBIGUITY: If a name or term is ambiguous, resolve it with ONE clarifying lookup or answer for the most prominent match and note the assumption in one sentence.",
         "ACADEMIC RESEARCH CHAIN: for scholarly/scientific questions (literature, evidence, 'what does research say'), the plan is: (1) academic_search with a focused English query (add year_from for recent work); (2) fetch_paper on the 2-3 most relevant open-access results to read them; (3) deep_research with academic:true for surrounding context if needed; (4) synthesize, attributing claims to specific papers by author and year, noting publication years and any disagreements between papers.",
@@ -1119,6 +1132,8 @@ module.exports = function createChatDomain(deps) {
     git_tools: '{"action": "status", "repo": "~/dive/workspace/my-project"}',
     run_python: '{"code": "import json\\nprint(json.dumps({\\"ok\\": True}))"}',
     macos_control: '{"action": "notify", "message": "Build finished"}',
+    task_plan:
+      '{"action": "create", "steps": ["Search for sources", "Read the top papers", "Write summary to workspace"]}',
   };
 
   function getLocalNativeTools() {
@@ -1859,7 +1874,10 @@ module.exports = function createChatDomain(deps) {
             .replace(/\s+/g, "")
             .toLowerCase()}`;
           let result;
-          if (seenSkillCalls.has(callKey)) {
+          if (
+            seenSkillCalls.has(callKey) &&
+            !REPEATABLE_SKILLS.has(toolCall.function.name)
+          ) {
             result = `You already ran ${toolCall.function.name} with these exact arguments and have the results above. Do not repeat this call. Answer the user's question now using what you already found.`;
           } else {
             seenSkillCalls.add(callKey);

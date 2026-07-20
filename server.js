@@ -775,6 +775,7 @@ function defaultSkillsConfig() {
     git_tools: true,
     run_python: true,
     macos_control: false,
+    task_plan: true,
   };
 }
 
