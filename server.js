@@ -760,6 +760,8 @@ function defaultSkillsConfig() {
     wiktionary: true,
     deep_etymology: true,
     deep_research: true,
+    academic_search: true,
+    fetch_paper: true,
     duckduckgo: true,
     web_scraper: true,
     calculator: true,

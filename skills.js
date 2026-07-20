@@ -411,9 +411,110 @@ async function searchGemini(query, limit, apiKey) {
   return out;
 }
 
-// Run the best available backend: whichever cloud key the user has saved
-// (OpenAI, then Anthropic, then Google), else keyless DuckDuckGo.
+// Dedicated search APIs configured in ~/dive/web-search-settings.json.
+// All optional: they only run when the user has saved a key/URL there.
+const WEB_SEARCH_SETTINGS_FILE = path.join(
+  os.homedir(),
+  "dive",
+  "web-search-settings.json",
+);
+let webSearchSettingsCache = { at: 0, value: {} };
+
+function loadWebSearchSettings() {
+  if (Date.now() - webSearchSettingsCache.at < 30000) {
+    return webSearchSettingsCache.value;
+  }
+  let value = {};
+  try {
+    value = JSON.parse(fs.readFileSync(WEB_SEARCH_SETTINGS_FILE, "utf8"));
+  } catch {
+    /* absent or invalid — providers simply stay dormant */
+  }
+  webSearchSettingsCache = { at: Date.now(), value };
+  return value;
+}
+
+async function searchTavily(query, limit, apiKey) {
+  const res = await fetchHtml("https://api.tavily.com/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ query, max_results: limit }),
+    timeout: 20000,
+  });
+  const data = JSON.parse(res);
+  return (data.results || [])
+    .filter((r) => /^https?:\/\//i.test(String(r.url || "")))
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url).trim(),
+      url: String(r.url).trim(),
+      snippet: String(r.content || "").slice(0, 300),
+    }));
+}
+
+async function searchBrave(query, limit, apiKey) {
+  const res = await fetchHtml(
+    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`,
+    {
+      headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
+      timeout: 20000,
+    },
+  );
+  const data = JSON.parse(res);
+  return (data.web?.results || [])
+    .filter((r) => /^https?:\/\//i.test(String(r.url || "")))
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url).trim(),
+      url: String(r.url).trim(),
+      snippet: String(r.description || "")
+        .replace(/<[^>]+>/g, "")
+        .slice(0, 300),
+    }));
+}
+
+async function searchSearxng(query, limit, baseUrl) {
+  const base = String(baseUrl).replace(/\/+$/, "");
+  const res = await fetchHtml(
+    `${base}/search?q=${encodeURIComponent(query)}&format=json`,
+    { timeout: 20000 },
+  );
+  const data = JSON.parse(res);
+  return (data.results || [])
+    .filter((r) => /^https?:\/\//i.test(String(r.url || "")))
+    .slice(0, limit)
+    .map((r) => ({
+      title: String(r.title || r.url).trim(),
+      url: String(r.url).trim(),
+      snippet: String(r.content || "").slice(0, 300),
+    }));
+}
+
+// Run the best available backend: a dedicated search API if configured in
+// web-search-settings.json (Tavily, Brave, SearXNG), then whichever cloud key
+// the user has saved (OpenAI, then Anthropic, then Google), else keyless
+// DuckDuckGo.
 async function runWebSearch(query, limit, cloudKeys = {}) {
+  const settings = loadWebSearchSettings();
+  const wanted = String(settings.provider || "auto").toLowerCase();
+  const dedicated = [
+    ["tavily", settings.tavilyKey, searchTavily],
+    ["brave", settings.braveKey, searchBrave],
+    ["searxng", settings.searxngUrl, searchSearxng],
+  ];
+  for (const [name, credential, fn] of dedicated) {
+    if (!credential || !String(credential).trim()) continue;
+    if (wanted !== "auto" && wanted !== name) continue;
+    try {
+      const results = await fn(query, limit, String(credential).trim());
+      if (results && results.length) return { provider: name, results };
+    } catch {
+      /* try the next backend */
+    }
+  }
   const providers = [
     ["openai", cloudKeys.openai, searchOpenAI],
     ["anthropic", cloudKeys.anthropic, searchAnthropic],
@@ -691,7 +792,7 @@ async function executeWebScraper({ url }) {
 // parallel, and returns a consolidated digest so the model can synthesize a
 // thorough answer without chaining many calls. Every source URL becomes a pill.
 async function executeDeepResearch(
-  { query, queries, max_sources = 6 },
+  { query, queries, max_sources = 6, academic = false },
   context = {},
 ) {
   // Accept a single query or several varied angles (preferred for coverage).
@@ -720,6 +821,23 @@ async function executeDeepResearch(
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const merged = [];
     const seenUrls = new Set();
+    // Academic mode: seed the pool with scholarly results (OpenAlex, Crossref,
+    // arXiv, Semantic Scholar, PubMed) so peer-reviewed sources are read
+    // alongside the general web.
+    if (academic) {
+      try {
+        const papers = await runAcademicSearch(uniqAngles[0], 6, {});
+        for (const p of papers) {
+          const url = p.landingUrl || p.pdfUrl;
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            merged.push({ title: p.title, url, snippet: p.abstract || "" });
+          }
+        }
+      } catch {
+        /* scholarly seeding is best-effort */
+      }
+    }
     for (let i = 0; i < uniqAngles.length; i += 1) {
       if (i > 0) await sleep(400);
       const { results } = await runWebSearch(uniqAngles[i], 8, cloudKeys);
@@ -729,6 +847,15 @@ async function executeDeepResearch(
           merged.push(r);
         }
       }
+    }
+    // Academic mode prefers authoritative domains when picking what to read.
+    if (academic) {
+      const scholarly =
+        /(\.edu|\.gov|\.ac\.[a-z]{2}|arxiv\.org|doi\.org|nature\.com|science\.org|sciencedirect\.com|springer\.com|wiley\.com|jstor\.org|pubmed|ncbi\.nlm\.nih\.gov|semanticscholar\.org|openalex\.org|plos\.org|frontiersin\.org|oup\.com|cambridge\.org|tandfonline\.com)/i;
+      merged.sort(
+        (a, b) =>
+          (scholarly.test(b.url) ? 1 : 0) - (scholarly.test(a.url) ? 1 : 0),
+      );
     }
     if (!merged.length) {
       // Web search unavailable (rate-limited/blocked/offline): fall back to
@@ -761,10 +888,11 @@ async function executeDeepResearch(
       if (picked.length >= target) break;
       if (!picked.includes(r)) picked.push(r);
     }
-    // Read all chosen pages concurrently, with generous per-source content.
+    // Read all chosen pages concurrently, with generous per-source content
+    // and a larger budget for the top-ranked three.
     const reads = await Promise.all(
-      picked.map(async (r) => {
-        const c = await readUrlContent(r.url, 4500);
+      picked.map(async (r, i) => {
+        const c = await readUrlContent(r.url, i < 3 ? 7000 : 4500);
         return {
           title: r.title,
           url: r.url,
@@ -790,6 +918,433 @@ async function executeDeepResearch(
     return out.trim();
   } catch (e) {
     return `Deep Research Error: ${e.message}`;
+  }
+}
+
+// --- Academic Search Implementation ---
+// Keyless federated scholarly search across OpenAlex, Crossref, arXiv,
+// Semantic Scholar, and PubMed. Providers are queried in parallel and each
+// failure is tolerated independently; results are merged and de-duplicated
+// by DOI (then by normalized title).
+
+// OpenAlex ships abstracts as an inverted index ({word: [positions]}) to
+// dodge publisher restrictions; rebuild the plain text from the positions.
+function reconstructOpenAlexAbstract(invertedIndex) {
+  if (!invertedIndex || typeof invertedIndex !== "object") return "";
+  const words = [];
+  for (const [word, positions] of Object.entries(invertedIndex)) {
+    if (!Array.isArray(positions)) continue;
+    for (const pos of positions) {
+      if (Number.isInteger(pos) && pos >= 0 && pos < 10000) words[pos] = word;
+    }
+  }
+  return words.filter(Boolean).join(" ").trim();
+}
+
+function normalizeDoi(raw) {
+  const value = String(raw || "")
+    .trim()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")
+    .replace(/^doi:/i, "")
+    .toLowerCase();
+  return /^10\.\S+\/\S+/.test(value) ? value : "";
+}
+
+function normalizeTitleKey(title) {
+  return String(title || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function formatAuthorList(names, max = 6) {
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return "Unknown authors";
+  if (list.length <= max) return list.join(", ");
+  return `${list.slice(0, max).join(", ")} et al.`;
+}
+
+function stripJatsXml(value) {
+  return String(value || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function searchOpenAlexWorks(query, limit, yearFrom, yearTo) {
+  const filters = [];
+  if (yearFrom) filters.push(`from_publication_date:${yearFrom}-01-01`);
+  if (yearTo) filters.push(`to_publication_date:${yearTo}-12-31`);
+  const filterPart = filters.length
+    ? `&filter=${encodeURIComponent(filters.join(","))}`
+    : "";
+  const data = await fetchJson(
+    `https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=${limit}${filterPart}`,
+  );
+  return (data.results || []).map((w) => ({
+    provider: "openalex",
+    title: String(w.display_name || "").trim(),
+    authors: (w.authorships || []).map((a) => a.author?.display_name || ""),
+    year: w.publication_year || undefined,
+    venue: w.primary_location?.source?.display_name || "",
+    doi: normalizeDoi(w.doi),
+    citations: Number(w.cited_by_count) || 0,
+    abstract: reconstructOpenAlexAbstract(w.abstract_inverted_index),
+    pdfUrl: w.best_oa_location?.pdf_url || w.open_access?.oa_url || "",
+    landingUrl:
+      w.primary_location?.landing_page_url ||
+      (w.doi ? String(w.doi) : "") ||
+      String(w.id || ""),
+  }));
+}
+
+async function searchCrossrefWorks(query, limit, yearFrom, yearTo) {
+  const filters = [];
+  if (yearFrom) filters.push(`from-pub-date:${yearFrom}-01-01`);
+  if (yearTo) filters.push(`until-pub-date:${yearTo}-12-31`);
+  const filterPart = filters.length ? `&filter=${filters.join(",")}` : "";
+  const data = await fetchJson(
+    `https://api.crossref.org/works?query=${encodeURIComponent(query)}&rows=${limit}${filterPart}`,
+  );
+  return (data.message?.items || []).map((w) => ({
+    provider: "crossref",
+    title: String((w.title && w.title[0]) || "").trim(),
+    authors: (w.author || []).map((a) =>
+      [a.given, a.family].filter(Boolean).join(" "),
+    ),
+    year: w.issued?.["date-parts"]?.[0]?.[0] || undefined,
+    venue: (w["container-title"] && w["container-title"][0]) || "",
+    doi: normalizeDoi(w.DOI),
+    citations: Number(w["is-referenced-by-count"]) || 0,
+    abstract: stripJatsXml(w.abstract),
+    pdfUrl: "",
+    landingUrl: w.URL || (w.DOI ? `https://doi.org/${w.DOI}` : ""),
+  }));
+}
+
+async function searchArxivWorks(query, limit) {
+  const xml = await fetchHtml(
+    `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&max_results=${limit}`,
+    { timeout: 20000 },
+  );
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const out = [];
+  $("entry").each((_, el) => {
+    const entry = $(el);
+    const absUrl = entry.find("id").first().text().trim();
+    const published = entry.find("published").first().text().trim();
+    out.push({
+      provider: "arxiv",
+      title: entry.find("title").first().text().replace(/\s+/g, " ").trim(),
+      authors: entry
+        .find("author > name")
+        .map((_i, n) => $(n).text().trim())
+        .get(),
+      year: published ? Number(published.slice(0, 4)) : undefined,
+      venue: "arXiv",
+      doi: normalizeDoi(entry.find("doi").first().text()),
+      citations: 0,
+      abstract: entry
+        .find("summary")
+        .first()
+        .text()
+        .replace(/\s+/g, " ")
+        .trim(),
+      pdfUrl: absUrl.replace("/abs/", "/pdf/"),
+      landingUrl: absUrl,
+    });
+  });
+  return out;
+}
+
+async function searchSemanticScholarWorks(query, limit) {
+  const data = await fetchJson(
+    `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=${limit}&fields=title,authors,year,venue,externalIds,citationCount,abstract,openAccessPdf,url`,
+  );
+  return (data.data || []).map((w) => ({
+    provider: "semanticscholar",
+    title: String(w.title || "").trim(),
+    authors: (w.authors || []).map((a) => a.name || ""),
+    year: w.year || undefined,
+    venue: w.venue || "",
+    doi: normalizeDoi(w.externalIds?.DOI),
+    citations: Number(w.citationCount) || 0,
+    abstract: String(w.abstract || "").trim(),
+    pdfUrl: w.openAccessPdf?.url || "",
+    landingUrl: w.url || "",
+  }));
+}
+
+async function searchPubmedWorks(query, limit) {
+  const search = await fetchJson(
+    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${limit}&retmode=json`,
+  );
+  const ids = search.esearchresult?.idlist || [];
+  if (!ids.length) return [];
+  const summary = await fetchJson(
+    `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(",")}&retmode=json`,
+  );
+  const out = [];
+  for (const id of ids) {
+    const w = summary.result?.[id];
+    if (!w) continue;
+    const doi = normalizeDoi(
+      (w.articleids || []).find((a) => a.idtype === "doi")?.value,
+    );
+    out.push({
+      provider: "pubmed",
+      title: String(w.title || "")
+        .replace(/<[^>]+>/g, "")
+        .trim(),
+      authors: (w.authors || []).map((a) => a.name || ""),
+      year: w.pubdate ? Number(String(w.pubdate).slice(0, 4)) : undefined,
+      venue: w.fulljournalname || w.source || "",
+      doi,
+      citations: 0,
+      abstract: "",
+      pdfUrl: "",
+      landingUrl: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+    });
+  }
+  return out;
+}
+
+const ACADEMIC_PROVIDERS = {
+  openalex: searchOpenAlexWorks,
+  crossref: searchCrossrefWorks,
+  arxiv: searchArxivWorks,
+  semanticscholar: searchSemanticScholarWorks,
+  pubmed: searchPubmedWorks,
+};
+
+function mergeAcademicResults(resultLists, maxResults) {
+  const merged = [];
+  const seenDois = new Set();
+  const seenTitles = new Set();
+  // Interleave providers so no single API dominates the head of the list,
+  // then let citation count settle the final order.
+  const queues = resultLists.map((list) => [...list]);
+  while (queues.some((q) => q.length)) {
+    for (const queue of queues) {
+      const item = queue.shift();
+      if (!item || !item.title) continue;
+      const titleKey = normalizeTitleKey(item.title);
+      if (item.doi && seenDois.has(item.doi)) {
+        // Duplicate across providers: keep the richer record's extras.
+        const existing = merged.find((m) => m.doi === item.doi);
+        if (existing) {
+          if (!existing.abstract && item.abstract)
+            existing.abstract = item.abstract;
+          if (!existing.pdfUrl && item.pdfUrl) existing.pdfUrl = item.pdfUrl;
+          existing.citations = Math.max(existing.citations, item.citations);
+        }
+        continue;
+      }
+      if (!item.doi && seenTitles.has(titleKey)) continue;
+      if (item.doi) seenDois.add(item.doi);
+      if (titleKey) seenTitles.add(titleKey);
+      merged.push(item);
+    }
+  }
+  merged.sort((a, b) => b.citations - a.citations);
+  return merged.slice(0, maxResults);
+}
+
+// Query all (or the requested) scholarly providers in parallel. Returns the
+// merged, deduplicated paper list — shared by academic_search and the
+// academic flag of deep_research.
+async function runAcademicSearch(query, maxResults, options = {}) {
+  const wanted =
+    Array.isArray(options.providers) && options.providers.length
+      ? options.providers
+          .map((p) => String(p).toLowerCase().trim())
+          .filter((p) => ACADEMIC_PROVIDERS[p])
+      : Object.keys(ACADEMIC_PROVIDERS);
+  const perProvider = Math.max(3, Math.min(maxResults, 10));
+  const resultLists = await Promise.all(
+    wanted.map(async (name) => {
+      try {
+        return await ACADEMIC_PROVIDERS[name](
+          query,
+          perProvider,
+          options.yearFrom,
+          options.yearTo,
+        );
+      } catch {
+        return []; // a slow or rate-limited provider never sinks the search
+      }
+    }),
+  );
+  let merged = mergeAcademicResults(resultLists, maxResults);
+  // Provider-side year filters only exist on OpenAlex/Crossref; enforce the
+  // range on the merged list so arXiv/S2/PubMed results comply too.
+  if (options.yearFrom || options.yearTo) {
+    merged = merged.filter((p) => {
+      if (!p.year) return true;
+      if (options.yearFrom && p.year < options.yearFrom) return false;
+      if (options.yearTo && p.year > options.yearTo) return false;
+      return true;
+    });
+  }
+  return merged;
+}
+
+async function executeAcademicSearch({
+  query,
+  year_from,
+  year_to,
+  max_results = 12,
+  providers,
+}) {
+  if (!query || !String(query).trim()) {
+    return "Academic Search Error: no query provided.";
+  }
+  const limit = Math.max(3, Math.min(Number(max_results) || 12, 25));
+  const yearFrom = Number(year_from) || undefined;
+  const yearTo = Number(year_to) || undefined;
+  try {
+    const papers = await runAcademicSearch(String(query).trim(), limit, {
+      yearFrom,
+      yearTo,
+      providers,
+    });
+    if (!papers.length) {
+      return `No scholarly results found for "${query}". Try broader phrasing, an English translation of the query, or deep_research for general web coverage.`;
+    }
+    let out = `## Academic search: "${query}" (${papers.length} papers${yearFrom || yearTo ? `, ${yearFrom || ""}–${yearTo || ""}` : ""})\n\n`;
+    papers.forEach((p, i) => {
+      out += `${i + 1}. ${p.title}\n`;
+      out += `   ${formatAuthorList(p.authors)}${p.year ? ` (${p.year})` : ""}${p.venue ? ` — ${p.venue}` : ""}\n`;
+      if (p.doi) out += `   DOI: ${p.doi}\n`;
+      if (p.citations) out += `   Citations: ${p.citations}\n`;
+      if (p.abstract) {
+        out += `   Abstract: ${p.abstract.slice(0, 500)}${p.abstract.length > 500 ? "…" : ""}\n`;
+      }
+      out += `   URL: ${p.landingUrl || p.pdfUrl}\n`;
+      if (p.pdfUrl) out += `   PDF: ${p.pdfUrl}\n`;
+      out += "\n";
+    });
+    out +=
+      "Next step: call fetch_paper with the DOI or PDF/landing URL of the " +
+      "most relevant open-access papers (the ones with a PDF line) to read " +
+      "them before answering. Cite papers by author and year in your answer. " +
+      "Do NOT run this same search again.";
+    return out.trim();
+  } catch (e) {
+    return `Academic Search Error: ${e.message}`;
+  }
+}
+
+// Resolve a DOI, arXiv link, or plain URL to readable paper text. Open-access
+// PDF discovery goes through OpenAlex only (keyless, no email required).
+async function executeFetchPaper({ url_or_doi, save = true }, context = {}) {
+  const input = String(url_or_doi || "").trim();
+  if (!input) return "Fetch Paper Error: no url_or_doi provided.";
+  try {
+    let meta = null;
+    const doi = normalizeDoi(input);
+    if (doi) {
+      try {
+        const w = await fetchJson(
+          `https://api.openalex.org/works/doi:${encodeURIComponent(doi)}`,
+        );
+        meta = {
+          title: String(w.display_name || "").trim(),
+          authors: (w.authorships || []).map(
+            (a) => a.author?.display_name || "",
+          ),
+          year: w.publication_year,
+          venue: w.primary_location?.source?.display_name || "",
+          doi,
+          citations: Number(w.cited_by_count) || 0,
+          abstract: reconstructOpenAlexAbstract(w.abstract_inverted_index),
+          pdfUrl: w.best_oa_location?.pdf_url || w.open_access?.oa_url || "",
+          landingUrl:
+            w.primary_location?.landing_page_url || `https://doi.org/${doi}`,
+        };
+      } catch {
+        meta = { landingUrl: `https://doi.org/${doi}`, doi };
+      }
+    }
+    const arxivMatch = input.match(
+      /arxiv\.org\/(?:abs|pdf)\/([0-9]{4}\.[0-9]{4,5}(?:v\d+)?|[a-z-]+\/[0-9]{7})/i,
+    );
+    const readTarget = arxivMatch
+      ? `https://arxiv.org/abs/${arxivMatch[1]}`
+      : meta?.landingUrl || input;
+    const pdfCandidate = arxivMatch
+      ? `https://arxiv.org/pdf/${arxivMatch[1]}`
+      : meta?.pdfUrl || (/\.pdf(\?|$)/i.test(input) ? input : "");
+
+    // Save the open-access PDF into the workspace sandbox when available.
+    let savedLine = "";
+    if (save && pdfCandidate && context.dataDir) {
+      const guardError = urlGuardError(pdfCandidate);
+      if (!guardError) {
+        try {
+          // Global fetch follows the redirects OA PDF links routinely use.
+          const res = await fetch(pdfCandidate, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(45000),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const bytes = Buffer.from(await res.arrayBuffer());
+          if (
+            bytes.length > 1000 &&
+            bytes.slice(0, 5).toString("latin1").startsWith("%PDF")
+          ) {
+            const baseName =
+              (meta?.title || arxivMatch?.[1] || "paper")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "")
+                .slice(0, 80) || "paper";
+            const rel = path.join("papers", `${baseName}.pdf`);
+            const resolved = resolveWorkspacePath(context.dataDir, rel);
+            if (!resolved.error) {
+              fs.mkdirSync(path.dirname(resolved.target), { recursive: true });
+              fs.writeFileSync(resolved.target, bytes);
+              savedLine = `\nSaved PDF: workspace/${rel} (${Math.round(bytes.length / 1024)} KB)`;
+            }
+          }
+        } catch {
+          /* saving is best-effort; the text below still answers the request */
+        }
+      }
+    }
+
+    // Read the paper's text: landing/abs page first (clean HTML), else the
+    // abstract from metadata.
+    let bodyText = "";
+    const read = await readUrlContent(readTarget, 12000);
+    if (read.ok) bodyText = read.text;
+    else if (meta?.abstract) {
+      bodyText = `(Full text unavailable — abstract only.)\n\n${meta.abstract}`;
+    }
+    if (!bodyText) {
+      return `Fetch Paper Error: could not read ${readTarget}${read.ok ? "" : ` (${read.error})`}.`;
+    }
+
+    let out = "## Paper\n\n";
+    if (meta?.title) {
+      out += `1. ${meta.title}\n   ${formatAuthorList(meta.authors)}${meta.year ? ` (${meta.year})` : ""}${meta.venue ? ` — ${meta.venue}` : ""}\n`;
+      if (meta.doi) out += `   DOI: ${meta.doi}\n`;
+      if (meta.citations) out += `   Citations: ${meta.citations}\n`;
+      out += `   URL: ${meta.landingUrl}\n`;
+    } else {
+      out += `1. ${readTarget}\n   URL: ${readTarget}\n`;
+    }
+    if (pdfCandidate) out += `   PDF: ${pdfCandidate}\n`;
+    out += savedLine ? `${savedLine}\n` : "";
+    out += `\n### Content\n\n${bodyText}\n\n`;
+    out +=
+      "Cite this paper by author and year when you use it. If you need more " +
+      "papers, go back to your academic_search results instead of re-fetching " +
+      "this one.";
+    return out.trim();
+  } catch (e) {
+    return `Fetch Paper Error: ${e.message}`;
   }
 }
 
@@ -1606,7 +2161,73 @@ const ALL_SKILLS = [
             type: "number",
             description: "How many sources to read (4-8, default 6).",
           },
+          academic: {
+            type: "boolean",
+            description:
+              "Set true for scholarly topics: seeds the source pool with peer-reviewed papers (OpenAlex/Crossref/arXiv/Semantic Scholar/PubMed) and prefers .edu/.gov/journal domains.",
+          },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "academic_search",
+      description:
+        "PREFERRED for scholarly/scientific questions: searches OpenAlex, Crossref, arXiv, Semantic Scholar, and PubMed in one keyless call and returns merged, de-duplicated papers with authors, year, venue, DOI, citation counts, abstracts, and open-access PDF links. Use for literature reviews, 'what does the research say about X', finding papers by topic/author, or verifying scientific claims. Follow up with fetch_paper on the most relevant open-access results, then answer citing authors and years.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Scholarly search query (topic, phenomenon, author, paper title). English queries get the best coverage.",
+          },
+          year_from: {
+            type: "number",
+            description: "Earliest publication year to include.",
+          },
+          year_to: {
+            type: "number",
+            description: "Latest publication year to include.",
+          },
+          max_results: {
+            type: "number",
+            description: "How many papers to return (3-25, default 12).",
+          },
+          providers: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Optional subset of providers: openalex, crossref, arxiv, semanticscholar, pubmed. Omit to query all.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "fetch_paper",
+      description:
+        "Fetches a scientific paper by DOI, arXiv link, or URL: resolves its metadata, reads the full text or abstract, and saves the open-access PDF into workspace/papers/ when one exists. Use after academic_search to actually read the papers you plan to cite.",
+      parameters: {
+        type: "object",
+        properties: {
+          url_or_doi: {
+            type: "string",
+            description:
+              "A DOI (10.xxxx/...), a doi.org URL, an arXiv abs/pdf URL, or any paper landing-page/PDF URL.",
+          },
+          save: {
+            type: "boolean",
+            description:
+              "Save the open-access PDF into workspace/papers/ (default true).",
+          },
+        },
+        required: ["url_or_doi"],
       },
     },
   },
@@ -2741,6 +3362,10 @@ async function executeSkill(toolCall, context = {}) {
       return await executeDuckDuckGo(args, context);
     case "deep_research":
       return await executeDeepResearch(args, context);
+    case "academic_search":
+      return await executeAcademicSearch(args);
+    case "fetch_paper":
+      return await executeFetchPaper(args, context);
     case "fact_check":
       return await executeFactCheck(args, context);
     case "web_scraper":
@@ -2812,4 +3437,8 @@ module.exports = {
   ALL_SKILLS,
   executeSkill,
   skillRequiresShellConfirmation,
+  // Exported for unit tests.
+  reconstructOpenAlexAbstract,
+  normalizeDoi,
+  mergeAcademicResults,
 };

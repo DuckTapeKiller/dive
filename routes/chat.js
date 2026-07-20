@@ -1063,11 +1063,13 @@ module.exports = function createChatDomain(deps) {
         "4. When the plan is complete (or further calls stop adding information), write the final answer synthesizing everything you found.",
         "CRITICAL — WHERE TO WRITE WHAT: the plan and your notes between steps belong in your reasoning/thinking, NEVER in the reply text. While you still intend to call more tools, output NOTHING as reply text — no plan, no progress notes, no partial answers. The ONLY prose you ever write as reply text is the single final answer, after your last tool call.",
         "AMBIGUITY: If a name or term is ambiguous, resolve it with ONE clarifying lookup or answer for the most prominent match and note the assumption in one sentence.",
+        "ACADEMIC RESEARCH CHAIN: for scholarly/scientific questions (literature, evidence, 'what does research say'), the plan is: (1) academic_search with a focused English query (add year_from for recent work); (2) fetch_paper on the 2-3 most relevant open-access results to read them; (3) deep_research with academic:true for surrounding context if needed; (4) synthesize, attributing claims to specific papers by author and year, noting publication years and any disagreements between papers.",
         "",
       );
     } else {
       lines.push(
         "RESEARCH CHAIN (follow strictly, maximum 4 skill calls per question):",
+        "For scholarly/scientific questions (papers, evidence, 'what does research say about X'): call academic_search first, then fetch_paper on the most relevant open-access result, and answer citing authors and years.",
         "For factual, biographical, current-events, or 'who/what is X' questions:",
         "1. Call deep_research with 'queries' holding 2-4 VARIED angles (different phrasing and scope).",
         "2. If it returns nothing useful, retry deep_research ONCE with completely different phrasing.",
@@ -1094,6 +1096,9 @@ module.exports = function createChatDomain(deps) {
     deep_etymology: '{"word": "eventualmente", "language": "es"}',
     deep_research:
       '{"queries": ["Dean Benedetti biography", "Dean Benedetti Charlie Parker recordings", "Dean Benedetti jazz saxophonist history"]}',
+    academic_search:
+      '{"query": "sleep deprivation working memory", "year_from": 2018, "max_results": 12}',
+    fetch_paper: '{"url_or_doi": "10.1038/s41586-021-03819-2"}',
     duckduckgo: '{"query": "latest AI news"}',
     fact_check: '{"claim": "The moon is made of cheese"}',
     web_scraper: '{"url": "https://example.com"}',
