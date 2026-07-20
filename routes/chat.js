@@ -743,6 +743,8 @@ module.exports = function createChatDomain(deps) {
 
   function confirmationTitleForTool(toolName) {
     if (toolName === "run_code") return "Code Execution Request";
+    if (toolName === "run_python") return "Python Execution Request";
+    if (toolName === "macos_control") return "macOS Control Request";
     if (toolName === "shell_command") return "Shell Command Execution Request";
     return `Action Request (${toolName})`;
   }
@@ -1112,6 +1114,11 @@ module.exports = function createChatDomain(deps) {
       '{"code": "const data = [1, 2, 3]; console.log(data.reduce((a, b) => a + b, 0));"}',
     file_operations:
       '{"action": "write", "path": "reports/summary.md", "content": "# Report"}',
+    code_search:
+      '{"action": "grep", "path": "~/dive/workspace", "pattern": "TODO", "glob": "*.js"}',
+    git_tools: '{"action": "status", "repo": "~/dive/workspace/my-project"}',
+    run_python: '{"code": "import json\\nprint(json.dumps({\\"ok\\": True}))"}',
+    macos_control: '{"action": "notify", "message": "Build finished"}',
   };
 
   function getLocalNativeTools() {

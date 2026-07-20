@@ -771,6 +771,10 @@ function defaultSkillsConfig() {
     http_request: true,
     run_code: true,
     file_operations: true,
+    code_search: true,
+    git_tools: true,
+    run_python: true,
+    macos_control: false,
   };
 }
 

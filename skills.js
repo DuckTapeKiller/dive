@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const vm = require("vm");
-const { exec } = require("child_process");
+const { exec, execFile } = require("child_process");
 const { Worker } = require("worker_threads");
 const cheerio = require("cheerio");
 const { TextDecoder } = require("util");
@@ -1625,12 +1625,22 @@ async function executeTimeAndDate({ timezone } = {}) {
   }
 }
 
-async function executeShellCommand({ command }) {
+async function executeShellCommand({ command, timeout_seconds, cwd }) {
   console.warn(`[shell_command] Executing: ${String(command).slice(0, 200)}`);
+  const timeoutMs =
+    Math.max(1, Math.min(Number(timeout_seconds) || 5, 300)) * 1000;
+  let workDir = os.homedir();
+  if (cwd && String(cwd).trim()) {
+    const resolved = resolveAllowedPath(String(cwd).trim(), {
+      allowHome: true,
+    });
+    if (resolved.error) return `Shell Command Error: cwd — ${resolved.error}`;
+    workDir = resolved.target;
+  }
   return new Promise((resolve) => {
     exec(
       command,
-      { timeout: 5000, cwd: os.homedir() },
+      { timeout: timeoutMs, cwd: workDir, maxBuffer: 8 * 1024 * 1024 },
       (error, stdout, stderr) => {
         let output = "";
         if (stdout) output += `STDOUT:\n${stdout}\n`;
@@ -1640,6 +1650,481 @@ async function executeShellCommand({ command }) {
       },
     );
   });
+}
+
+// ============================================================================
+// CODING & COMPUTER MANAGEMENT — code_search and git_tools are read-only and
+// confined to the user-editable allowlist in ~/dive/allowed-dirs.json;
+// run_python and macos_control mutate state and are confirmation-gated (see
+// skillRequiresShellConfirmation). The read-only/mutating split keeps the
+// name-based confirmation gate sufficient.
+// ============================================================================
+
+const ALLOWED_DIRS_FILE = path.join(os.homedir(), "dive", "allowed-dirs.json");
+const CODING_SETTINGS_FILE = path.join(
+  os.homedir(),
+  "dive",
+  "coding-settings.json",
+);
+const CODE_SEARCH_MAX_MATCHES = 200;
+const CODE_SEARCH_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const CODE_SEARCH_SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "dist",
+  "build",
+  ".next",
+  "target",
+]);
+
+function expandHomePath(value) {
+  const trimmed = String(value || "").trim();
+  if (trimmed === "~") return os.homedir();
+  if (trimmed.startsWith("~/"))
+    return path.join(os.homedir(), trimmed.slice(2));
+  return trimmed;
+}
+
+// The allowlist of directories the coding skills may read. Users edit the
+// JSON directly; the workspace sandbox is always included.
+function loadAllowedDirs() {
+  const dirs = [path.join(os.homedir(), "dive", "workspace")];
+  try {
+    const raw = JSON.parse(fs.readFileSync(ALLOWED_DIRS_FILE, "utf8"));
+    for (const entry of raw.directories || []) {
+      const expanded = expandHomePath(entry);
+      if (expanded && path.isAbsolute(expanded)) dirs.push(expanded);
+    }
+  } catch {
+    /* no file yet — workspace-only defaults apply */
+  }
+  return [...new Set(dirs)];
+}
+
+// Resolve a path and verify it sits inside an allowed directory (realpath
+// prefix check, so symlinks cannot escape). options.allowHome additionally
+// accepts anything under the home directory (used by shell_command's cwd,
+// which is already confirmation-gated).
+function resolveAllowedPath(rawPath, options = {}) {
+  const expanded = expandHomePath(rawPath);
+  if (!path.isAbsolute(expanded)) {
+    return { error: `Path must be absolute or start with ~/: ${rawPath}` };
+  }
+  let real;
+  try {
+    real = fs.realpathSync(expanded);
+  } catch {
+    return { error: `Path does not exist: ${expanded}` };
+  }
+  const roots = loadAllowedDirs();
+  if (options.allowHome) roots.push(os.homedir());
+  for (const root of roots) {
+    let realRoot;
+    try {
+      realRoot = fs.realpathSync(root);
+    } catch {
+      continue;
+    }
+    if (real === realRoot || real.startsWith(realRoot + path.sep)) {
+      return { target: real };
+    }
+  }
+  return {
+    error:
+      `Path is outside the allowed directories. Allowed roots: ` +
+      `${roots.join(", ")}. The user can add more in ~/dive/allowed-dirs.json ` +
+      `({"directories": ["~/some/project"]}).`,
+  };
+}
+
+function walkAllowedTree(dir, onFile, depth = 0) {
+  if (depth > 12) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || CODE_SEARCH_SKIP_DIRS.has(entry.name)) {
+      continue;
+    }
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (walkAllowedTree(full, onFile, depth + 1) === false) return false;
+    } else if (entry.isFile()) {
+      if (onFile(full) === false) return false;
+    }
+  }
+}
+
+function globToRegex(glob) {
+  const escaped = String(glob)
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\u0000")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\u0000/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`(^|/)${escaped}$`, "i");
+}
+
+async function executeCodeSearch({
+  action,
+  path: targetPath,
+  pattern,
+  glob,
+  start_line,
+  end_line,
+  max_results,
+}) {
+  const act = ["grep", "find", "read", "tree"].includes(action) ? action : null;
+  if (!act) {
+    return "Code Search Error: action must be grep, find, read, or tree.";
+  }
+  const resolved = resolveAllowedPath(targetPath || "~/dive/workspace");
+  if (resolved.error) return `Code Search Error: ${resolved.error}`;
+  const target = resolved.target;
+  const cap = Math.max(
+    1,
+    Math.min(Number(max_results) || 50, CODE_SEARCH_MAX_MATCHES),
+  );
+
+  try {
+    if (act === "read") {
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) return `Code Search Error: not a file: ${target}`;
+      if (stat.size > CODE_SEARCH_MAX_FILE_BYTES) {
+        return `Code Search Error: file exceeds ${CODE_SEARCH_MAX_FILE_BYTES / 1024 / 1024} MB; read a line range of a smaller file.`;
+      }
+      const lines = fs.readFileSync(target, "utf8").split("\n");
+      const from = Math.max(1, Number(start_line) || 1);
+      const to = Math.min(lines.length, Number(end_line) || from + 399);
+      const body = lines
+        .slice(from - 1, to)
+        .map((l, i) => `${String(from + i).padStart(5)}  ${l}`)
+        .join("\n");
+      return `## ${target} (lines ${from}-${to} of ${lines.length})\n\n${body}`;
+    }
+
+    if (act === "tree") {
+      const stat = fs.statSync(target);
+      if (!stat.isDirectory())
+        return `Code Search Error: not a directory: ${target}`;
+      const rows = [];
+      const list = (dir, prefix, depth) => {
+        if (depth > 3 || rows.length >= 300) return;
+        let entries;
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (
+            entry.name.startsWith(".") ||
+            CODE_SEARCH_SKIP_DIRS.has(entry.name)
+          )
+            continue;
+          if (rows.length >= 300) return;
+          rows.push(`${prefix}${entry.name}${entry.isDirectory() ? "/" : ""}`);
+          if (entry.isDirectory())
+            list(path.join(dir, entry.name), prefix + "  ", depth + 1);
+        }
+      };
+      list(target, "", 0);
+      return `## ${target}\n\n${rows.join("\n") || "(empty)"}${rows.length >= 300 ? "\n… (truncated at 300 entries)" : ""}`;
+    }
+
+    if (act === "find") {
+      if (!glob && !pattern) {
+        return "Code Search Error: find needs a glob (e.g. '*.py' or '**/config*').";
+      }
+      const rx = globToRegex(glob || pattern);
+      const hits = [];
+      walkAllowedTree(target, (file) => {
+        if (rx.test(file)) hits.push(file);
+        if (hits.length >= cap) return false;
+      });
+      return hits.length
+        ? `## find ${glob || pattern} under ${target} (${hits.length} matches)\n\n${hits.join("\n")}`
+        : `No files matching ${glob || pattern} under ${target}.`;
+    }
+
+    // act === "grep"
+    if (!pattern) return "Code Search Error: grep needs a pattern (regex).";
+    let rx;
+    try {
+      rx = new RegExp(pattern, "i");
+    } catch (e) {
+      return `Code Search Error: invalid regex — ${e.message}`;
+    }
+    const fileFilter = glob ? globToRegex(glob) : null;
+    const hits = [];
+    const stat = fs.statSync(target);
+    const scanFile = (file) => {
+      if (fileFilter && !fileFilter.test(file)) return;
+      let statF;
+      try {
+        statF = fs.statSync(file);
+      } catch {
+        return;
+      }
+      if (statF.size > CODE_SEARCH_MAX_FILE_BYTES) return;
+      let content;
+      try {
+        content = fs.readFileSync(file, "utf8");
+      } catch {
+        return;
+      }
+      if (content.includes("\u0000")) return; // binary
+      const lines = content.split("\n");
+      for (let i = 0; i < lines.length; i += 1) {
+        if (rx.test(lines[i])) {
+          hits.push(`${file}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+          if (hits.length >= cap) return false;
+        }
+      }
+    };
+    if (stat.isFile()) scanFile(target);
+    else walkAllowedTree(target, scanFile);
+    return hits.length
+      ? `## grep /${pattern}/ under ${target} (${hits.length} matches${hits.length >= cap ? ", capped" : ""})\n\n${hits.join("\n")}`
+      : `No matches for /${pattern}/ under ${target}.`;
+  } catch (e) {
+    return `Code Search Error: ${e.message}`;
+  }
+}
+
+// Read-only git subcommands via argv arrays — no shell, no mutation. Anything
+// that writes (commit, push, checkout, …) must go through the gated
+// shell_command skill instead.
+const GIT_READONLY_ACTIONS = {
+  status: () => ["status", "--short", "--branch"],
+  log: (a) => [
+    "log",
+    `--max-count=${Math.max(1, Math.min(Number(a.count) || 20, 100))}`,
+    "--oneline",
+    "--decorate",
+    ...(a.path_filter ? ["--", String(a.path_filter)] : []),
+  ],
+  diff: (a) => [
+    "diff",
+    ...(a.ref ? [String(a.ref)] : []),
+    "--stat",
+    "--patch",
+    ...(a.path_filter ? ["--", String(a.path_filter)] : []),
+  ],
+  show: (a) => ["show", "--stat", "--patch", String(a.ref || "HEAD")],
+  branch: () => ["branch", "--all", "--verbose"],
+  blame: (a) => [
+    "blame",
+    ...(a.start_line && a.end_line
+      ? ["-L", `${Number(a.start_line)},${Number(a.end_line)}`]
+      : []),
+    "--",
+    String(a.path_filter || ""),
+  ],
+};
+
+async function executeGitTools(args) {
+  const action = GIT_READONLY_ACTIONS[args.action] ? args.action : null;
+  if (!action) {
+    return `Git Tools Error: action must be one of ${Object.keys(GIT_READONLY_ACTIONS).join(", ")}.`;
+  }
+  if (action === "blame" && !args.path_filter) {
+    return "Git Tools Error: blame requires path_filter (the file to blame).";
+  }
+  const resolved = resolveAllowedPath(args.repo || "~/dive/workspace");
+  if (resolved.error) return `Git Tools Error: ${resolved.error}`;
+  // Refs and paths become argv entries, never shell text; reject option-like
+  // values so they cannot be smuggled in as git flags.
+  for (const field of ["ref", "path_filter"]) {
+    if (args[field] && String(args[field]).startsWith("-")) {
+      return `Git Tools Error: ${field} must not start with '-'.`;
+    }
+  }
+  const gitArgs = GIT_READONLY_ACTIONS[action](args).filter(Boolean);
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", resolved.target, "--no-pager", ...gitArgs],
+      { timeout: 30000, maxBuffer: 8 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error && !stdout) {
+          resolve(
+            `Git Tools Error: ${(stderr || error.message).trim().slice(0, 2000)}`,
+          );
+          return;
+        }
+        const body = String(stdout || "").slice(0, 40000);
+        resolve(
+          `## git ${gitArgs.join(" ")} @ ${resolved.target}\n\n${body || "(no output)"}${stderr ? `\n\nstderr:\n${String(stderr).slice(0, 1000)}` : ""}`,
+        );
+      },
+    );
+  });
+}
+
+function loadCodingSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(CODING_SETTINGS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function executeRunPython({ code, timeout_seconds }, dataDir) {
+  if (!code || !String(code).trim()) {
+    return "Run Python Error: no code provided.";
+  }
+  const timeoutMs =
+    Math.max(1, Math.min(Number(timeout_seconds) || 30, 120)) * 1000;
+  const settings = loadCodingSettings();
+  let python = "python3";
+  if (settings.pythonVenv) {
+    const candidate = path.join(
+      expandHomePath(settings.pythonVenv),
+      "bin",
+      "python3",
+    );
+    if (fs.existsSync(candidate)) python = candidate;
+  }
+  const runDir = path.join(
+    dataDir || path.join(os.homedir(), "dive"),
+    "workspace",
+    ".run",
+  );
+  fs.mkdirSync(runDir, { recursive: true });
+  const scriptPath = path.join(
+    runDir,
+    `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.py`,
+  );
+  fs.writeFileSync(scriptPath, String(code), "utf8");
+  return new Promise((resolve) => {
+    execFile(
+      python,
+      [scriptPath],
+      {
+        timeout: timeoutMs,
+        cwd: path.dirname(runDir),
+        maxBuffer: 8 * 1024 * 1024,
+        env: {
+          ...process.env,
+          PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ""}`,
+        },
+      },
+      (error, stdout, stderr) => {
+        fs.rmSync(scriptPath, { force: true });
+        let output = "";
+        if (stdout) output += `STDOUT:\n${String(stdout).slice(0, 20000)}\n`;
+        if (stderr) output += `STDERR:\n${String(stderr).slice(0, 8000)}\n`;
+        if (error) {
+          output += error.killed
+            ? `ERROR: timed out after ${timeoutMs / 1000}s\n`
+            : `ERROR: exit ${error.code}\n`;
+        }
+        resolve(output || "Python script ran with no output.");
+      },
+    );
+  });
+}
+
+const MACOS_CONTROL_ACTIONS = new Set([
+  "run_applescript",
+  "open",
+  "notify",
+  "list_processes",
+  "kill_process",
+]);
+
+async function executeMacosControl(args) {
+  const action = MACOS_CONTROL_ACTIONS.has(args.action) ? args.action : null;
+  if (!action) {
+    return `macOS Control Error: action must be one of ${[...MACOS_CONTROL_ACTIONS].join(", ")}.`;
+  }
+  const run = (cmd, argv, timeout = 30000) =>
+    new Promise((resolve) => {
+      execFile(
+        cmd,
+        argv,
+        { timeout, maxBuffer: 4 * 1024 * 1024 },
+        (error, stdout, stderr) => {
+          resolve({
+            code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+            stdout: String(stdout || ""),
+            stderr: String(stderr || (error && error.message) || ""),
+          });
+        },
+      );
+    });
+  try {
+    switch (action) {
+      case "run_applescript": {
+        if (!args.script || !String(args.script).trim()) {
+          return "macOS Control Error: run_applescript needs script.";
+        }
+        const r = await run("osascript", ["-e", String(args.script)], 60000);
+        return r.code === 0
+          ? `AppleScript result:\n${r.stdout.trim() || "(no output)"}`
+          : `AppleScript failed:\n${r.stderr.trim().slice(0, 2000)}`;
+      }
+      case "open": {
+        const target = String(args.target || "").trim();
+        if (!target) {
+          return "macOS Control Error: open needs target (file path, URL, or app name).";
+        }
+        const argv = args.app
+          ? ["-a", String(args.app), expandHomePath(target)]
+          : /^[a-z]+:\/\//i.test(target)
+            ? [target]
+            : [expandHomePath(target)];
+        const r = await run("open", argv);
+        return r.code === 0
+          ? `Opened ${target}${args.app ? ` with ${args.app}` : ""}.`
+          : `Open failed: ${r.stderr.trim().slice(0, 1000)}`;
+      }
+      case "notify": {
+        const message = String(args.message || "").trim();
+        if (!message) return "macOS Control Error: notify needs message.";
+        const esc = (s) =>
+          String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const script = `display notification "${esc(message)}" with title "${esc(args.title || "Dive")}"`;
+        const r = await run("osascript", ["-e", script]);
+        return r.code === 0
+          ? "Notification shown."
+          : `Notify failed: ${r.stderr.trim()}`;
+      }
+      case "list_processes": {
+        const r = await run("ps", ["aux", "-r"]);
+        const lines = r.stdout.split("\n");
+        const filter = args.filter ? String(args.filter).toLowerCase() : "";
+        const kept = filter
+          ? [
+              lines[0],
+              ...lines.slice(1).filter((l) => l.toLowerCase().includes(filter)),
+            ]
+          : lines;
+        return `## Processes${filter ? ` matching "${args.filter}"` : " (top CPU)"}\n\n${kept.slice(0, 40).join("\n")}`;
+      }
+      case "kill_process": {
+        const pid = Number(args.pid);
+        if (!Number.isInteger(pid) || pid <= 1) {
+          return "macOS Control Error: kill_process needs a valid pid.";
+        }
+        const r = await run("kill", [args.force ? "-9" : "-15", String(pid)]);
+        return r.code === 0
+          ? `Sent ${args.force ? "SIGKILL" : "SIGTERM"} to PID ${pid}.`
+          : `Kill failed: ${r.stderr.trim() || "process may not exist or belongs to another user"}`;
+      }
+      default:
+        return "macOS Control Error: unsupported action.";
+    }
+  } catch (e) {
+    return `macOS Control Error: ${e.message}`;
+  }
 }
 
 // ============================================================================
@@ -2028,8 +2513,15 @@ function findCustomSkill(name, dataDir) {
   return skills.find((skill) => skill && skill.name === name) || null;
 }
 
+const GATED_BUILTIN_SKILLS = new Set([
+  "shell_command",
+  "run_code",
+  "run_python",
+  "macos_control",
+]);
+
 function skillRequiresShellConfirmation(name, dataDir) {
-  if (name === "shell_command" || name === "run_code") return true;
+  if (GATED_BUILTIN_SKILLS.has(name)) return true;
   try {
     if (pluginSkillRequiresConfirmation(name)) return true;
     return findCustomSkill(name, dataDir)?.type === "shell";
@@ -2399,13 +2891,23 @@ When asked about these relationships, ALWAYS query both words and explain the di
     type: "function",
     function: {
       name: "shell_command",
-      description: "Executes a shell command on the local machine (macOS).",
+      description:
+        "Executes a shell command on the local machine (macOS). Default timeout is 5 seconds — pass timeout_seconds for longer work (max 300). cwd sets the working directory (home or an allowed directory).",
       parameters: {
         type: "object",
         properties: {
           command: {
             type: "string",
             description: "The shell command to execute.",
+          },
+          timeout_seconds: {
+            type: "number",
+            description: "Timeout in seconds (default 5, max 300).",
+          },
+          cwd: {
+            type: "string",
+            description:
+              "Working directory (absolute or ~/ path inside home or the allowed directories). Defaults to the home directory.",
           },
         },
         required: ["command"],
@@ -2514,6 +3016,160 @@ When asked about these relationships, ALWAYS query both words and explain the di
           pattern: {
             type: "string",
             description: "Filename glob for find, e.g. '*.json' (default '*').",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "code_search",
+      description:
+        "Read-only exploration of code and text files in the user's allowed directories (~/dive/workspace plus anything listed in ~/dive/allowed-dirs.json). Actions: grep (regex search across files, optional glob filter), find (locate files by glob), read (show a file with line numbers, optional start_line/end_line), tree (directory listing, 3 levels). Use this to understand a codebase before proposing changes; use file_operations to write inside the workspace and shell_command for anything else.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["grep", "find", "read", "tree"],
+            description: "The operation to perform.",
+          },
+          path: {
+            type: "string",
+            description:
+              "Absolute or ~/ path to the file or directory to operate on. Defaults to ~/dive/workspace.",
+          },
+          pattern: {
+            type: "string",
+            description: "Regex for grep (case-insensitive).",
+          },
+          glob: {
+            type: "string",
+            description:
+              "Filename glob, e.g. '*.py' or '**/config*'. Filters grep, or is the target of find.",
+          },
+          start_line: {
+            type: "number",
+            description: "First line for read (1-based).",
+          },
+          end_line: { type: "number", description: "Last line for read." },
+          max_results: {
+            type: "number",
+            description: "Cap on grep/find matches (default 50, max 200).",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "git_tools",
+      description:
+        "Read-only git inspection of a repository inside the allowed directories: status, log, diff, show, branch, blame. Never modifies the repository — for commits or other mutating git commands use shell_command (which asks the user first). Use path_filter to focus log/diff/blame on one file.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["status", "log", "diff", "show", "branch", "blame"],
+            description: "The git query to run.",
+          },
+          repo: {
+            type: "string",
+            description:
+              "Absolute or ~/ path to the repository (must be inside the allowed directories).",
+          },
+          ref: {
+            type: "string",
+            description:
+              "Commit/branch/range for diff or show, e.g. 'HEAD~3' or 'main..feature'.",
+          },
+          path_filter: {
+            type: "string",
+            description: "Restrict log/diff/blame to this file or directory.",
+          },
+          count: {
+            type: "number",
+            description: "Number of log entries (default 20, max 100).",
+          },
+          start_line: {
+            type: "number",
+            description: "First line for blame.",
+          },
+          end_line: { type: "number", description: "Last line for blame." },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_python",
+      description:
+        "Runs a Python script with the system python3 (or the venv configured in ~/dive/coding-settings.json as pythonVenv) and returns stdout/stderr. The user must approve each run. Use for data processing, calculations beyond the calculator skill, and quick scripts; the script file itself is temporary, so write any outputs you need to keep into the workspace via absolute paths or use file_operations afterwards.",
+      parameters: {
+        type: "object",
+        properties: {
+          code: {
+            type: "string",
+            description: "The complete Python source to execute.",
+          },
+          timeout_seconds: {
+            type: "number",
+            description: "Execution timeout (default 30, max 120).",
+          },
+        },
+        required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "macos_control",
+      description:
+        "Controls the user's Mac (each action needs user approval): run_applescript (osascript), open (file/URL/app, optional app name), notify (notification with title/message), list_processes (optional filter), kill_process (pid, optional force). Use only when the user asks to control apps, open things, or manage processes.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "run_applescript",
+              "open",
+              "notify",
+              "list_processes",
+              "kill_process",
+            ],
+            description: "The control action to perform.",
+          },
+          script: {
+            type: "string",
+            description: "AppleScript source for run_applescript.",
+          },
+          target: {
+            type: "string",
+            description: "File path, URL, or app name for open.",
+          },
+          app: {
+            type: "string",
+            description: "Application to open the target with.",
+          },
+          title: { type: "string", description: "Notification title." },
+          message: { type: "string", description: "Notification message." },
+          filter: {
+            type: "string",
+            description: "Substring filter for list_processes.",
+          },
+          pid: { type: "number", description: "Process id for kill_process." },
+          force: {
+            type: "boolean",
+            description: "Use SIGKILL instead of SIGTERM.",
           },
         },
         required: ["action"],
@@ -3392,6 +4048,20 @@ async function executeSkill(toolCall, context = {}) {
         return "Error: code execution requires explicit user confirmation.";
       }
       return await executeRunCode(args);
+    case "run_python":
+      if (!context.allowShellCommand) {
+        return "Error: Python execution requires explicit user confirmation.";
+      }
+      return await executeRunPython(args, context.dataDir);
+    case "macos_control":
+      if (!context.allowShellCommand) {
+        return "Error: macOS control requires explicit user confirmation.";
+      }
+      return await executeMacosControl(args);
+    case "code_search":
+      return await executeCodeSearch(args);
+    case "git_tools":
+      return await executeGitTools(args);
     case "file_operations":
       return await executeFileOperations(args, context.dataDir);
     default: {
@@ -3441,4 +4111,6 @@ module.exports = {
   reconstructOpenAlexAbstract,
   normalizeDoi,
   mergeAcademicResults,
+  resolveAllowedPath,
+  globToRegex,
 };
