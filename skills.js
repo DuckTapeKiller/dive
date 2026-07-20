@@ -1,5 +1,8 @@
 const https = require("https");
-const { executePluginSkill } = require("./plugins.js");
+const {
+  executePluginSkill,
+  pluginSkillRequiresConfirmation,
+} = require("./plugins.js");
 const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
@@ -1473,6 +1476,7 @@ function findCustomSkill(name, dataDir) {
 function skillRequiresShellConfirmation(name, dataDir) {
   if (name === "shell_command" || name === "run_code") return true;
   try {
+    if (pluginSkillRequiresConfirmation(name)) return true;
     return findCustomSkill(name, dataDir)?.type === "shell";
   } catch (_error) {
     return false;

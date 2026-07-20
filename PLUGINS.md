@@ -50,8 +50,17 @@ module.exports = {
           query: { type: "string", description: "What to look up" },
         },
       },
+      // Optional: ask the user before every execution. Dive shows its
+      // standard confirmation dialog with the tool name and arguments, and
+      // logs request/denial/run to ~/dive/security-events.jsonl. Set this
+      // on any skill that downloads, writes files, or runs external
+      // binaries.
+      requiresConfirmation: true,
+      // Optional: per-skill execution timeout in milliseconds.
+      // Default 60000 (60 s), clamped to 1 s – 60 min.
+      timeoutMs: 15 * 60 * 1000,
       // Return a string (or any JSON-serializable value). Errors are caught
-      // and reported to the model; executions time out after 60 seconds.
+      // and reported to the model; executions time out after `timeoutMs`.
       async execute(args, context) {
         return `Result for ${args.query}`;
       },

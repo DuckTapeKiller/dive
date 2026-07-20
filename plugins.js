@@ -31,6 +31,14 @@ const path = require("path");
 const PLUGINS_DIR = path.join(os.homedir(), "dive", "plugins");
 const SKILL_NAME_RE = /^[a-z][a-z0-9_]*$/i;
 const EXECUTE_TIMEOUT_MS = 60 * 1000;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 60 * 60 * 1000;
+
+function normalizeTimeoutMs(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return EXECUTE_TIMEOUT_MS;
+  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, Math.floor(n)));
+}
 
 let state = {
   plugins: [], // { name, description, version, source, skills: [names], commands, error }
@@ -120,6 +128,8 @@ function loadOnePlugin(entryPath, fallbackName) {
       state.skills.set(raw.name, {
         pluginName: plugin.name,
         execute: raw.execute,
+        requiresConfirmation: raw.requiresConfirmation === true,
+        timeoutMs: normalizeTimeoutMs(raw.timeoutMs),
         def: {
           type: "function",
           function: {
@@ -201,6 +211,11 @@ function getPluginSkill(name) {
   return state.skills.get(name) || null;
 }
 
+function pluginSkillRequiresConfirmation(name) {
+  ensureLoaded();
+  return state.skills.get(name)?.requiresConfirmation === true;
+}
+
 function getPluginCommands() {
   ensureLoaded();
   return Object.fromEntries(state.commands);
@@ -209,14 +224,14 @@ function getPluginCommands() {
 async function executePluginSkill(name, args, context = {}) {
   const skill = getPluginSkill(name);
   if (!skill) return null;
+  const timeoutMs = skill.timeoutMs || EXECUTE_TIMEOUT_MS;
   try {
     const result = await Promise.race([
       Promise.resolve(skill.execute(args || {}, context)),
       new Promise((_, reject) =>
         setTimeout(
-          () =>
-            reject(new Error(`timed out after ${EXECUTE_TIMEOUT_MS / 1000}s`)),
-          EXECUTE_TIMEOUT_MS,
+          () => reject(new Error(`timed out after ${timeoutMs / 1000}s`)),
+          timeoutMs,
         ).unref?.(),
       ),
     ]);
@@ -236,5 +251,6 @@ module.exports = {
   getPluginToolDefs,
   getPluginSkill,
   getPluginCommands,
+  pluginSkillRequiresConfirmation,
   executePluginSkill,
 };

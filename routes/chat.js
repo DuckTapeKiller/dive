@@ -709,10 +709,7 @@ module.exports = function createChatDomain(deps) {
     if (requiresShellConfirmation) {
       executeAllowed = await requestShellConfirmation({
         emit,
-        title:
-          toolCall.function.name === "run_code"
-            ? "Code Execution Request"
-            : "Shell Command Execution Request",
+        title: confirmationTitleForTool(toolCall.function.name),
         command: toolCall.function.arguments,
         toolName: toolCall.function.name,
       });
@@ -723,7 +720,7 @@ module.exports = function createChatDomain(deps) {
         command: toolCall.function.arguments,
         tool: toolCall.function.name,
       });
-      return "User denied permission to execute this shell command.";
+      return `User denied permission to execute ${toolCall.function.name}. Do not retry it; ask the user or continue without it.`;
     }
 
     if (toolCall.function.name.startsWith("mcp__")) {
@@ -742,6 +739,27 @@ module.exports = function createChatDomain(deps) {
       allowShellCommand: requiresShellConfirmation,
       cloudKeys: getCloudSearchKeys(),
     });
+  }
+
+  function confirmationTitleForTool(toolName) {
+    if (toolName === "run_code") return "Code Execution Request";
+    if (toolName === "shell_command") return "Shell Command Execution Request";
+    return `Action Request (${toolName})`;
+  }
+
+  function confirmationMessageForTool(toolName, command) {
+    if (toolName === "run_code" || toolName === "shell_command") {
+      const what =
+        toolName === "run_code" ? "JavaScript code" : "shell command";
+      return `The AI wants to run the following ${what}:\n\n${command}\n\nDo you want to allow this?`;
+    }
+    let pretty = String(command || "");
+    try {
+      pretty = JSON.stringify(JSON.parse(pretty), null, 2);
+    } catch {
+      // keep raw string if arguments are not valid JSON
+    }
+    return `The AI wants to run the tool "${toolName}" with these arguments:\n\n${pretty}\n\nDo you want to allow this?`;
   }
 
   async function requestShellConfirmation({ emit, title, command, toolName }) {
@@ -767,7 +785,7 @@ module.exports = function createChatDomain(deps) {
         request: {
           method: "confirm",
           title,
-          message: `The AI wants to run the following ${toolName === "run_code" ? "JavaScript code" : "shell command"}:\n\n${command}\n\nDo you want to allow this?`,
+          message: confirmationMessageForTool(toolName, command),
           requireUserInteraction: true,
           danger: true,
         },
