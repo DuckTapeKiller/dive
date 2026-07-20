@@ -13,6 +13,8 @@ const { exec, execFile } = require("child_process");
 const { Worker } = require("worker_threads");
 const cheerio = require("cheerio");
 const { TextDecoder } = require("util");
+const net = require("net");
+const dnsPromises = require("dns").promises;
 
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -28,7 +30,9 @@ const WEB_UAS = [
 const pickWebUa = () => WEB_UAS[Math.floor(Math.random() * WEB_UAS.length)];
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function fetchJson(url, redirectsLeft = MAX_REDIRECTS) {
+async function fetchJson(url, redirectsLeft = MAX_REDIRECTS) {
+  const guardError = await assertUrlAllowed(url);
+  if (guardError) throw new Error(guardError);
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
     const req = lib.get(
@@ -42,7 +46,8 @@ function fetchJson(url, redirectsLeft = MAX_REDIRECTS) {
         ) {
           if (redirectsLeft <= 0)
             return reject(new Error("Too many redirects"));
-          return fetchJson(res.headers.location, redirectsLeft - 1)
+          const next = new URL(res.headers.location, url).toString();
+          return fetchJson(next, redirectsLeft - 1)
             .then(resolve)
             .catch(reject);
         }
@@ -62,7 +67,9 @@ function fetchJson(url, redirectsLeft = MAX_REDIRECTS) {
   });
 }
 
-function fetchText(url, redirectsLeft = MAX_REDIRECTS) {
+async function fetchText(url, redirectsLeft = MAX_REDIRECTS) {
+  const guardError = await assertUrlAllowed(url);
+  if (guardError) throw new Error(guardError);
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
     const req = lib.get(
@@ -76,7 +83,8 @@ function fetchText(url, redirectsLeft = MAX_REDIRECTS) {
         ) {
           if (redirectsLeft <= 0)
             return reject(new Error("Too many redirects"));
-          return fetchText(res.headers.location, redirectsLeft - 1)
+          const next = new URL(res.headers.location, url).toString();
+          return fetchText(next, redirectsLeft - 1)
             .then(resolve)
             .catch(reject);
         }
@@ -93,7 +101,9 @@ function fetchText(url, redirectsLeft = MAX_REDIRECTS) {
 // Browser-like fetch that transparently decompresses gzip/deflate/br, follows
 // redirects, and supports POST. Used for real search-engine + reader endpoints
 // that reject bare clients or always compress their responses.
-function fetchHtml(url, options = {}, redirectsLeft = MAX_REDIRECTS) {
+async function fetchHtml(url, options = {}, redirectsLeft = MAX_REDIRECTS) {
+  const guardError = await assertUrlAllowed(url);
+  if (guardError) throw new Error(guardError);
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
     const req = lib.request(
@@ -140,6 +150,50 @@ function fetchHtml(url, options = {}, redirectsLeft = MAX_REDIRECTS) {
     req.on("error", reject);
     if (options.body) req.write(options.body);
     req.end();
+  });
+}
+
+// SSRF-guarded binary download (for PDFs etc.). Follows redirects manually,
+// re-checking the guard on every hop — the built-in global fetch() cannot do
+// this because it auto-follows redirects before we can inspect the target.
+async function fetchBinaryGuarded(
+  url,
+  { timeout = 45000, redirectsLeft = MAX_REDIRECTS } = {},
+) {
+  const guardError = await assertUrlAllowed(url);
+  if (guardError) throw new Error(guardError);
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith("https") ? https : http;
+    const req = lib.get(
+      url,
+      { headers: { "User-Agent": "Mozilla/5.0" } },
+      (res) => {
+        if (
+          res.statusCode >= 300 &&
+          res.statusCode < 400 &&
+          res.headers.location
+        ) {
+          if (redirectsLeft <= 0)
+            return reject(new Error("Too many redirects"));
+          const next = new URL(res.headers.location, url).toString();
+          return fetchBinaryGuarded(next, {
+            timeout,
+            redirectsLeft: redirectsLeft - 1,
+          })
+            .then(resolve)
+            .catch(reject);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        res.on("error", reject);
+      },
+    );
+    req.setTimeout(timeout, () => req.destroy(new Error("Request timed out")));
+    req.on("error", reject);
   });
 }
 
@@ -752,6 +806,68 @@ async function executeFactCheck({ claim, language = "en" }, context = {}) {
 // SSRF guard shared by web_scraper, deep_research and http_request: only
 // http(s), and never local or private network addresses. Returns an error
 // string, or null when the URL is safe to fetch.
+const SSRF_BLOCK_MESSAGE =
+  "Access to local or private network addresses is not allowed.";
+
+function ipv4ToInt(ip) {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const octet = Number(part);
+    if (octet > 255) return null;
+    n = n * 256 + octet;
+  }
+  return n >>> 0;
+}
+
+// True for loopback, link-local (incl. 169.254.169.254 cloud metadata),
+// RFC1918 private, CGNAT, and unspecified IPv4 ranges.
+function isBlockedIpv4(ip) {
+  const n = ipv4ToInt(ip);
+  if (n === null) return false;
+  const inRange = (base, bits) => {
+    const b = ipv4ToInt(base);
+    const shift = 32 - bits;
+    return n >>> shift === b >>> shift;
+  };
+  return (
+    inRange("0.0.0.0", 8) ||
+    inRange("10.0.0.0", 8) ||
+    inRange("100.64.0.0", 10) ||
+    inRange("127.0.0.0", 8) ||
+    inRange("169.254.0.0", 16) ||
+    inRange("172.16.0.0", 12) ||
+    inRange("192.168.0.0", 16)
+  );
+}
+
+// True for IPv6 loopback/unspecified, ULA (fc00::/7), link-local (fe80::/10),
+// and IPv4-mapped/embedded addresses whose inner IPv4 is itself blocked.
+function isBlockedIpv6(ip) {
+  const s = ip
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/%.*$/, "");
+  if (s === "::1" || s === "::") return true;
+  const v4embedded = s.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (v4embedded) return isBlockedIpv4(v4embedded[1]);
+  const first = s.split(":")[0];
+  if (/^f[cd]/.test(first)) return true; // fc00::/7 unique local
+  if (/^fe[89ab]/.test(first)) return true; // fe80::/10 link-local
+  return false;
+}
+
+function isBlockedIp(ip) {
+  if (net.isIPv4(ip)) return isBlockedIpv4(ip);
+  if (net.isIPv6(ip)) return isBlockedIpv6(ip);
+  return false;
+}
+
+// Synchronous structural guard: protocol + literal-host checks. Fast path used
+// before every fetch. Alternate IP encodings (decimal/hex/octal) and DNS
+// rebinding are caught by assertUrlAllowed() below, which resolves the host.
 function urlGuardError(url) {
   let parsed;
   try {
@@ -762,11 +878,39 @@ function urlGuardError(url) {
   if (!["http:", "https:"].includes(parsed.protocol)) {
     return "Only http and https URLs are allowed.";
   }
-  const h = parsed.hostname.toLowerCase();
-  const BLOCKED_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
-  const PRIVATE_RANGES = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
-  if (BLOCKED_HOSTS.has(h) || PRIVATE_RANGES.test(h)) {
-    return "Access to local or private network addresses is not allowed.";
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost")) {
+    return SSRF_BLOCK_MESSAGE;
+  }
+  if (net.isIP(host) && isBlockedIp(host)) {
+    return SSRF_BLOCK_MESSAGE;
+  }
+  return null;
+}
+
+// Full async guard: the structural check, then DNS resolution so that
+// hostnames pointing at internal IPs (DNS rebinding) and numeric-encoded IPs
+// (getaddrinfo normalizes 2130706433 / 0x7f000001 to 127.0.0.1) are blocked.
+// Residual TOCTOU (a host that resolves differently between this check and the
+// real connection) is out of scope for this local, single-user app.
+async function assertUrlAllowed(url) {
+  const structural = urlGuardError(url);
+  if (structural) return structural;
+  let host;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return "Invalid URL.";
+  }
+  if (net.isIP(host)) return null; // already checked literally above
+  let addresses;
+  try {
+    addresses = await dnsPromises.lookup(host, { all: true });
+  } catch {
+    return null; // unresolvable — the request will fail on its own
+  }
+  for (const { address } of addresses) {
+    if (isBlockedIp(address)) return SSRF_BLOCK_MESSAGE;
   }
   return null;
 }
@@ -1374,37 +1518,30 @@ async function executeFetchPaper({ url_or_doi, save = true }, context = {}) {
     // Save the open-access PDF into the workspace sandbox when available.
     let savedLine = "";
     if (save && pdfCandidate && context.dataDir) {
-      const guardError = urlGuardError(pdfCandidate);
-      if (!guardError) {
-        try {
-          // Global fetch follows the redirects OA PDF links routinely use.
-          const res = await fetch(pdfCandidate, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(45000),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const bytes = Buffer.from(await res.arrayBuffer());
-          if (
-            bytes.length > 1000 &&
-            bytes.slice(0, 5).toString("latin1").startsWith("%PDF")
-          ) {
-            const baseName =
-              (meta?.title || arxivMatch?.[1] || "paper")
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, "-")
-                .replace(/^-+|-+$/g, "")
-                .slice(0, 80) || "paper";
-            const rel = path.join("papers", `${baseName}.pdf`);
-            const resolved = resolveWorkspacePath(context.dataDir, rel);
-            if (!resolved.error) {
-              fs.mkdirSync(path.dirname(resolved.target), { recursive: true });
-              fs.writeFileSync(resolved.target, bytes);
-              savedLine = `\nSaved PDF: workspace/${rel} (${Math.round(bytes.length / 1024)} KB)`;
-            }
+      try {
+        // Guarded binary fetch re-checks the SSRF guard on every redirect
+        // hop (OA PDF links redirect freely across CDNs).
+        const bytes = await fetchBinaryGuarded(pdfCandidate);
+        if (
+          bytes.length > 1000 &&
+          bytes.slice(0, 5).toString("latin1").startsWith("%PDF")
+        ) {
+          const baseName =
+            (meta?.title || arxivMatch?.[1] || "paper")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 80) || "paper";
+          const rel = path.join("papers", `${baseName}.pdf`);
+          const resolved = resolveWorkspacePath(context.dataDir, rel);
+          if (!resolved.error) {
+            fs.mkdirSync(path.dirname(resolved.target), { recursive: true });
+            fs.writeFileSync(resolved.target, bytes);
+            savedLine = `\nSaved PDF: workspace/${rel} (${Math.round(bytes.length / 1024)} KB)`;
           }
-        } catch {
-          /* saving is best-effort; the text below still answers the request */
         }
+      } catch {
+        /* saving is best-effort; the text below still answers the request */
       }
     }
 
@@ -2395,7 +2532,7 @@ async function executeHttpRequest({
           : JSON.stringify(body);
     let response = null;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-      const guardError = urlGuardError(currentUrl);
+      const guardError = await assertUrlAllowed(currentUrl);
       if (guardError) return `HTTP Request Error: ${guardError}`;
       const host = new URL(currentUrl).hostname.toLowerCase();
       const jar = sessionName ? jarFor(sessionName, host) : null;

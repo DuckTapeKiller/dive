@@ -265,6 +265,34 @@ test("HTTP Request Skill - guards and validation", async () => {
   assert.match(badMethod, /unsupported method/);
 });
 
+test("SSRF guard blocks internal ranges, IPv6, and encodings", async () => {
+  // Literal IPs (loopback beyond .1, cloud metadata, RFC1918, CGNAT, IPv6
+  // loopback/ULA/link-local) — all resolved structurally, no network.
+  const blockedHosts = [
+    "http://127.0.0.2/x",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/x",
+    "http://100.64.0.1/x",
+    "http://[::1]/x",
+    "http://[fd00::1]/x",
+    "http://[fe80::1]/x",
+    "http://2130706433/x", // decimal-encoded 127.0.0.1
+  ];
+  for (const url of blockedHosts) {
+    const r = await executeSkill(
+      {
+        function: { name: "http_request", arguments: JSON.stringify({ url }) },
+      },
+      {},
+    );
+    assert.match(
+      r,
+      /local or private network/,
+      `expected ${url} to be blocked`,
+    );
+  }
+});
+
 test("Custom shell skills require explicit confirmation", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chat-test-"));
   try {
