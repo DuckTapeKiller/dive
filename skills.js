@@ -133,6 +133,10 @@ async function fetchHtml(url, options = {}, redirectsLeft = MAX_REDIRECTS) {
             .then(resolve)
             .catch(reject);
         }
+        if (options.failOnHttpError && res.statusCode >= 400) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
         const enc = String(res.headers["content-encoding"] || "").toLowerCase();
         let stream = res;
         if (enc === "gzip") stream = res.pipe(zlib.createGunzip());
@@ -210,19 +214,70 @@ function decodeDdgHref(href) {
   }
 }
 
+// Wikipedia editions consulted (in order) when the requested language has no
+// exact title match — some articles exist only in another edition (e.g. the
+// poet Luis Carlos López is on es.wikipedia but not en.wikipedia, whose fuzzy
+// search returns a different person entirely).
+const WIKI_FALLBACK_LANGS = ["en", "es"];
+
+// Accent- and case-insensitive comparison key, so "Luis Carlos Lopez"
+// matches the article title "Luis Carlos López".
+const wikiTitleKey = (s) =>
+  String(s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+async function searchWikipedia(lang, query) {
+  const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=5&format=json&origin=*`;
+  const searchData = await fetchJson(searchUrl);
+  return searchData?.query?.search || [];
+}
+
 async function executeWikipedia({ query, language = "en" }) {
   try {
-    const lang =
+    const primary =
       String(language || "en")
         .toLowerCase()
         .slice(0, 2) || "en";
-    const wikiBase = `https://${lang}.wikipedia.org`;
-    const searchUrl = `${wikiBase}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=5&format=json&origin=*`;
-    const searchData = await fetchJson(searchUrl);
-    const searchArr = searchData?.query?.search || [];
-    if (searchArr.length === 0)
-      return `No Wikipedia results found for "${query}".`;
+    const chain = [...new Set([primary, ...WIKI_FALLBACK_LANGS])];
+    const wanted = wikiTitleKey(query);
+    const isExact = (r) => wikiTitleKey(r.title) === wanted;
+    // An exact title match always beats a fuzzy top hit, wherever it ranks.
+    const promoteExact = (arr) => {
+      const i = arr.findIndex(isExact);
+      return i > 0 ? [arr[i], ...arr.slice(0, i), ...arr.slice(i + 1)] : arr;
+    };
 
+    let lang = primary;
+    let searchArr = promoteExact(await searchWikipedia(primary, query));
+    // No exact match in the primary edition: consult the other editions and
+    // prefer one that titles an article exactly as queried.
+    if (!searchArr.some(isExact)) {
+      for (const alt of chain.slice(1)) {
+        try {
+          const altArr = await searchWikipedia(alt, query);
+          const exact = altArr.find(isExact);
+          if (exact) {
+            lang = alt;
+            searchArr = promoteExact(altArr);
+            break;
+          }
+          if (!searchArr.length && altArr.length) {
+            lang = alt;
+            searchArr = altArr;
+          }
+        } catch {
+          /* edition unreachable — keep what we already have */
+        }
+      }
+    }
+    if (searchArr.length === 0)
+      return `No Wikipedia results found for "${query}" (checked: ${chain.map((l) => `${l}.wikipedia.org`).join(", ")}).`;
+
+    const wikiBase = `https://${lang}.wikipedia.org`;
     const pageTitle = searchArr[0].title;
     // Full plaintext article extract (intro + body), capped below — far more
     // substance than the one-paragraph REST summary. The API omits images
@@ -244,7 +299,10 @@ async function executeWikipedia({ query, language = "en" }) {
         "\n\n[... article truncated ...]";
     }
 
-    let output = `## Wikipedia: ${pageTitle}\n\n`;
+    let output = `## Wikipedia${lang !== primary ? ` (${lang})` : ""}: ${pageTitle}\n\n`;
+    if (lang !== primary) {
+      output += `_No exact match on ${primary}.wikipedia.org; this article is from ${lang}.wikipedia.org._\n\n`;
+    }
     if (text) {
       output += `${text}\n\n`;
     } else {
@@ -685,8 +743,8 @@ async function executeDuckDuckGo({ query, max_results = 6 }, context = {}) {
 // Britannica bot-blocks direct scraping (403 with TLS fingerprinting on both
 // the search page and article pages), so the skill finds the article through
 // web search restricted to britannica.com and reads it through the same
-// reader pipeline the web_scraper skill uses (Jina Reader, then a Wayback
-// Machine snapshot as a last resort).
+// reader pipeline the web_scraper skill uses, archive-first (Wayback Machine
+// snapshot, then Jina Reader, then a direct fetch).
 function cleanBritannicaMarkdown(markdown) {
   const lines = String(markdown || "").split("\n");
   const kept = [];
@@ -699,7 +757,7 @@ function cleanBritannicaMarkdown(markdown) {
       continue;
     }
     if (
-      /Search Britannica|Click here to search|Subscribe|Login|Ask the Chatbot|Games & Quizzes|References & Edit History|Quick Facts|ProCon|verify using Britannica articles/i.test(
+      /Search Britannica|Click here to search|Subscribe|Login|Ask the Chatbot|Games & Quizzes|References & Edit History|Quick Facts|ProCon|verify using Britannica articles|editors will review|Select Citation Style|citation style rules/i.test(
         line,
       )
     ) {
@@ -719,17 +777,84 @@ async function executeBritannica({ query }, context = {}) {
     const cloudKeys = (context && context.cloudKeys) || {};
     const ARTICLE_URL_RE =
       /https:\/\/www\.britannica\.com\/(?:biography|topic|place|science|art|event|animal|plant|technology|sports|story|summary)\/[A-Za-z0-9%_-]+/g;
-    // Primary finder: Britannica's own search page through the reader proxy
-    // (Britannica 403s direct fetches; the proxy bypasses that) — results are
-    // relevance-ranked by Britannica itself and independent of any search
-    // engine's rate limits.
-    let articleUrl = "";
-    try {
-      const searchPage = await readUrlContent(
-        `https://www.britannica.com/search?query=${encodeURIComponent(query)}`,
-        20000,
-      );
-      if (searchPage.ok) {
+    // Article finders, cheapest and most reliable first. Each returns a list
+    // of candidate URLs; every candidate is verified by actually reading it,
+    // because any single finder can lie (Wikidata IDs get vandalized, search
+    // engines rate-limit, Britannica's own search page bot-blocks).
+    const finders = [
+      // 1) Wikidata stores each entity's Britannica article ID (P1417), so
+      // the URL resolves without touching Britannica or any rate-limited
+      // search engine.
+      async () => {
+        const found = await fetchJson(
+          `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(query)}&language=en&format=json&limit=5`,
+        );
+        const urls = [];
+        for (const hit of ((found && found.search) || []).slice(0, 5)) {
+          if (urls.length >= 2) break;
+          const claims = await fetchJson(
+            `https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${encodeURIComponent(hit.id)}&property=P1417&format=json`,
+          );
+          const id = claims?.claims?.P1417?.[0]?.mainsnak?.datavalue?.value;
+          if (
+            typeof id === "string" &&
+            /^[a-z-]+(?:\/[A-Za-z0-9%_.-]+)+$/i.test(id)
+          ) {
+            urls.push(`https://www.britannica.com/${id}`);
+          }
+        }
+        return urls;
+      },
+      // 2) Slug probe: Britannica article URLs are /<category>/<slug>; the
+      // Wayback availability API canonicalizes case, so one probe per
+      // category finds an exact-title article even when Wikidata has no
+      // mapping and every search engine is blocked or rate-limited.
+      async () => {
+        const slug = query.trim().replace(/\s+/g, "-");
+        if (!/^[A-Za-z0-9-]{2,80}$/.test(slug)) return [];
+        const categories = [
+          "biography",
+          "topic",
+          "science",
+          "place",
+          "art",
+          "event",
+          "animal",
+          "plant",
+          "technology",
+          "sports",
+          "story",
+        ];
+        const probes = await Promise.allSettled(
+          categories.map((cat) =>
+            fetchJson(
+              `http://archive.org/wayback/available?url=${encodeURIComponent(`https://www.britannica.com/${cat}/${slug}`)}`,
+            ),
+          ),
+        );
+        const urls = [];
+        for (const p of probes) {
+          const snap =
+            p.status === "fulfilled" && p.value?.archived_snapshots?.closest;
+          if (snap && snap.available && snap.url) {
+            // The snapshot URL ends with the canonical Britannica URL,
+            // correct casing included.
+            const m = String(snap.url).match(
+              /https?:\/\/www\.britannica\.com\/.+$/,
+            );
+            if (m) urls.push(m[0].replace(/^http:/, "https:"));
+          }
+        }
+        return urls.slice(0, 2);
+      },
+      // 3) Britannica's own search page through the reader pipeline —
+      // results are relevance-ranked by Britannica itself.
+      async () => {
+        const searchPage = await readUrlContent(
+          `https://www.britannica.com/search?query=${encodeURIComponent(query)}`,
+          20000,
+        );
+        if (!searchPage.ok) return [];
         const links = searchPage.text.match(ARTICLE_URL_RE) || [];
         const words = query.toLowerCase().split(/\s+/).filter(Boolean);
         const slugOf = (link) =>
@@ -741,37 +866,52 @@ async function executeBritannica({ query }, context = {}) {
         const containing = links
           .filter((l) => words.every((w) => slugOf(l).includes(w)))
           .sort((a, b) => slugOf(a).length - slugOf(b).length);
-        articleUrl = exact || containing[0] || links[0] || "";
-      }
-    } catch {
-      /* fall through to web search */
-    }
-    // Fallback finder: web search restricted to britannica.com.
-    if (!articleUrl) {
-      let { results } = await runWebSearch(
-        `site:britannica.com ${query}`,
-        6,
-        cloudKeys,
-      );
-      if (!results || !results.length) {
-        const retry = await runWebSearch(`${query} britannica`, 8, cloudKeys);
-        results = (retry.results || []).filter((r) =>
-          /britannica\.com\//i.test(r.url || ""),
+        return [exact, containing[0], links[0]].filter(Boolean);
+      },
+      // 4) Web search restricted to britannica.com.
+      async () => {
+        let { results } = await runWebSearch(
+          `site:britannica.com ${query}`,
+          6,
+          cloudKeys,
         );
+        if (!results || !results.length) {
+          const retry = await runWebSearch(`${query} britannica`, 8, cloudKeys);
+          results = (retry.results || []).filter((r) =>
+            /britannica\.com\//i.test(r.url || ""),
+          );
+        }
+        const article = (results || []).find((r) =>
+          ARTICLE_URL_RE.test(String(r.url || "")),
+        );
+        return article ? [article.url.split("#")[0].split("?")[0]] : [];
+      },
+    ];
+    // Britannica hard-blocks every live reader (Cloudflare challenge on
+    // direct fetches, recurring abuse-blocks on Jina), so read each candidate
+    // archive-first: Wayback snapshot, then the Jina→direct chain. Stop at
+    // the first candidate that yields real article text; cap the attempts so
+    // a run of bad candidates can't stall the skill.
+    let articleUrl = "";
+    const tried = new Set();
+    for (const finder of finders) {
+      if (tried.size >= 4) break;
+      let candidates = [];
+      try {
+        candidates = await finder();
+      } catch {
+        continue; // finder unavailable — try the next one
       }
-      const article = (results || []).find((r) =>
-        ARTICLE_URL_RE.test(String(r.url || "")),
-      );
-      if (article) articleUrl = article.url.split("#")[0].split("?")[0];
-    }
-    // readUrlContent now handles the Jina→direct→Wayback reader chain with
-    // retries internally, so a single call covers what used to be two.
-    if (articleUrl) {
-      const read = await readUrlContent(articleUrl, 6000);
-      if (read.ok) {
-        const text = cleanBritannicaMarkdown(read.text);
-        if (text.length > 120) {
-          return `## Britannica: "${query}"\n\n${text}\n\n<!-- ${articleUrl} -->`;
+      for (const url of candidates) {
+        if (tried.has(url) || tried.size >= 4) continue;
+        tried.add(url);
+        if (!articleUrl) articleUrl = url;
+        const read = await readUrlContent(url, 6000, { archiveFirst: true });
+        if (read.ok) {
+          const text = cleanBritannicaMarkdown(read.text);
+          if (text.length > 120) {
+            return `## Britannica: "${query}"\n\n${text}\n\n<!-- ${url} -->`;
+          }
         }
       }
     }
@@ -922,9 +1062,93 @@ function truncateText(text, maxChars, marker) {
   return text.length > maxChars ? text.slice(0, maxChars) + marker : text;
 }
 
-async function readUrlContent(url, maxChars = 6000) {
+// Bot walls (Cloudflare et al.) can serve an interstitial challenge page with
+// a 2xx status; its extracted text must never be mistaken for article content.
+const CHALLENGE_PAGE_RE =
+  /just a moment|enable javascript and cookies|verifying you are human|attention required|checking your browser/i;
+
+function extractMainText(html) {
+  const $ = cheerio.load(html);
+  $("script, style, noscript, nav, header, footer, aside, form, svg").remove();
+  const container = $("article").first().length
+    ? $("article").first()
+    : $("main").first().length
+      ? $("main").first()
+      : $("body");
+  // Keep block boundaries as newlines — downstream line-based cleaners (e.g.
+  // cleanBritannicaMarkdown) drop nav-crumb lines, so collapsing a whole page
+  // into one line would let a single junk phrase discard the entire article.
+  const blocks = container
+    .find("p, h1, h2, h3, h4")
+    .map((_, el) => $(el).text().replace(/\s+/g, " ").trim())
+    .get()
+    .filter(Boolean);
+  const blockText = blocks.join("\n");
+  if (blockText.length > 150) return blockText;
+  return container.text().replace(/\s+/g, " ").trim();
+}
+
+// Wayback Machine snapshot reader (retry on 429 with backoff). Reliable for
+// sites that hard-block live scraping, e.g. Britannica. Returns { ok, text }
+// or null when no usable snapshot exists.
+async function readViaWayback(url, maxChars) {
+  const candidates = [];
+  try {
+    const wb = await fetchJson(
+      `http://archive.org/wayback/available?url=${encodeURIComponent(url)}`,
+    );
+    const snap = wb?.archived_snapshots?.closest;
+    if (snap?.available && snap.url) candidates.push(snap.url);
+  } catch {
+    /* availability API is optional */
+  }
+  // The /web/2/ form redirects to the newest snapshot, so it works even when
+  // the availability API is down or lagging.
+  candidates.push(`https://web.archive.org/web/2/${url}`);
+  for (const snapUrl of candidates) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const html = await fetchHtml(snapUrl, {
+          headers: { "User-Agent": pickWebUa() },
+          timeout: 20000,
+          failOnHttpError: true,
+        });
+        const text = extractMainText(html);
+        if (text.length > 150 && !CHALLENGE_PAGE_RE.test(text.slice(0, 400))) {
+          return {
+            ok: true,
+            text: truncateText(text, maxChars, "... [TRUNCATED]"),
+          };
+        }
+        break; // fetched fine but no usable text — try the next candidate
+      } catch (e) {
+        // Retry once only on rate-limiting or a timeout; a 404 (URL never
+        // archived) won't improve on retry, so move on immediately.
+        if (attempt === 0 && /429|timed out/i.test(String(e?.message))) {
+          await sleepMs(1200);
+          continue;
+        }
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+async function readUrlContent(
+  url,
+  maxChars = 6000,
+  { archiveFirst = false } = {},
+) {
   const guardError = urlGuardError(url);
   if (guardError) return { ok: false, error: guardError };
+  // For domains known to hard-block every live reader (pass archiveFirst),
+  // the Wayback snapshot is the most reliable source — try it before burning
+  // ~40s on doomed Jina retries and a direct fetch.
+  if (archiveFirst) {
+    const archived = await readViaWayback(url, maxChars);
+    if (archived) return archived;
+  }
   // 1) Jina Reader (clean markdown, no key). Retry once — it rate-limits
   // ("AbuseAlleviationError") under bursts but usually recovers after a pause.
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -949,22 +1173,16 @@ async function readUrlContent(url, maxChars = 6000) {
     }
     if (attempt === 0) await sleepMs(600);
   }
-  // 2) Direct fetch + main-content extraction (rotating UA).
+  // 2) Direct fetch + main-content extraction (rotating UA). Must fail on
+  // HTTP errors and challenge pages, or a bot wall's block page would count
+  // as success and mask the Wayback strategy below.
   try {
     const html = await fetchHtml(url, {
       headers: { "User-Agent": pickWebUa() },
+      failOnHttpError: true,
     });
-    const $ = cheerio.load(html);
-    $(
-      "script, style, noscript, nav, header, footer, aside, form, svg",
-    ).remove();
-    const container = $("article").first().length
-      ? $("article").first()
-      : $("main").first().length
-        ? $("main").first()
-        : $("body");
-    const text = container.text().replace(/\s+/g, " ").trim();
-    if (text) {
+    const text = extractMainText(html);
+    if (text.length > 150 && !CHALLENGE_PAGE_RE.test(text.slice(0, 400))) {
       return {
         ok: true,
         text: truncateText(text, maxChars, "... [TRUNCATED]"),
@@ -973,44 +1191,10 @@ async function readUrlContent(url, maxChars = 6000) {
   } catch {
     /* fall through to the Wayback strategy */
   }
-  // 3) Wayback Machine snapshot (retry on 429 with backoff). Reliable for
-  // sites that hard-block live scraping, e.g. Britannica.
-  try {
-    const wb = await fetchJson(
-      `http://archive.org/wayback/available?url=${encodeURIComponent(url)}`,
-    );
-    const snap = wb?.archived_snapshots?.closest;
-    if (snap?.available && snap.url) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          const html = await fetchHtml(snap.url, {
-            headers: { "User-Agent": pickWebUa() },
-            timeout: 20000,
-          });
-          const $ = cheerio.load(html);
-          $(
-            "script, style, noscript, nav, header, footer, aside, form, svg",
-          ).remove();
-          const container = $("article").first().length
-            ? $("article").first()
-            : $("main").first().length
-              ? $("main").first()
-              : $("body");
-          const text = container.text().replace(/\s+/g, " ").trim();
-          if (text && text.length > 150) {
-            return {
-              ok: true,
-              text: truncateText(text, maxChars, "... [TRUNCATED]"),
-            };
-          }
-        } catch {
-          /* likely 429 — pause and retry once */
-        }
-        if (attempt === 0) await sleepMs(1200);
-      }
-    }
-  } catch {
-    /* no snapshot available */
+  // 3) Wayback Machine snapshot (unless it was already tried first).
+  if (!archiveFirst) {
+    const archived = await readViaWayback(url, maxChars);
+    if (archived) return archived;
   }
   return {
     ok: false,
@@ -2854,7 +3038,8 @@ const ALL_SKILLS = [
           query: { type: "string", description: "The search term" },
           language: {
             type: "string",
-            description: "Language code (e.g., en, es)",
+            description:
+              "Language code (e.g., en, es). Other editions are consulted automatically when the requested one has no exact title match.",
           },
         },
         required: ["query"],
@@ -4462,6 +4647,7 @@ module.exports = {
   executeSkill,
   skillRequiresShellConfirmation,
   // Exported for unit tests.
+  readUrlContent,
   reconstructOpenAlexAbstract,
   normalizeDoi,
   mergeAcademicResults,
