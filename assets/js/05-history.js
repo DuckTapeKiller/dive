@@ -2129,7 +2129,7 @@
             const enabled = builtinSkillsConfig[skillName] !== false;
             skillRows += `
               <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-                <span>${esc(skillName)}</span>
+                <span>${esc(humanizeSkillLabel(skillName))}</span>
                 <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${esc(skillName)}" ${enabled ? "checked" : ""} >
               </div>`;
           }
@@ -2138,7 +2138,7 @@
             : "";
           html += `
             <div style="background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
-              <strong>${esc(plugin.name)}${version}</strong>
+              <strong>${esc(humanizeSkillLabel(plugin.name))}${version}</strong>
               <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${esc(plugin.description || "No description.")}${esc(commandText)}</div>
               ${errorRow}
               ${skillRows}
@@ -2542,7 +2542,7 @@
           html += `
             <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
               <div>
-                <strong>${skill}</strong>
+                <strong>${humanizeSkillLabel(skill)}</strong>
                 <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${info.desc}</div>
               </div>
               <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${skill}" ${enabled ? "checked" : ""} >

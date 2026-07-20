@@ -855,6 +855,56 @@
         },
       };
 
+      // Friendly display names for the Settings UI. The underlying skill and
+      // plugin IDs (remember_lesson, download_media_with_ytdlp, gallery-dl…)
+      // never change — the model still calls them by ID and config keys still
+      // use them. This only prettifies what the USER sees. Known tech terms
+      // keep their conventional casing; everything else becomes sentence case.
+      const SKILL_LABEL_WORDS = {
+        ytdlp: "yt-dlp",
+        ffmpeg: "FFmpeg",
+        macos: "macOS",
+        duckduckgo: "DuckDuckGo",
+        python: "Python",
+        dl: "DL",
+        tts: "TTS",
+        http: "HTTP",
+        https: "HTTPS",
+        url: "URL",
+        api: "API",
+        pdf: "PDF",
+        doi: "DOI",
+        ai: "AI",
+        os: "OS",
+        gui: "GUI",
+        cli: "CLI",
+        id: "ID",
+        tv: "TV",
+        lg: "LG",
+        bbc: "BBC",
+        rtve: "RTVE",
+      };
+      function humanizeSkillLabel(name) {
+        const words = String(name || "")
+          .split(/[_\-\s]+/)
+          .filter(Boolean);
+        if (!words.length) return String(name || "");
+        return words
+          .map((word, index) => {
+            const lower = word.toLowerCase();
+            if (
+              Object.prototype.hasOwnProperty.call(SKILL_LABEL_WORDS, lower)
+            ) {
+              return SKILL_LABEL_WORDS[lower];
+            }
+            if (index === 0) {
+              return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+            }
+            return lower;
+          })
+          .join(" ");
+      }
+
       // Prompt used when Database Context is ON for the active mode: answer
       // strictly and only from the retrieved local-library passages, no tools.
       const DB_ON_PROMPT = `You are a meticulous academic research assistant writing for scholars, professors, and advanced readers. You are precise, explanatory, and intellectually serious. Never use emojis.
