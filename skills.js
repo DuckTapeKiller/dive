@@ -1043,7 +1043,8 @@ async function searchArxivWorks(query, limit) {
         .get(),
       year: published ? Number(published.slice(0, 4)) : undefined,
       venue: "arXiv",
-      doi: normalizeDoi(entry.find("doi").first().text()),
+      // The Atom feed namespaces the element as <arxiv:doi>.
+      doi: normalizeDoi(entry.find("doi, arxiv\\:doi").first().text()),
       citations: 0,
       abstract: entry
         .find("summary")
