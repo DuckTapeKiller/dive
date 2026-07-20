@@ -17,6 +17,17 @@ const { TextDecoder } = require("util");
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 15000;
 
+// Rotating browser User-Agents. Scrapers (DuckDuckGo, reader proxies) throttle
+// a fixed UA quickly; varying it per request keeps keyless search working.
+const WEB_UAS = [
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+];
+const pickWebUa = () => WEB_UAS[Math.floor(Math.random() * WEB_UAS.length)];
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function fetchJson(url, redirectsLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
@@ -287,26 +298,58 @@ function parseDdgResults($, limit) {
 
 // DuckDuckGo HTML scrape (no key). Primary html endpoint + lite fallback.
 async function searchDuckDuckGo(query, limit) {
-  let results = [];
-  try {
-    const html = await fetchHtml(
-      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-    );
-    results = parseDdgResults(cheerio.load(html), limit);
-  } catch {
-    /* try the lite endpoint below */
-  }
-  if (!results.length) {
+  // DuckDuckGo's GET endpoints return an "anomaly" bot page, but the POST form
+  // (the one the site itself submits) returns real results. Try POST on both
+  // endpoints, rotating the UA, before giving up.
+  const body = `q=${encodeURIComponent(query)}`;
+  const attempts = [
+    {
+      url: "https://html.duckduckgo.com/html/",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    },
+    {
+      url: "https://lite.duckduckgo.com/lite/",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    },
+  ];
+  for (const attempt of attempts) {
     try {
-      const lite = await fetchHtml(
-        `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
-      );
-      results = parseDdgResults(cheerio.load(lite), limit);
+      const html = await fetchHtml(attempt.url, {
+        method: "POST",
+        headers: { "User-Agent": pickWebUa(), ...attempt.headers },
+        body,
+      });
+      const results = parseDdgResults(cheerio.load(html), limit);
+      if (results.length) return results;
     } catch {
-      /* no results */
+      /* try the next endpoint */
     }
+    await sleepMs(250);
   }
-  return results;
+  return [];
+}
+
+// Keyless last-resort: turn a query into source URLs via the Wikipedia search
+// API (always available, no key). Not a general web search, but it guarantees
+// the research skills get relevant, citable sources when scraping is blocked.
+async function searchWikipediaFallback(query, limit) {
+  try {
+    const data = await fetchJson(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+        query,
+      )}&srlimit=${Math.max(1, Math.min(limit, 10))}&format=json&origin=*`,
+    );
+    const hits = data?.query?.search || [];
+    return hits.map((h) => ({
+      title: h.title,
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(
+        String(h.title).replace(/ /g, "_"),
+      )}`,
+      snippet: String(h.snippet || "").replace(/<[^>]+>/g, ""),
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // OpenAI web search (chat completions + web_search_options). Result URLs come
@@ -530,7 +573,11 @@ async function runWebSearch(query, limit, cloudKeys = {}) {
     }
   }
   const results = await searchDuckDuckGo(query, limit);
-  return { provider: "duckduckgo", results };
+  if (results.length) return { provider: "duckduckgo", results };
+  // Everything above is blocked/keyless-unavailable: return citable Wikipedia
+  // sources so the research skills still have something to read.
+  const wiki = await searchWikipediaFallback(query, limit);
+  return { provider: wiki.length ? "wikipedia" : "duckduckgo", results: wiki };
 }
 
 async function executeDuckDuckGo({ query, max_results = 6 }, context = {}) {
@@ -663,35 +710,33 @@ async function executeBritannica({ query }, context = {}) {
       );
       if (article) articleUrl = article.url.split("#")[0].split("?")[0];
     }
-    if (!articleUrl) {
-      return `No Britannica article found for "${query}".`;
-    }
-    const read = await readUrlContent(articleUrl, 6000);
-    if (read.ok) {
-      const text = cleanBritannicaMarkdown(read.text);
-      if (text.length > 120) {
-        return `## Britannica: "${query}"\n\n${text}\n\n<!-- ${articleUrl} -->`;
-      }
-    }
-    // Last resort: a Wayback Machine snapshot of the same article.
-    try {
-      const wb = await fetchJson(
-        `http://archive.org/wayback/available?url=${encodeURIComponent(articleUrl)}`,
-      );
-      const snap = wb?.archived_snapshots?.closest;
-      if (snap?.available && snap.url) {
-        const wbRead = await readUrlContent(snap.url, 6000);
-        if (wbRead.ok) {
-          const text = cleanBritannicaMarkdown(wbRead.text);
-          if (text.length > 120) {
-            return `## Britannica: "${query}"\n\n${text}\n\n<!-- ${articleUrl} (via Wayback snapshot) -->`;
-          }
+    // readUrlContent now handles the Jina→direct→Wayback reader chain with
+    // retries internally, so a single call covers what used to be two.
+    if (articleUrl) {
+      const read = await readUrlContent(articleUrl, 6000);
+      if (read.ok) {
+        const text = cleanBritannicaMarkdown(read.text);
+        if (text.length > 120) {
+          return `## Britannica: "${query}"\n\n${text}\n\n<!-- ${articleUrl} -->`;
         }
       }
-    } catch {
-      /* wayback is best-effort */
     }
-    return `Britannica article found but its content could not be read: ${articleUrl}`;
+    // Britannica actively blocks scraping and every reader can be down at once.
+    // Rather than fail, fall back to Wikipedia so the user still gets a
+    // sourced encyclopedic answer — clearly labelled so the source is honest.
+    const wiki = await executeWikipedia({ query });
+    if (
+      typeof wiki === "string" &&
+      !/^No Wikipedia|Wikipedia Error/.test(wiki)
+    ) {
+      const note = articleUrl
+        ? `Britannica's article (${articleUrl}) could not be read right now (it blocks scraping), so this answer is from Wikipedia instead:`
+        : `No Britannica article was reachable for "${query}", so this answer is from Wikipedia instead:`;
+      return `${note}\n\n${wiki}`;
+    }
+    return articleUrl
+      ? `Britannica article found but its content could not be read (Britannica blocks scraping and all readers were unavailable): ${articleUrl}`
+      : `No Britannica article found for "${query}".`;
   } catch (e) {
     return `Britannica Error: ${e.message}`;
   }
@@ -729,35 +774,42 @@ function urlGuardError(url) {
 // Read a URL's main content as clean text. SSRF-guarded. Tries Jina Reader for
 // LLM-ready markdown, then a direct fetch + boilerplate strip. Returns
 // { ok, text } or { ok:false, error }. Shared by web_scraper and deep_research.
+function truncateText(text, maxChars, marker) {
+  return text.length > maxChars ? text.slice(0, maxChars) + marker : text;
+}
+
 async function readUrlContent(url, maxChars = 6000) {
   const guardError = urlGuardError(url);
   if (guardError) return { ok: false, error: guardError };
-  // 1) Jina Reader (clean markdown, no key). Falls through on JSON error.
-  try {
-    const md = await fetchHtml(`https://r.jina.ai/${url}`, {
-      headers: { "X-Return-Format": "markdown" },
-      timeout: 20000,
-    });
-    const clean = (md || "").trim();
-    const looksValid =
-      clean.length > 200 &&
-      !clean.startsWith("{") &&
-      !/^(error|failed)\b/i.test(clean);
-    if (looksValid) {
-      return {
-        ok: true,
-        text:
-          clean.length > maxChars
-            ? clean.slice(0, maxChars) + "\n\n... [TRUNCATED]"
-            : clean,
-      };
+  // 1) Jina Reader (clean markdown, no key). Retry once — it rate-limits
+  // ("AbuseAlleviationError") under bursts but usually recovers after a pause.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const md = await fetchHtml(`https://r.jina.ai/${url}`, {
+        headers: { "X-Return-Format": "markdown", "User-Agent": pickWebUa() },
+        timeout: 20000,
+      });
+      const clean = (md || "").trim();
+      const looksValid =
+        clean.length > 200 &&
+        !clean.startsWith("{") &&
+        !/^(error|failed)\b/i.test(clean);
+      if (looksValid) {
+        return {
+          ok: true,
+          text: truncateText(clean, maxChars, "\n\n... [TRUNCATED]"),
+        };
+      }
+    } catch {
+      /* fall through to retry / next strategy */
     }
-  } catch {
-    /* fall back to a direct fetch + extraction below */
+    if (attempt === 0) await sleepMs(600);
   }
-  // 2) Direct fetch + main-content extraction.
+  // 2) Direct fetch + main-content extraction (rotating UA).
   try {
-    const html = await fetchHtml(url);
+    const html = await fetchHtml(url, {
+      headers: { "User-Agent": pickWebUa() },
+    });
     const $ = cheerio.load(html);
     $(
       "script, style, noscript, nav, header, footer, aside, form, svg",
@@ -768,17 +820,58 @@ async function readUrlContent(url, maxChars = 6000) {
         ? $("main").first()
         : $("body");
     const text = container.text().replace(/\s+/g, " ").trim();
-    if (!text) return { ok: false, error: "No readable text found." };
-    return {
-      ok: true,
-      text:
-        text.length > maxChars
-          ? text.slice(0, maxChars) + "... [TRUNCATED]"
-          : text,
-    };
-  } catch (e) {
-    return { ok: false, error: e.message };
+    if (text) {
+      return {
+        ok: true,
+        text: truncateText(text, maxChars, "... [TRUNCATED]"),
+      };
+    }
+  } catch {
+    /* fall through to the Wayback strategy */
   }
+  // 3) Wayback Machine snapshot (retry on 429 with backoff). Reliable for
+  // sites that hard-block live scraping, e.g. Britannica.
+  try {
+    const wb = await fetchJson(
+      `http://archive.org/wayback/available?url=${encodeURIComponent(url)}`,
+    );
+    const snap = wb?.archived_snapshots?.closest;
+    if (snap?.available && snap.url) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const html = await fetchHtml(snap.url, {
+            headers: { "User-Agent": pickWebUa() },
+            timeout: 20000,
+          });
+          const $ = cheerio.load(html);
+          $(
+            "script, style, noscript, nav, header, footer, aside, form, svg",
+          ).remove();
+          const container = $("article").first().length
+            ? $("article").first()
+            : $("main").first().length
+              ? $("main").first()
+              : $("body");
+          const text = container.text().replace(/\s+/g, " ").trim();
+          if (text && text.length > 150) {
+            return {
+              ok: true,
+              text: truncateText(text, maxChars, "... [TRUNCATED]"),
+            };
+          }
+        } catch {
+          /* likely 429 — pause and retry once */
+        }
+        if (attempt === 0) await sleepMs(1200);
+      }
+    }
+  } catch {
+    /* no snapshot available */
+  }
+  return {
+    ok: false,
+    error: "All readers failed (live block + proxy/archive unavailable).",
+  };
 }
 
 async function executeWebScraper({ url }) {
