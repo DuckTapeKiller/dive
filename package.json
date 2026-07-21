@@ -130,6 +130,9 @@
       "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   },
+  "overrides": {
+    "@hono/node-server": "^2.0.11"
+  },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
