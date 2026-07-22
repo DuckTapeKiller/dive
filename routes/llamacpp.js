@@ -459,6 +459,110 @@ module.exports = function createLlamaCppDomain(deps) {
     return path.join(cfg.modelsDir, file);
   }
 
+  // Quant/format/plumbing tokens stripped before comparing a projector's name
+  // to a model's, so two unrelated q4 models don't look like a "family match".
+  const PROJECTOR_NOISE_TOKENS = new Set([
+    "mmproj",
+    "mm",
+    "proj",
+    "clip",
+    "vision",
+    "model",
+    "ggml",
+    "gguf",
+    "f16",
+    "f32",
+    "bf16",
+    "fp16",
+    "fp32",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "q6",
+    "q8",
+    "iq2",
+    "iq3",
+    "iq4",
+    "k",
+    "m",
+    "s",
+    "l",
+    "xl",
+    "xs",
+    "xxs",
+  ]);
+
+  function projectorFamilyTokens(name) {
+    return new Set(
+      path
+        .basename(name, ".gguf")
+        .toLowerCase()
+        .replace(/mmproj/g, " ")
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t && !PROJECTOR_NOISE_TOKENS.has(t)),
+    );
+  }
+
+  // Vision models (Gemma 3, Qwen2-VL, LLaVA, …) split into a language GGUF plus
+  // a separate multimodal projector ("mmproj") GGUF. llama-server needs that
+  // projector passed with --mmproj or it rejects image input with
+  // "image input is not supported". Projector files carry
+  // general.architecture = "clip", so we can spot them by content regardless of
+  // how they're named, then pair one with the model being launched. Returns the
+  // projector's absolute path, or null when none applies.
+  function findProjector(cfg, modelFile) {
+    let entries;
+    try {
+      entries = fs.readdirSync(cfg.modelsDir);
+    } catch {
+      return null;
+    }
+    const projectors = [];
+    const chatModels = [];
+    for (const name of entries) {
+      if (!name.endsWith(".gguf")) continue;
+      const pm = name.match(GGUF_PART_RE);
+      if (pm && pm[1] !== "00001") continue; // non-first split parts aren't loadable
+      const full = path.join(cfg.modelsDir, name);
+      let stat;
+      try {
+        stat = fs.statSync(full);
+        if (!stat.isFile()) continue;
+      } catch {
+        continue;
+      }
+      if (ggufInfoFor(full, stat).arch === "clip") projectors.push(name);
+      else chatModels.push(name);
+    }
+    if (projectors.length === 0) return null;
+
+    // Prefer a projector that shares a model-family token with the model, so the
+    // right one is picked when several vision models share the folder.
+    const modelTokens = projectorFamilyTokens(modelFile);
+    let best = null;
+    let bestScore = 0;
+    for (const proj of projectors) {
+      let score = 0;
+      for (const t of projectorFamilyTokens(proj)) {
+        if (modelTokens.has(t)) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = proj;
+      }
+    }
+    if (best) return path.join(cfg.modelsDir, best);
+
+    // No name overlap (e.g. a generic "mmproj-F16.gguf"): only pair it when the
+    // setup is unambiguous — one projector and one model — so a projector is
+    // never wrongly attached to an unrelated text-only model.
+    if (projectors.length === 1 && chatModels.length === 1) {
+      return path.join(cfg.modelsDir, projectors[0]);
+    }
+    return null;
+  }
+
   function scanModels(cfg) {
     let entries = [];
     try {
@@ -677,6 +781,11 @@ module.exports = function createLlamaCppDomain(deps) {
       // Jinja chat templates: required for native tool calling, harmless
       // otherwise.
       args.push("--jinja");
+      // Vision models need their multimodal projector passed explicitly, or
+      // llama-server rejects images ("image input is not supported"). Attach a
+      // matching mmproj from the models folder when one is found.
+      const projector = findProjector(cfg, file);
+      if (projector) args.push("--mmproj", projector);
     }
     if (cfg.extraArgs) args.push(...cfg.extraArgs.split(/\s+/).filter(Boolean));
 

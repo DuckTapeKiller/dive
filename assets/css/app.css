@@ -303,7 +303,12 @@
         margin-top: -4px;
         min-width: 0;
       }
-      /* Each attachment is a bordered pill, matching the source pills. */
+      /* Each attachment is a bordered pill, matching the source pills. This
+         theme has no borders, so the pill only reads as a pill by contrasting
+         with its container. The source pills sit one gradient step darker than
+         their bubble (--bg-secondary on --bg-primary); the file pills live in
+         #bottom (--bg-secondary), so they use --bg-inverse to keep that same
+         one-step-darker separation instead of blending into the toolbar. */
       .file-pill {
         display: inline-flex;
         align-items: center;
@@ -315,7 +320,7 @@
         padding: 4px 8px;
         font-size: calc(11px * var(--font-scale, 1));
         color: var(--text-normal);
-        background-color: var(--bg-secondary);
+        background-color: var(--bg-inverse);
         border: var(--border-width) solid var(--border-color);
       }
       /* MCP tools are Ollama-only in this app. */
