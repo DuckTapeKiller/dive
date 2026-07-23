@@ -294,21 +294,17 @@
         display: none;
       }
       #fileChip.show {
-        /* A wrapping row of attachment pills below the main toolbar row. */
+        /* A wrapping row of attachment pills, sitting at the top of the
+           composer above the textarea. */
         display: flex;
         flex-wrap: wrap;
         gap: 4px;
-        flex-basis: 100%;
-        order: 4;
-        margin-top: -4px;
         min-width: 0;
       }
       /* Each attachment is a bordered pill, matching the source pills. This
          theme has no borders, so the pill only reads as a pill by contrasting
-         with its container. The source pills sit one gradient step darker than
-         their bubble (--bg-secondary on --bg-primary); the file pills live in
-         #bottom (--bg-secondary), so they use --bg-inverse to keep that same
-         one-step-darker separation instead of blending into the toolbar. */
+         with its container. The pills sit inside #composer (--bg-primary), and
+         --bg-inverse keeps them clearly separated from that surface. */
       .file-pill {
         display: inline-flex;
         align-items: center;
@@ -2117,10 +2113,19 @@
         flex-wrap: wrap;
         gap: 6px;
         margin-bottom: 6px;
+        /* The size cap lives HERE, as an absolute length, not on the <img>. A
+           percentage in the image's own max-width resolves to the full available
+           width while the browser is measuring intrinsic size, so the bubble
+           reserved space for the un-clamped image (a 1200x800 photo reserved
+           390px but drew 260px, leaving a dead gap on the right). Capping the
+           container instead keeps the measurement honest. */
+        max-width: 260px;
       }
       .msg-image {
         display: block;
-        max-width: min(260px, 100%);
+        /* Resolves against the capped container above, so it shrinks with the
+           bubble on narrow windows without ever over-reserving. */
+        max-width: 100%;
         max-height: 260px;
         width: auto;
         height: auto;
@@ -2603,40 +2608,54 @@
 
       /* BOTTOM */
       #bottom {
-        display: flex;
-        flex-wrap: wrap;
         padding: 14px 20px;
-        gap: 10px;
         background: var(--bg-secondary);
         flex-shrink: 0;
-        align-items: flex-end;
+        transition:
+          background 0.2s,
+          border-color 0.2s;
+      }
+      /* The composer is one surface carrying what used to be the textarea's own
+         background. Attachment pills, the textarea and the tool row stack
+         inside it, so the buttons read as part of the input instead of sitting
+         beside it. */
+      #composer {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px 10px;
+        background: var(--bg-primary);
+        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
+          var(--border-color);
         transition:
           background 0.2s,
           border-color 0.2s;
       }
       #input {
-        flex: 1;
-        padding: 10px 12px;
-        border: var(--border-width) solid var(--border-color);
-        background: var(--bg-primary);
+        width: 100%;
+        padding: 6px 4px;
+        border: none;
+        background: transparent;
         color: var(--text-normal);
         font-family: inherit;
         font-size: calc(14px * var(--font-scale, 1));
         line-height: 1.4;
         resize: none;
+        /* 42px min is also hardcoded in autoResizeInput()/resetInputSize(). */
         height: 42px;
         min-height: 42px;
         max-height: 160px;
         overflow-y: hidden;
-        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
-          var(--border-color);
         outline: none;
         scrollbar-color: var(--text-normal) var(--bg-primary);
         transition:
           background 0.2s,
-          color 0.2s,
-          border-color 0.2s,
-          box-shadow 0.2s;
+          color 0.2s;
+      }
+      #composerTools {
+        display: flex;
+        align-items: center;
+        gap: 4px;
       }
       #input::placeholder {
         color: var(--text-normal);
@@ -2644,25 +2663,24 @@
         transition: color 0.2s;
       }
       #send {
-        height: 42px;
+        height: 34px;
         width: 42px;
         min-width: 42px;
+        /* Pushes send to the far right of the tool row. */
+        margin-left: auto;
         padding: 0;
-        background: var(--bg-primary);
+        /* Transparent like the other tool-row buttons — the composer surface
+           shows through, and hover supplies the only fill. */
+        background: transparent;
         color: var(--text-normal);
-        border: var(--border-width) solid var(--border-color);
+        border: none;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
-          var(--border-color);
         transition:
-          transform 0.1s ease,
-          box-shadow 0.1s ease,
           background 0.2s,
-          color 0.2s,
-          border-color 0.2s;
+          color 0.2s;
       }
       #send svg {
         width: 18px;
@@ -2670,11 +2688,10 @@
         display: block;
       }
       #send:hover {
-        box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
-          var(--border-color);
+        background: var(--flat-fill);
       }
       #send:active {
-        box-shadow: none;
+        background: var(--flat-fill-strong);
       }
       #send.stopping {
         background: #ff4444 !important;
@@ -2685,33 +2702,29 @@
         background: #cc3333 !important;
         border-color: #cc3333 !important;
       }
+      /* Tool-row icon buttons live ON the composer surface, so they are
+         transparent and use a wash on hover rather than their own fill. */
       #uploadBtn {
-        height: 42px;
-        width: 42px;
-        min-width: 42px;
+        height: 34px;
+        width: 34px;
+        min-width: 34px;
         padding: 0;
-        background: var(--bg-primary);
+        background: transparent;
         color: var(--text-normal);
-        border: var(--border-width) solid var(--border-color);
+        border: none;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
-          var(--border-color);
         transition:
-          transform 0.1s ease,
-          box-shadow 0.1s ease,
           background 0.2s,
-          color 0.2s,
-          border-color 0.2s;
+          color 0.2s;
       }
       #uploadBtn:hover {
-        box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
-          var(--border-color);
+        background: var(--flat-fill);
       }
       #uploadBtn:active {
-        box-shadow: none;
+        background: var(--flat-fill-strong);
       }
       #uploadBtn svg {
         width: 18px;
@@ -2720,33 +2733,28 @@
       }
       /* BOOK FILTER */
       #bookFilterBtn {
+        /* position: relative anchors #bookFilterDot. */
         position: relative;
-        height: 42px;
-        width: 42px;
-        min-width: 42px;
+        height: 34px;
+        width: 34px;
+        min-width: 34px;
         padding: 0;
-        background: var(--bg-primary);
+        background: transparent;
         color: var(--text-normal);
-        border: var(--border-width) solid var(--border-color);
+        border: none;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        box-shadow: var(--shadow-offset) var(--shadow-offset) 0 0
-          var(--border-color);
         transition:
-          transform 0.1s ease,
-          box-shadow 0.1s ease,
           background 0.2s,
-          color 0.2s,
-          border-color 0.2s;
+          color 0.2s;
       }
       #bookFilterBtn:hover {
-        box-shadow: var(--shadow-hover) var(--shadow-hover) 0 0
-          var(--border-color);
+        background: var(--flat-fill);
       }
       #bookFilterBtn:active {
-        box-shadow: none;
+        background: var(--flat-fill-strong);
       }
       #bookFilterBtn svg {
         width: 18px;

@@ -656,58 +656,69 @@
       <div id="chatWrap">
         <div id="chat"></div>
         <div id="bottom">
-          <textarea
-            id="input"
-            rows="1"
-            placeholder="Type a message..."
-          ></textarea>
-          <button
-            id="bookFilterBtn"
-            aria-label="Book filter"
-            title="Restrict database search to specific books"
-            style="display: none"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="lucide lucide-book-open-icon lucide-book-open"
-            >
-              <path d="M12 7v14" />
-              <path
-                d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
-              />
-            </svg>
-            <span id="bookFilterDot" style="display: none"></span>
-          </button>
-          <button id="uploadBtn" aria-label="Upload file" title="Upload file">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"
-              />
-            </svg>
-          </button>
-          <!-- Attachment pills are rendered here dynamically, one per file. -->
-          <div id="fileChip"></div>
-          <button
-            id="send"
-            aria-label="Send message"
-            title="Send message"
-          ></button>
+          <!-- Composer: one surface holding the attachment pills, the textarea
+               and the tool row, so the buttons sit inside the input rather than
+               beside it. -->
+          <div id="composer">
+            <!-- Attachment pills are rendered here dynamically, one per file. -->
+            <div id="fileChip"></div>
+            <textarea
+              id="input"
+              rows="1"
+              placeholder="Type a message..."
+            ></textarea>
+            <div id="composerTools">
+              <button
+                id="uploadBtn"
+                aria-label="Upload file"
+                title="Upload file"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"
+                  />
+                </svg>
+              </button>
+              <button
+                id="bookFilterBtn"
+                aria-label="Book filter"
+                title="Restrict database search to specific books"
+                style="display: none"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="lucide lucide-book-open-icon lucide-book-open"
+                >
+                  <path d="M12 7v14" />
+                  <path
+                    d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"
+                  />
+                </svg>
+                <span id="bookFilterDot" style="display: none"></span>
+              </button>
+              <button
+                id="send"
+                aria-label="Send message"
+                title="Send message"
+              ></button>
+            </div>
+          </div>
         </div>
       </div>
 
