@@ -2733,12 +2733,12 @@
       }
       /* BOOK FILTER */
       #bookFilterBtn {
-        /* position: relative anchors #bookFilterDot. */
-        position: relative;
         height: 34px;
-        width: 34px;
+        /* Icon-only it measures 18 + 8 + 8 = 34px, matching the other tool
+           buttons; it grows to fit the count when a filter is active. */
         min-width: 34px;
-        padding: 0;
+        padding: 0 8px;
+        gap: 5px;
         background: transparent;
         color: var(--text-normal);
         border: none;
@@ -2761,14 +2761,23 @@
         height: 18px;
         stroke: currentColor;
       }
-      #bookFilterDot {
-        position: absolute;
-        top: -5px;
-        right: -5px;
-        width: 10px;
-        height: 10px;
+      /* Active filter: the button fills with the accent and shows how many
+         books the chat is restricted to. Being restricted silently changes
+         every answer, so this is deliberately loud. */
+      #bookFilterBtn.active,
+      #bookFilterBtn.active:hover,
+      #bookFilterBtn.active:active {
         background: var(--accent);
-        border: var(--border-width) solid var(--border-color);
+        color: var(--bg-primary);
+      }
+      #bookFilterCount {
+        display: none;
+        font-size: calc(11px * var(--font-scale, 1));
+        font-weight: bold;
+        line-height: 1;
+      }
+      #bookFilterBtn.active #bookFilterCount {
+        display: inline;
       }
       #bookFilterOverlay {
         position: fixed;

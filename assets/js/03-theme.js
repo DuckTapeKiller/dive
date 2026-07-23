@@ -2134,11 +2134,15 @@
         const btn = document.getElementById("bookFilterBtn");
         if (!btn) return;
         btn.style.display = isDatabaseContextEnabledNow() ? "" : "none";
-        const active = getBookFilterFileIds(mode).length > 0;
-        const dot = document.getElementById("bookFilterDot");
-        if (dot) dot.style.display = active ? "" : "none";
+        const count = getBookFilterFileIds(mode).length;
+        const active = count > 0;
+        // Active state fills the button with the accent and shows the count;
+        // the CSS hides the number entirely when no filter is set.
+        btn.classList.toggle("active", active);
+        const countEl = document.getElementById("bookFilterCount");
+        if (countEl) countEl.textContent = active ? String(count) : "";
         btn.title = active
-          ? `Book filter active (${getBookFilterFileIds(mode).length} book(s)) — chat is restricted`
+          ? `Book filter active (${count} book(s)) — chat is restricted`
           : "Restrict database search to specific books";
       }
 
