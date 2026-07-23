@@ -175,7 +175,7 @@
         --border-color: #6f6f6f;
         --text-normal: #232323;
         --text-inverse: #232323;
-        --accent: #6b8cae;
+        --accent: #1f4e79;
       }
       [data-theme="dark"][data-palette="carbon"] {
         --bg-primary: #1e1e1e;
@@ -1157,6 +1157,27 @@
         width: 18px;
         height: 18px;
         flex: 0 0 auto;
+      }
+      /* Prominent sub-section heading inside a settings panel: larger and
+         accent-colored versus a plain field <label>, with a divider rule above
+         so groups of controls read as distinct, scannable sections (used to
+         break the MODELS panel into MANAGED SERVERS / MODEL LIBRARY / DOWNLOAD /
+         SERVER CONFIGURATION). Higher specificity than ".setting-group label"
+         so it wins the color/size override. */
+      .setting-group label.settings-subhead {
+        color: var(--text-normal);
+        font-size: calc(13px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        margin-top: 22px;
+        padding-top: 14px;
+        border-top: 2px solid var(--flat-fill-strong);
+      }
+      /* The first heading opens the panel — no divider or gap above it. */
+      .setting-group label.settings-subhead:first-child {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
       }
       .setting-group select {
         padding: 6px 8px;

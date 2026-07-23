@@ -617,6 +617,42 @@ module.exports = function createLlamaCppDomain(deps) {
         /* unreadable entry */
       }
     }
+    // Pair vision adapters (mmproj files, GGUF architecture "clip") with their
+    // parent chat model so the UI can nest them instead of listing them as
+    // loadable models. Mirrors findProjector()'s matching over the already
+    // scanned set: shared family-name tokens first, then a single-model /
+    // single-projector fallback. Purely annotative — adds `projector` to a
+    // model and `isProjector`/`parentFile` to an adapter; no entry is removed.
+    const projectors = models.filter((m) => m.arch === "clip");
+    if (projectors.length) {
+      const chatModels = models.filter(
+        (m) => m.arch !== "clip" && !m.embedding,
+      );
+      for (const m of chatModels) {
+        const modelTokens = projectorFamilyTokens(m.file);
+        let best = null;
+        let bestScore = 0;
+        for (const p of projectors) {
+          let score = 0;
+          for (const t of projectorFamilyTokens(p.file)) {
+            if (modelTokens.has(t)) score++;
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            best = p;
+          }
+        }
+        if (!best && projectors.length === 1 && chatModels.length === 1) {
+          best = projectors[0];
+        }
+        if (best) m.projector = best.file;
+      }
+      for (const p of projectors) {
+        p.isProjector = true;
+        const parent = chatModels.find((m) => m.projector === p.file);
+        p.parentFile = parent ? parent.file : null;
+      }
+    }
     return models.sort((a, b) => a.file.localeCompare(b.file));
   }
 

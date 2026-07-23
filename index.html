@@ -1323,7 +1323,7 @@
             class="setting-group"
             style="display: none"
           >
-            <label>MANAGED SERVERS</label>
+            <label class="settings-subhead">MANAGED SERVERS</label>
             <div id="llamaCppTabStatus" class="setting-help"></div>
             <div class="setting-row-inline">
               <label style="font-size: calc(10px * var(--font-scale, 1))">
@@ -1349,7 +1349,7 @@
               Dive server starts. Combined with running Dive at login
               (install-launchagent.sh), llama.cpp comes up with your laptop.
             </div>
-            <label>MODEL LIBRARY</label>
+            <label class="settings-subhead">MODEL LIBRARY</label>
             <div id="llamaCppTabModels"></div>
             <div class="setting-help">
               CONTEXT is a slider capped at the model's trained maximum (read
@@ -1360,6 +1360,32 @@
               --embedding in the separate embedding server). Changes apply on
               the next load. × deletes the file from disk.
             </div>
+            <label class="settings-subhead"
+              >DOWNLOAD MODELS FROM HUGGING FACE</label
+            >
+            <div class="setting-row-inline">
+              <input
+                id="llamaCppHfQuery"
+                type="text"
+                placeholder="e.g. TinyLlama, Qwen2.5 3B Instruct, Gemma 2"
+                style="flex: 1"
+              />
+              <button
+                id="llamaCppHfSearchBtn"
+                type="button"
+                class="settings-action-btn"
+              >
+                SEARCH
+              </button>
+            </div>
+            <div id="llamaCppHfResults"></div>
+            <div id="llamaCppHfDownload"></div>
+            <div class="setting-help">
+              Search GGUF repositories, pick a quantization (Q4_K_M is the usual
+              balance of quality and size), and the file lands in your models
+              folder ready to load.
+            </div>
+            <label class="settings-subhead">SERVER CONFIGURATION</label>
             <label>MODELS FOLDER</label>
             <input id="llamaCppModelsDir" type="text" />
             <div class="setting-help">
@@ -1392,29 +1418,6 @@
             <div class="setting-help">
               Extra command-line flags appended to every llama-server launch,
               for options not covered above. See `llama-server --help`.
-            </div>
-            <label>DOWNLOAD MODELS FROM HUGGING FACE</label>
-            <div class="setting-row-inline">
-              <input
-                id="llamaCppHfQuery"
-                type="text"
-                placeholder="e.g. TinyLlama, Qwen2.5 3B Instruct, Gemma 2"
-                style="flex: 1"
-              />
-              <button
-                id="llamaCppHfSearchBtn"
-                type="button"
-                class="settings-action-btn"
-              >
-                SEARCH
-              </button>
-            </div>
-            <div id="llamaCppHfResults"></div>
-            <div id="llamaCppHfDownload"></div>
-            <div class="setting-help">
-              Search GGUF repositories, pick a quantization (Q4_K_M is the usual
-              balance of quality and size), and the file lands in your models
-              folder ready to load.
             </div>
             <label>SERVER URL (ADVANCED)</label>
             <input

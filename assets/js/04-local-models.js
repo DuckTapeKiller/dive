@@ -503,7 +503,12 @@
         label.textContent = name;
         label.style.cssText =
           "flex: 1; font-size: calc(11px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" +
-          (boldName ? " font-weight: bold;" : ` color: ${LLAMA_DIM};`);
+          // The active (loaded/loading) model is drawn in the full-strength
+          // normal text color and bold so it reads as clearly "on"; inactive
+          // rows are dimmed.
+          (boldName
+            ? " font-weight: bold; color: var(--text-normal);"
+            : ` color: ${LLAMA_DIM};`);
         row.appendChild(label);
         if (badge) row.appendChild(badge);
         card.appendChild(row);
@@ -745,8 +750,8 @@
         const wrap = document.getElementById(wrapId);
         if (!wrap) return;
         wrap.textContent = "";
-        const models = Array.isArray(status.models) ? status.models : [];
-        if (!models.length) {
+        const allModels = Array.isArray(status.models) ? status.models : [];
+        if (!allModels.length) {
           const empty = document.createElement("div");
           empty.className = "setting-help";
           empty.textContent = full
@@ -755,6 +760,67 @@
           wrap.appendChild(empty);
           return;
         }
+        // Vision adapters (mmproj files, GGUF architecture "clip") aren't
+        // loadable models — they attach to a parent model at load time. Keep
+        // them out of the loadable rows and, in the full settings list, show
+        // each nested under its parent (or as a deletable orphan if unmatched).
+        const projectorByFile = new Map(
+          allModels.filter((m) => m.arch === "clip").map((p) => [p.file, p]),
+        );
+        const models = allModels.filter((m) => m.arch !== "clip");
+        const renderedProjectors = new Set();
+        // Nested sub-line for a vision adapter: tree glyph, filename + size, and
+        // a delete control. Never loadable, so no LOAD button or tuning inputs.
+        const buildProjectorLine = (proj, orphan) => {
+          const line = document.createElement("div");
+          line.style.cssText =
+            "display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--flat-fill); opacity: 0.8; padding: 3px 0 5px " +
+            (orphan ? "0" : "18px") +
+            ";";
+          const label = document.createElement("div");
+          label.style.cssText =
+            "flex: 1 1 auto; min-width: 0; font-size: calc(10px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
+          label.textContent =
+            (orphan
+              ? "vision adapter (no matching model) · "
+              : "└─ vision adapter · ") + proj.file;
+          label.title = `${proj.file} (${llamaCppFmtBytes(proj.sizeBytes)}) — multimodal projector, loaded automatically with its model. Not a standalone model.`;
+          line.appendChild(label);
+          const size = document.createElement("span");
+          size.textContent = llamaCppFmtBytes(proj.sizeBytes);
+          size.style.cssText =
+            "font-size: calc(9px * var(--font-scale, 1)); opacity: 0.7; min-width: 56px;";
+          line.appendChild(size);
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "settings-action-btn";
+          del.textContent = "×";
+          del.title = "Delete this vision adapter file";
+          // settings-action-btn is a full-width bar; keep the adapter's delete a
+          // compact × at the end of the sub-line instead.
+          del.style.cssText =
+            "flex: 0 0 auto; width: auto; padding: 1px 9px; border-color: #ff4444; color: #ff4444;";
+          del.addEventListener("click", async () => {
+            const sure = await appConfirm(
+              `Delete ${proj.file} (${llamaCppFmtBytes(proj.sizeBytes)}) from disk? Its model will no longer accept images.`,
+              "llama.cpp",
+              { confirmLabel: "Delete", danger: true },
+            );
+            if (!sure) return;
+            try {
+              await postJson(
+                "/api/llamacpp/manager/models/delete",
+                { file: proj.file },
+                "Delete vision adapter",
+              );
+              await refreshLlamaCppManager();
+            } catch (e) {
+              await appAlert(e.message || String(e), "llama.cpp");
+            }
+          });
+          line.appendChild(del);
+          return line;
+        };
         const cacheTypes = Array.isArray(status.cacheTypes)
           ? status.cacheTypes
           : ["f16", "q8_0", "q4_0"];
@@ -771,8 +837,12 @@
             (activeSlot !== null && status[activeSlot].state === "running") ||
             routerState === "loaded";
           const container = document.createElement("div");
-          container.style.cssText =
-            "padding: 5px 0; border-bottom: 1px solid var(--flat-fill);";
+          // The loaded model gets a standout treatment — accent left bar + a
+          // subtle accent wash — so it's obvious at a glance which model is
+          // running, instead of just an accent-colored filename.
+          container.style.cssText = isActive
+            ? "padding: 7px 10px; border-bottom: 1px solid var(--flat-fill); border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);"
+            : "padding: 5px 0; border-bottom: 1px solid var(--flat-fill);";
           const row = document.createElement("div");
           row.style.cssText =
             "display: flex; align-items: center; gap: 6px; flex-wrap: wrap;";
@@ -1045,6 +1115,27 @@
             row.appendChild(delBtn);
           }
           wrap.appendChild(container);
+          // Nest this model's vision adapter directly beneath it (settings list
+          // only — the compact loader stays a clean list of loadable models).
+          if (
+            full &&
+            m.projector &&
+            projectorByFile.has(m.projector) &&
+            !renderedProjectors.has(m.projector)
+          ) {
+            wrap.appendChild(
+              buildProjectorLine(projectorByFile.get(m.projector)),
+            );
+            renderedProjectors.add(m.projector);
+          }
+        }
+        // Any adapters with no matching parent model — still shown (and
+        // deletable) so they're never invisible, just clearly unattached.
+        if (full) {
+          for (const p of projectorByFile.values()) {
+            if (renderedProjectors.has(p.file)) continue;
+            wrap.appendChild(buildProjectorLine(p, true));
+          }
         }
       }
 

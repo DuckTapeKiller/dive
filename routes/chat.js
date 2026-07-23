@@ -931,12 +931,16 @@ module.exports = function createChatDomain(deps) {
       .map((id) =>
         modeId === "llamacpp" ? String(id).split("/").pop() : String(id),
       );
+    // Multimodal projectors (mmproj-*.gguf) are vision adapters, not models —
+    // a router that auto-discovers every .gguf lists them, but they can't be
+    // chatted with or picked. Drop them from every list.
+    const chatableIds = allIds.filter((id) => !/mmproj/i.test(id));
     // Embedding models (e.g. LM Studio's bundled
     // text-embedding-nomic-embed-text-v1.5) are listed by /v1/models but cannot
     // chat — keep them out of the chat dropdown and report them separately so
     // the Database settings can offer them as embedding backends.
-    const models = allIds.filter((id) => !/embed/i.test(id));
-    const embeddingModels = allIds.filter((id) => /embed/i.test(id));
+    const models = chatableIds.filter((id) => !/embed/i.test(id));
+    const embeddingModels = chatableIds.filter((id) => /embed/i.test(id));
     // The OpenAI-compat /v1/models list is used for model IDs, but we extract the
     // actual loaded context window from the v1 loaded_instances config (or
     // llama.cpp's /props), so the UI can show "used / context".
