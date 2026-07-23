@@ -387,11 +387,10 @@
         fileInput.value = "";
       }
 
-      fileInput.addEventListener("change", async () => {
-        const files = Array.from(fileInput.files || []);
-        // Clear the native input up front so re-selecting the same file (or
-        // clicking attach again) still fires change, and files accumulate.
-        fileInput.value = "";
+      // Upload a batch of files (from the picker or a drag-and-drop) and turn
+      // each one into a pending attachment.
+      async function ingestFiles(fileList) {
+        const files = Array.from(fileList || []);
         if (!files.length) return;
         for (const file of files) {
           if (pendingFiles.length >= MAX_ATTACHMENTS) {
@@ -422,7 +421,52 @@
             alert(`Upload failed for ${file.name}: ${e.message}`);
           }
         }
+      }
+
+      fileInput.addEventListener("change", async () => {
+        const files = Array.from(fileInput.files || []);
+        // Clear the native input up front so re-selecting the same file (or
+        // clicking attach again) still fires change, and files accumulate.
+        fileInput.value = "";
+        await ingestFiles(files);
       });
+
+      // Drag-and-drop: dropping files anywhere over the window attaches them.
+      // dragenter/dragleave fire once per child element, so the overlay is
+      // driven by a depth counter — toggling on each event would make it
+      // flicker as the pointer crosses child nodes.
+      (function setupFileDrop() {
+        let depth = 0;
+        const show = (on) =>
+          document.getElementById("dropOverlay")?.classList.toggle("show", on);
+        // React only to real files, never to text/element drags inside the UI.
+        const hasFiles = (e) =>
+          Array.from(e.dataTransfer?.types || []).includes("Files");
+        window.addEventListener("dragenter", (e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          depth += 1;
+          show(true);
+        });
+        window.addEventListener("dragover", (e) => {
+          if (!hasFiles(e)) return;
+          // Without preventDefault the browser navigates to the dropped file.
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        });
+        window.addEventListener("dragleave", (e) => {
+          if (!hasFiles(e)) return;
+          depth = Math.max(0, depth - 1);
+          if (!depth) show(false);
+        });
+        window.addEventListener("drop", async (e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          depth = 0;
+          show(false);
+          await ingestFiles(e.dataTransfer.files);
+        });
+      })();
 
       // MESSAGES AND RENDERING
       function normalizeLibrarySourceResults(results) {
@@ -822,7 +866,30 @@
         if (role === "assistant") {
           renderAssistantMessage(div, text, options.librarySources);
         } else {
-          div.textContent = text;
+          // Attached images render as thumbnails above the text, so the bubble
+          // shows what was actually sent instead of just a filename.
+          const imgs = Array.isArray(options.images) ? options.images : [];
+          if (imgs.length) {
+            const gallery = document.createElement("div");
+            gallery.className = "msg-images";
+            for (const img of imgs) {
+              if (!img || !img.dataBase64 || !img.mimeType) continue;
+              const el = document.createElement("img");
+              el.className = "msg-image";
+              el.src = `data:${img.mimeType};base64,${img.dataBase64}`;
+              el.alt = img.name || "attached image";
+              if (img.name) el.title = img.name;
+              gallery.appendChild(el);
+            }
+            if (gallery.children.length) div.appendChild(gallery);
+          }
+          // Keep the text in its own node so the images sit above it; .msg's
+          // pre-wrap is inherited, so raw user text still keeps its newlines.
+          if (text) {
+            const textEl = document.createElement("div");
+            textEl.textContent = text;
+            div.appendChild(textEl);
+          }
         }
 
         wrap.appendChild(div);

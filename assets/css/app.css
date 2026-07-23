@@ -2110,6 +2110,47 @@
            margins. The .msg base pre-wrap is only needed for raw user text. */
         white-space: normal;
       }
+      /* Attached images are shown inline in the user's bubble rather than as a
+         "[Image: name]" label, so you can see what you actually sent. */
+      .msg-images {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .msg-image {
+        display: block;
+        max-width: min(260px, 100%);
+        max-height: 260px;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+      }
+      /* Full-window drop affordance while files are dragged over the app.
+         pointer-events:none so it never swallows the drop itself. */
+      #dropOverlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+        background: color-mix(in srgb, var(--accent) 18%, transparent);
+        pointer-events: none;
+      }
+      #dropOverlay.show {
+        display: flex;
+      }
+      #dropOverlay span {
+        padding: 14px 22px;
+        background: var(--bg-primary);
+        color: var(--text-normal);
+        font-size: calc(13px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 2px;
+        outline: 2px dashed var(--accent);
+        outline-offset: 6px;
+      }
 
       /* MARKDOWN STYLES */
       p,

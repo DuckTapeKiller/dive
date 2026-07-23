@@ -130,10 +130,12 @@
               mimeType: f.mimeType,
             }));
           }
-          const names = pendingFiles
-            .map((f) => (f.kind === "image" ? "Image: " : "File: ") + f.name)
-            .join(", ");
-          displayText = "[" + names + "] " + lastUserMessage;
+          // Only non-image attachments still need a text label — images are
+          // shown as thumbnails in the bubble instead of "[Image: name]".
+          const names = textAtts.map((f) => "File: " + f.name).join(", ");
+          displayText = names
+            ? "[" + names + "] " + lastUserMessage
+            : lastUserMessage;
           clearPendingFiles();
         }
 
@@ -166,7 +168,7 @@
         // conversations either.
         const saveConvId = persistToHistory ? runConvId : null;
 
-        addMessage(displayText, "user");
+        addMessage(displayText, "user", { images: outgoingImages });
         // Real run start, kept on the session so the elapsed counter continues
         // from here across mode switches instead of restarting.
         runSession.thinkingStartedAt = Date.now();
