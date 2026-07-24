@@ -20,6 +20,55 @@ const PI_COMMAND_CANDIDATES =
     ? ["pi.cmd", "pi.exe", "pi"]
     : ["/opt/homebrew/bin/pi", "/usr/local/bin/pi", "pi"];
 
+// Attachments handed to Pi have to live somewhere pi-sandbox lets the agent
+// read. os.tmpdir() is the wrong place on macOS: it resolves to the private
+// per-user $TMPDIR (/var/folders/…/T), which is in none of the sandbox's
+// allowed roots, so a dragged-in image reaches Pi as a path it is denied
+// permission to open. /tmp is in pi-sandbox's default allowWrite (write
+// implies read), so stage there instead and keep the directory 0700 so the
+// attachment stays readable only by this user.
+const PI_ATTACHMENT_DIR_NAME = "dive-pi-attachments";
+const PI_ATTACHMENT_TTL_MS = 10 * 60 * 1000;
+
+function piAttachmentStageDir() {
+  const candidates =
+    process.platform === "win32"
+      ? [path.join(os.tmpdir(), PI_ATTACHMENT_DIR_NAME)]
+      : [
+          path.join("/tmp", PI_ATTACHMENT_DIR_NAME),
+          path.join(os.tmpdir(), PI_ATTACHMENT_DIR_NAME),
+        ];
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // /tmp is world-writable and sticky, so make sure we did not just adopt
+      // a directory (or symlink) planted by someone else before writing user
+      // content into it.
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory()) continue;
+      if (typeof process.getuid === "function" && stat.uid !== process.getuid())
+        continue;
+      return dir;
+    } catch (_e) {}
+  }
+  return null;
+}
+
+// Files are unlinked on a timer after each turn, but a crash or restart can
+// leave them behind; drop anything past its TTL whenever we stage new ones.
+function sweepPiAttachments(dir) {
+  try {
+    const now = Date.now();
+    for (const name of fs.readdirSync(dir)) {
+      const entry = path.join(dir, name);
+      try {
+        if (now - fs.statSync(entry).mtimeMs > PI_ATTACHMENT_TTL_MS)
+          fs.unlinkSync(entry);
+      } catch (_e) {}
+    }
+  } catch (_e) {}
+}
+
 module.exports = function createPiDomain(deps) {
   const {
     DATA_DIR,
@@ -1683,27 +1732,29 @@ module.exports = function createPiDomain(deps) {
         // Pi is a text-only CLI, so an attached image is written to a temp file
         // and its path is referenced in the prompt; Pi can open it if it has
         // image/file-reading tools. Temp files self-delete after 10 minutes.
+        // The staging directory is sandbox-readable — see piAttachmentStageDir.
         const piImages = normalizeAttachmentImages(body.images);
-        if (piImages.length) {
+        const piStageDir = piImages.length ? piAttachmentStageDir() : null;
+        if (piStageDir) sweepPiAttachments(piStageDir);
+        if (piImages.length && piStageDir) {
           const refs = [];
           for (const img of piImages) {
             const tmp = path.join(
-              os.tmpdir(),
+              piStageDir,
               "pi_img_" +
                 randomBytes(8).toString("hex") +
                 extForImageMime(img.mimeType),
             );
             try {
-              fs.writeFileSync(tmp, Buffer.from(img.dataBase64, "base64"));
+              fs.writeFileSync(tmp, Buffer.from(img.dataBase64, "base64"), {
+                mode: 0o600,
+              });
               refs.push(tmp);
-              setTimeout(
-                () => {
-                  try {
-                    fs.unlinkSync(tmp);
-                  } catch (_e) {}
-                },
-                10 * 60 * 1000,
-              ).unref();
+              setTimeout(() => {
+                try {
+                  fs.unlinkSync(tmp);
+                } catch (_e) {}
+              }, PI_ATTACHMENT_TTL_MS).unref();
             } catch (_e) {}
           }
           if (refs.length) {
