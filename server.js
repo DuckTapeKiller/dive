@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 const os = require("os");
-const { randomBytes } = require("crypto");
+const { randomBytes, createHash } = require("crypto");
 const { ALL_SKILLS } = require("./skills");
 const { initMcpServers, getMcpOllamaTools } = require("./mcp");
 const { isDatabaseSlashCommand } = require("./slash_commands");
@@ -137,6 +137,7 @@ const IMAGE_MIME_BY_EXT = new Map([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
+const IMAGE_MIME_VALUES = new Set(IMAGE_MIME_BY_EXT.values());
 
 // Normalize an inbound image-attachment payload from the client into a clean
 // list of { dataBase64, mimeType, name }. Anything malformed is dropped so a
@@ -164,6 +165,237 @@ function extForImageMime(mimeType) {
     if (mime === mimeType) return ext;
   }
   return ".img";
+}
+
+// ---- PERSISTENT IMAGE ATTACHMENTS ----
+// Attached images are written once to DATA_DIR/attachments and referenced from
+// conversation history by URL. Base64 never reaches the conversation JSON: a
+// single photo would bloat the mode's history file by megabytes on EVERY save,
+// and the whole file is rewritten each turn. Files are content-addressed, so
+// re-sending or regenerating with the same image reuses one file. They are
+// never swept — history must stay complete for as long as the conversation
+// exists.
+const ATTACHMENTS_DIR = path.join(DATA_DIR, "attachments");
+const ATTACHMENT_URL_PREFIX = "/api/attachments/";
+const ATTACHMENT_FILE_PATTERN = /^img_[0-9a-f]{32}\.(?:jpg|png|gif|webp|img)$/;
+
+function ensureAttachmentsDir() {
+  try {
+    if (!fs.existsSync(ATTACHMENTS_DIR)) {
+      fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true });
+    }
+    return true;
+  } catch (e) {
+    console.error("Failed to create attachments directory:", e);
+    return false;
+  }
+}
+
+// Accept only our own generated names: the value travels through conversation
+// JSON that a user could hand-edit, and it is used to read a file from disk.
+function attachmentFileFromRef(ref) {
+  if (!ref || typeof ref !== "object") return "";
+  let candidate = typeof ref.url === "string" ? ref.url : "";
+  if (candidate.startsWith(ATTACHMENT_URL_PREFIX)) {
+    candidate = candidate.slice(ATTACHMENT_URL_PREFIX.length);
+  }
+  candidate = candidate.split("?")[0].split("#")[0];
+  return ATTACHMENT_FILE_PATTERN.test(candidate) ? candidate : "";
+}
+
+// Write one image to the attachments directory and return its stored ref.
+// Returns null (rather than throwing) when the write fails: a failed thumbnail
+// must never abort the model request the image was attached to.
+function storeAttachmentImage(img) {
+  if (!img || !img.dataBase64 || !img.mimeType) return null;
+  if (!ensureAttachmentsDir()) return null;
+  try {
+    const buffer = Buffer.from(img.dataBase64, "base64");
+    if (!buffer.length) return null;
+    const digest = createHash("sha256")
+      .update(buffer)
+      .digest("hex")
+      .slice(0, 32);
+    const file = `img_${digest}${extForImageMime(img.mimeType)}`;
+    const target = path.join(ATTACHMENTS_DIR, file);
+    if (!fs.existsSync(target)) {
+      fs.writeFileSync(target, buffer, { mode: 0o600 });
+    }
+    return {
+      name: typeof img.name === "string" ? img.name.slice(0, 200) : "",
+      mimeType: img.mimeType,
+      url: ATTACHMENT_URL_PREFIX + file,
+    };
+  } catch (e) {
+    console.error("Failed to store image attachment:", e);
+    return null;
+  }
+}
+
+// The stored file name is generated from the image's own type, so the
+// extension — not a field that travelled through editable JSON — decides the
+// MIME sent to a model or a browser.
+function mimeForAttachmentFile(file, fallback) {
+  const known = IMAGE_MIME_BY_EXT.get(path.extname(file));
+  if (known) return known;
+  const claimed = typeof fallback === "string" ? fallback : "";
+  return IMAGE_MIME_VALUES.has(claimed) ? claimed : "image/png";
+}
+
+function loadAttachmentImage(ref) {
+  const file = attachmentFileFromRef(ref);
+  if (!file) return null;
+  try {
+    const buffer = fs.readFileSync(path.join(ATTACHMENTS_DIR, file));
+    return {
+      dataBase64: buffer.toString("base64"),
+      mimeType: mimeForAttachmentFile(file, ref.mimeType),
+      name: typeof ref.name === "string" ? ref.name : "",
+      url: ATTACHMENT_URL_PREFIX + file,
+    };
+  } catch (_e) {
+    // The file was removed or never written — the turn still runs, just
+    // without that image.
+    return null;
+  }
+}
+
+// Storage form of an attachment list: URL refs only, no base64.
+function attachmentRefsForStorage(images) {
+  const refs = [];
+  for (const img of Array.isArray(images) ? images : []) {
+    if (!img || typeof img !== "object") continue;
+    const file = attachmentFileFromRef(img);
+    if (file) {
+      refs.push({
+        name: typeof img.name === "string" ? img.name.slice(0, 200) : "",
+        mimeType: mimeForAttachmentFile(file, img.mimeType),
+        url: ATTACHMENT_URL_PREFIX + file,
+      });
+    } else {
+      const stored = storeAttachmentImage(normalizeAttachmentImages([img])[0]);
+      if (stored) refs.push(stored);
+    }
+    if (refs.length >= 8) break;
+  }
+  return refs;
+}
+
+// Model-facing form: full base64 for every attachment, whether the client sent
+// the bytes inline (fresh upload) or only a URL ref (history replay, regen).
+// Inline images are persisted on the way through so the turn that used them can
+// be stored with refs.
+function resolveAttachmentImages(images) {
+  const out = [];
+  for (const img of Array.isArray(images) ? images : []) {
+    if (!img || typeof img !== "object") continue;
+    if (typeof img.dataBase64 === "string" && img.dataBase64 && img.mimeType) {
+      const normalized = normalizeAttachmentImages([img])[0];
+      const stored = storeAttachmentImage(normalized);
+      out.push({ ...normalized, url: stored ? stored.url : "" });
+    } else {
+      const loaded = loadAttachmentImage(img);
+      if (loaded) out.push(loaded);
+    }
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+// A long conversation can accumulate more images than any context window can
+// hold — each one costs hundreds of tokens on every subsequent turn. The most
+// recent ones are the ones being talked about, so replay stops there. This
+// caps only what the MODEL is re-sent; the stored conversation keeps every
+// image and the UI still shows them all.
+const MAX_REPLAYED_HISTORY_IMAGES = 12;
+
+// Conversation history stores image refs on user turns. Turn them back into
+// base64 so past images stay visible to the model for the whole conversation —
+// without this the model loses sight of an image the moment the next turn
+// starts, and asks the user to attach it again.
+function hydrateHistoryImages(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const out = new Array(list.length);
+  let budget = MAX_REPLAYED_HISTORY_IMAGES;
+  // Newest first, so the images still in play are the ones that survive.
+  for (let i = list.length - 1; i >= 0; i--) {
+    const item = list[i];
+    if (!item || typeof item !== "object") {
+      out[i] = item;
+      continue;
+    }
+    if (!Array.isArray(item.images) || !item.images.length) {
+      out[i] = item;
+      continue;
+    }
+    const resolved = budget > 0 ? resolveAttachmentImages(item.images) : [];
+    if (!resolved.length) {
+      const copy = { ...item };
+      delete copy.images;
+      out[i] = copy;
+      continue;
+    }
+    const kept = resolved.slice(0, budget);
+    budget -= kept.length;
+    out[i] = { ...item, images: kept };
+  }
+  return out;
+}
+
+// Shared by every request builder: give each message its own image list (the
+// turn's fresh attachments belong to the last user message), then let the
+// caller render them in its provider's schema.
+function collectMessageImages(messages, trailingImages) {
+  const list = (Array.isArray(messages) ? messages : []).map((m) => ({
+    message: m,
+    images: Array.isArray(m?.images) ? normalizeAttachmentImages(m.images) : [],
+  }));
+  const trailing = normalizeAttachmentImages(trailingImages);
+  if (trailing.length) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].message?.role !== "user") continue;
+      // Re-sent turns can carry the same image both inline and in history;
+      // one copy in the prompt is enough.
+      const seen = new Set(list[i].images.map((img) => img.dataBase64));
+      list[i].images = [
+        ...list[i].images,
+        ...trailing.filter((img) => !seen.has(img.dataBase64)),
+      ];
+      break;
+    }
+  }
+  return list;
+}
+
+function openAiImageParts(textContent, images) {
+  const parts = [];
+  if (textContent) parts.push({ type: "text", text: textContent });
+  for (const img of images) {
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${img.mimeType};base64,${img.dataBase64}` },
+    });
+  }
+  return parts;
+}
+
+// OpenAI-schema messages (local servers, OpenAI/Mistral/Google) with any
+// attached image rendered as image_url parts.
+function applyOpenAiImages(messages, trailingImages) {
+  const entries = collectMessageImages(messages, trailingImages);
+  if (!entries.some((entry) => entry.images.length)) {
+    return Array.isArray(messages) ? messages : [];
+  }
+  return entries.map(({ message, images }) => {
+    const copy = { ...message };
+    delete copy.images;
+    if (!images.length) return copy;
+    copy.content = openAiImageParts(
+      typeof message.content === "string" ? message.content : "",
+      images,
+    );
+    return copy;
+  });
 }
 const CLOUD_DEFAULT_MODELS = {
   openai: "gpt-5",
@@ -680,6 +912,12 @@ function saveClientConversation(id, title, mode, rawMessages, originClientId) {
     )
     .map((m) => {
       const item = { role: m.role, content: m.content };
+      // Attachment refs (never base64) so the thumbnails come back with the
+      // conversation.
+      if (m.role === "user" && Array.isArray(m.images) && m.images.length) {
+        const refs = attachmentRefsForStorage(m.images);
+        if (refs.length) item.images = refs;
+      }
       if (Array.isArray(m.librarySources) && m.librarySources.length)
         item.librarySources = m.librarySources;
       if (Array.isArray(m.passages) && m.passages.length)
@@ -1418,28 +1656,7 @@ function buildLocalOpenAiRequest(
   tools,
 ) {
   const p = sanitizeLocalParams(params);
-  const imageList = normalizeAttachmentImages(images);
-  let outMessages = Array.isArray(messages) ? messages : [];
-  if (imageList.length) {
-    outMessages = outMessages.map((m) => ({ ...m }));
-    for (let i = outMessages.length - 1; i >= 0; i--) {
-      if (outMessages[i].role !== "user") continue;
-      const textContent =
-        typeof outMessages[i].content === "string"
-          ? outMessages[i].content
-          : "";
-      const parts = [];
-      if (textContent) parts.push({ type: "text", text: textContent });
-      for (const img of imageList) {
-        parts.push({
-          type: "image_url",
-          image_url: { url: `data:${img.mimeType};base64,${img.dataBase64}` },
-        });
-      }
-      outMessages[i].content = parts;
-      break;
-    }
-  }
+  const outMessages = applyOpenAiImages(messages, images);
   const body = {
     messages: outMessages,
     stream: true,
@@ -1822,6 +2039,19 @@ function sanitizeModelMessages(messages) {
         content: item.content,
       };
       if (Array.isArray(item.tool_calls)) clean.tool_calls = item.tool_calls;
+      // Ollama takes per-message images natively (base64, no data: prefix).
+      if (Array.isArray(item.images) && item.images.length) {
+        clean.images = item.images
+          .map((img) =>
+            typeof img === "string"
+              ? img
+              : img && img.dataBase64
+                ? img.dataBase64
+                : "",
+          )
+          .filter(Boolean);
+        if (!clean.images.length) delete clean.images;
+      }
       if (typeof item.name === "string") clean.name = item.name;
       if (typeof item.tool_call_id === "string") {
         clean.tool_call_id = item.tool_call_id;
@@ -1830,7 +2060,7 @@ function sanitizeModelMessages(messages) {
     });
 }
 
-function normalizeStoredConversationMessages(history, message) {
+function normalizeStoredConversationMessages(history, message, images) {
   const stored = [];
   const sourceHistory = Array.isArray(history) ? history : [];
   for (const item of sourceHistory) {
@@ -1841,6 +2071,14 @@ function normalizeStoredConversationMessages(history, message) {
       role: item.role,
       content: item.content,
     };
+    if (
+      item.role === "user" &&
+      Array.isArray(item.images) &&
+      item.images.length
+    ) {
+      const refs = attachmentRefsForStorage(item.images);
+      if (refs.length) clean.images = refs;
+    }
     if (item.role === "assistant") {
       if (Array.isArray(item.librarySources)) {
         clean.librarySources = item.librarySources;
@@ -1863,7 +2101,10 @@ function normalizeStoredConversationMessages(history, message) {
     }
     stored.push(clean);
   }
-  stored.push({ role: "user", content: message });
+  const newUserMessage = { role: "user", content: message };
+  const newImageRefs = attachmentRefsForStorage(images);
+  if (newImageRefs.length) newUserMessage.images = newImageRefs;
+  stored.push(newUserMessage);
   if (stored.length > MAX_HISTORY_MESSAGES) {
     return stored.slice(stored.length - MAX_HISTORY_MESSAGES);
   }
@@ -2058,7 +2299,6 @@ function buildCloudEndpoint(baseUrl, pathSuffix) {
 }
 
 function buildCloudRequest(provider, settings, messages, images) {
-  const imageList = normalizeAttachmentImages(images);
   const model = settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
   const baseUrl =
     settings.baseUrls?.[provider] || CLOUD_DEFAULT_BASE_URLS[provider];
@@ -2079,7 +2319,8 @@ function buildCloudRequest(provider, settings, messages, images) {
   if (provider === "anthropic") {
     const systemParts = [];
     const anthropicMessages = [];
-    for (const item of Array.isArray(messages) ? messages : []) {
+    for (const entry of collectMessageImages(messages, images)) {
+      const item = entry.message;
       if (!item || typeof item !== "object") continue;
       if (item.role === "system") {
         if (typeof item.content === "string" && item.content.trim()) {
@@ -2092,33 +2333,34 @@ function buildCloudRequest(provider, settings, messages, images) {
       const previous = anthropicMessages[anthropicMessages.length - 1];
       if (previous && previous.role === item.role) {
         previous.content = `${previous.content}\n\n${item.content}`;
+        previous.images = [...previous.images, ...entry.images];
         continue;
       }
-      anthropicMessages.push({ role: item.role, content: item.content });
+      anthropicMessages.push({
+        role: item.role,
+        content: item.content,
+        images: entry.images,
+      });
     }
-    if (imageList.length) {
-      // Attach images to the most recent user turn as content blocks.
-      for (let i = anthropicMessages.length - 1; i >= 0; i--) {
-        if (anthropicMessages[i].role !== "user") continue;
-        const textContent =
-          typeof anthropicMessages[i].content === "string"
-            ? anthropicMessages[i].content
-            : "";
-        const blocks = [];
-        if (textContent) blocks.push({ type: "text", text: textContent });
-        for (const img of imageList) {
-          blocks.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: img.mimeType,
-              data: img.dataBase64,
-            },
-          });
-        }
-        anthropicMessages[i].content = blocks;
-        break;
+    // Attach each turn's images to it as content blocks.
+    for (const item of anthropicMessages) {
+      const attached = item.images;
+      delete item.images;
+      if (!attached.length) continue;
+      const textContent = typeof item.content === "string" ? item.content : "";
+      const blocks = [];
+      if (textContent) blocks.push({ type: "text", text: textContent });
+      for (const img of attached) {
+        blocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: img.mimeType,
+            data: img.dataBase64,
+          },
+        });
       }
+      item.content = blocks;
     }
     return {
       url: buildCloudEndpoint(baseUrl, "/messages"),
@@ -2137,34 +2379,11 @@ function buildCloudRequest(provider, settings, messages, images) {
     };
   }
 
-  let outMessages = messages;
-  if (imageList.length) {
-    // OpenAI-compatible vision: the user turn's content becomes an array of
-    // text + image_url (data URL) parts on the most recent user message.
-    outMessages = (Array.isArray(messages) ? messages : []).map((m) => ({
-      ...m,
-    }));
-    for (let i = outMessages.length - 1; i >= 0; i--) {
-      if (outMessages[i].role !== "user") continue;
-      const textContent =
-        typeof outMessages[i].content === "string"
-          ? outMessages[i].content
-          : "";
-      const parts = [];
-      if (textContent) parts.push({ type: "text", text: textContent });
-      for (const img of imageList) {
-        parts.push({
-          type: "image_url",
-          image_url: { url: `data:${img.mimeType};base64,${img.dataBase64}` },
-        });
-      }
-      outMessages[i].content = parts;
-      break;
-    }
-  }
+  // OpenAI-compatible vision: a turn carrying images has its content rendered
+  // as an array of text + image_url (data URL) parts.
   const body = {
     model,
-    messages: outMessages,
+    messages: applyOpenAiImages(messages, images),
     max_tokens: maxTokens,
     stream: true,
   };
@@ -2573,7 +2792,8 @@ const chatDomain = require("./routes/chat")({
   getLibraryContextSourceResults,
   getLibraryRequestForCommand,
   loadCloudSettings,
-  normalizeAttachmentImages,
+  resolveAttachmentImages,
+  hydrateHistoryImages,
   normalizeStoredConversationMessages,
   ollamaChat,
   ollamaConn,
@@ -2599,7 +2819,8 @@ const piDomain = require("./routes/pi")({
   upsertConversation,
   persistAsyncWakeTurn,
   sanitizeTraceEventForStorage,
-  normalizeAttachmentImages,
+  resolveAttachmentImages,
+  normalizeStoredConversationMessages,
   extForImageMime,
   emitSlashCommand,
   getCommandMessage,
@@ -2968,6 +3189,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Stored image attachments, referenced by conversation history so old chats
+  // still show what was sent.
+  if (req.method === "GET" && urlPath.startsWith(ATTACHMENT_URL_PREFIX)) {
+    const file = attachmentFileFromRef({ url: urlPath });
+    if (!file) {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Invalid attachment path.");
+      return;
+    }
+    try {
+      const buffer = fs.readFileSync(path.join(ATTACHMENTS_DIR, file));
+      res.writeHead(200, {
+        "Content-Type":
+          IMAGE_MIME_BY_EXT.get(path.extname(file)) ||
+          "application/octet-stream",
+        // Content-addressed names never change meaning.
+        "Cache-Control": "private, max-age=31536000, immutable",
+      });
+      res.end(buffer);
+    } catch (_e) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Attachment not found.");
+    }
+    return;
+  }
+
   if (req.method === "POST" && urlPath === "/api/upload") {
     try {
       const buf = await readBody(req, MAX_UPLOAD_PAYLOAD_SIZE);
@@ -3029,11 +3276,21 @@ const server = http.createServer(async (req, res) => {
         const ext = path.extname(file.filename || "").toLowerCase();
         if (IMAGE_MIME_BY_EXT.has(ext)) {
           // Images are sent to the model as base64, not extracted to text.
+          // They are also stored right away, so the URL that the chat bubble
+          // and the saved history point at exists before the turn is sent.
+          const dataBase64 = file.body.toString("base64");
+          const mimeType = IMAGE_MIME_BY_EXT.get(ext);
+          const stored = storeAttachmentImage({
+            dataBase64,
+            mimeType,
+            name: file.filename,
+          });
           send(200, {
             kind: "image",
-            dataBase64: file.body.toString("base64"),
-            mimeType: IMAGE_MIME_BY_EXT.get(ext),
+            dataBase64,
+            mimeType,
             filename: file.filename,
+            url: stored ? stored.url : "",
           });
           return;
         }

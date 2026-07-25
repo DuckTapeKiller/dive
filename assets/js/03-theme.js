@@ -2977,6 +2977,9 @@
         lastExchangePersisted = true;
         clearPendingFiles();
         ensurePiEventChannel();
+        if (typeof updateDownloadButtonState === "function") {
+          updateDownloadButtonState();
+        }
         if (typeof updateTokenCounter === "function") updateTokenCounter();
       }
 

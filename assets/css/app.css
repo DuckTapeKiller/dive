@@ -2720,16 +2720,45 @@
           background 0.2s,
           color 0.2s;
       }
-      #uploadBtn:hover {
+      #uploadBtn:hover,
+      #downloadBtn:hover {
         background: var(--flat-fill);
       }
-      #uploadBtn:active {
+      #uploadBtn:active,
+      #downloadBtn:active {
         background: var(--flat-fill-strong);
       }
-      #uploadBtn svg {
+      #uploadBtn svg,
+      #downloadBtn svg {
         width: 18px;
         height: 18px;
         stroke: currentColor;
+      }
+      /* Export: same 34px icon button as the attach control it sits beside. */
+      #downloadBtn {
+        height: 34px;
+        width: 34px;
+        min-width: 34px;
+        padding: 0;
+        background: transparent;
+        color: var(--text-normal);
+        border: none;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition:
+          background 0.2s,
+          color 0.2s;
+      }
+      /* Nothing to export yet — visibly inert rather than silently doing
+         nothing. */
+      #downloadBtn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #downloadBtn:disabled:hover {
+        background: transparent;
       }
       /* BOOK FILTER */
       #bookFilterBtn {

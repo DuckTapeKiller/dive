@@ -76,6 +76,15 @@
         }
       }
 
+      // The user entry for a finished turn. Image refs stay on it so the
+      // post-run history rebuild — and everything downstream: the snapshot, the
+      // re-render, the next turn's request — keeps the attachment.
+      function buildTurnUserMessage(content, images) {
+        const entry = { role: "user", content };
+        if (Array.isArray(images) && images.length) entry.images = images;
+        return entry;
+      }
+
       async function sendMessage() {
         const runMode = mode;
         const allowThinkingRemoval = runMode !== "pi";
@@ -91,13 +100,31 @@
           // Unknown command: restore nothing — it goes to Pi as a prompt.
           text = text.trim();
         }
+        // Clear the composer before any await below: an empty input is what
+        // makes a second Enter press return early instead of double-sending.
+        input.value = "";
+        resetInputSize();
+        // A file dropped a moment ago may still be uploading. Sending before it
+        // lands is what makes the model answer "please provide the image", so
+        // wait for it — the composer already shows an "Uploading…" pill.
+        if (pendingUploads > 0) {
+          try {
+            await pendingUploadsDone;
+          } catch (_e) {
+            /* the upload's own alert already reported the failure */
+          }
+          // A run may have started while we waited (another Enter, a retry).
+          if (runSession.activeAbortController) {
+            input.value = text;
+            resetInputSize();
+            return;
+          }
+        }
         const messageSource = pendingFiles.length ? "uploaded_file" : "manual";
         logSecurityEvent("user_message_submitted", {
           mode: runMode,
           source: messageSource,
         });
-        input.value = "";
-        resetInputSize();
         lastUserMessage = text;
         if (!currentConvId) currentConvId = "conv_" + Date.now();
         runSession.convId = currentConvId;
@@ -112,6 +139,9 @@
 
         let displayText = text;
         let outgoingImages = null;
+        // Storage form of the same attachments: URL refs, no base64, so the
+        // conversation snapshot stays small while the images stay in history.
+        let historyImages = null;
         if (pendingFiles.length) {
           const imageAtts = pendingFiles.filter((f) => f.kind === "image");
           const textAtts = pendingFiles.filter((f) => f.kind !== "image");
@@ -128,6 +158,14 @@
               name: f.name,
               dataBase64: f.imageBase64,
               mimeType: f.mimeType,
+              url: f.url || "",
+            }));
+            historyImages = imageAtts.map((f) => ({
+              name: f.name,
+              mimeType: f.mimeType,
+              // No stored copy (an older server, or a failed write): keep the
+              // bytes so the turn is still saved with its image.
+              ...(f.url ? { url: f.url } : { dataBase64: f.imageBase64 }),
             }));
           }
           // Only non-image attachments still need a text label — images are
@@ -168,7 +206,9 @@
         // conversations either.
         const saveConvId = persistToHistory ? runConvId : null;
 
-        addMessage(displayText, "user", { images: outgoingImages });
+        addMessage(displayText, "user", {
+          images: historyImages || outgoingImages,
+        });
         // Real run start, kept on the session so the elapsed counter continues
         // from here across mode switches instead of restarting.
         runSession.thinkingStartedAt = Date.now();
@@ -182,7 +222,11 @@
 
         lastSentMessage = messageToSend;
         runSession.history = [...history];
-        runSession.history.push({ role: "user", content: messageToSend });
+        // The attachment is part of the turn, so it lives on the history entry
+        // — that is what gets snapshotted, re-rendered and re-sent later.
+        runSession.history.push(
+          buildTurnUserMessage(messageToSend, historyImages),
+        );
         history = [...runSession.history];
         runSession.lastUserMessage = lastUserMessage;
         runSession.lastSentMessage = messageToSend;
@@ -325,7 +369,7 @@
               );
               runSession.history = [
                 ...requestHistory.filter((msg) => msg.role !== "system"),
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, historyImages),
                 assistantMessage,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -405,7 +449,7 @@
             );
             runSession.history = [
               ...requestHistory,
-              { role: "user", content: messageToSend },
+              buildTurnUserMessage(messageToSend, historyImages),
               assistantMessage,
             ];
             if (mode === runMode && currentConvId === runConvId) {
@@ -473,7 +517,7 @@
               );
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, historyImages),
                 assistantMessageLocal,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -548,7 +592,7 @@
               );
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, historyImages),
                 assistantMessage,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -613,7 +657,7 @@
             if (persistToHistory) {
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, historyImages),
                 abortedAssistant,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -654,7 +698,7 @@
             if (persistToHistory) {
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, historyImages),
                 failedAssistant,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -691,6 +735,13 @@
         currentConvId = runConvId;
         runSession.convId = runConvId;
         if (wrapEl) wrapEl.remove();
+        // The turn being regenerated may have carried images — they are on its
+        // user entry, and must go out again with the retry (refs, so no
+        // re-upload) or the model regenerates blind.
+        const regenSource = [...history].reverse().find((m) => m?.role === "user");
+        const regenImages = Array.isArray(regenSource?.images)
+          ? regenSource.images
+          : undefined;
         // Only remove the last user+assistant pair if it was persisted to history
         // and there are enough entries to remove. When lastExchangePersisted is
         // false (e.g. Ollama triggered mode like proofreading), the exchange
@@ -813,6 +864,7 @@
               runAbortController.signal,
               handlePartial,
               handleEvent,
+              regenImages,
             );
             setDraftAssistant(
               runMode,
@@ -835,7 +887,7 @@
               );
               runSession.history = [
                 ...requestHistory.filter((msg) => msg.role !== "system"),
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, regenImages),
                 assistantMessage,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -856,6 +908,7 @@
               lastUserMessage.slice(0, 40),
               handlePartial,
               handleEvent,
+              regenImages,
             );
             setDraftAssistant(
               runMode,
@@ -878,7 +931,7 @@
             );
             runSession.history = [
               ...requestHistory,
-              { role: "user", content: messageToSend },
+              buildTurnUserMessage(messageToSend, regenImages),
               assistantMessage,
             ];
             if (mode === runMode && currentConvId === runConvId) {
@@ -898,7 +951,7 @@
               runAbortController.signal,
               handlePartial,
               handleEvent,
-              undefined,
+              regenImages,
               hardModeOverride,
             );
             setDraftAssistant(
@@ -922,7 +975,7 @@
               );
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, regenImages),
                 assistantMessageLocal,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -944,7 +997,7 @@
               runAbortController.signal,
               handlePartial,
               handleEvent,
-              undefined,
+              regenImages,
               hardModeOverride,
             );
             setDraftAssistant(
@@ -968,7 +1021,7 @@
               );
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, regenImages),
                 assistantMessage,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -1033,7 +1086,7 @@
             if (persistToHistory) {
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, regenImages),
                 abortedAssistant,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -1074,7 +1127,7 @@
             if (persistToHistory) {
               runSession.history = [
                 ...requestHistory,
-                { role: "user", content: messageToSend },
+                buildTurnUserMessage(messageToSend, regenImages),
                 failedAssistant,
               ];
               if (mode === runMode && currentConvId === runConvId) {
@@ -2339,6 +2392,14 @@
           btn_uploadBtn.addEventListener("click", function (event) {
             document.getElementById("fileInput").click();
           });
+        }
+
+        const btn_downloadBtn = document.getElementById("downloadBtn");
+        if (btn_downloadBtn) {
+          btn_downloadBtn.addEventListener("click", function (event) {
+            downloadSessionMarkdown();
+          });
+          updateDownloadButtonState();
         }
 
         const btn_saveNotesBtn = document.getElementById("saveNotesBtn");

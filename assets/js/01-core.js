@@ -160,6 +160,10 @@
       // upload appends, and each has its own removable pill.
       const MAX_ATTACHMENTS = 8;
       let pendingFiles = [];
+      // In-flight uploads, so a message sent the instant a file is dropped
+      // still waits for it instead of going out with no attachment.
+      let pendingUploads = 0;
+      let pendingUploadsDone = Promise.resolve();
       const pendingFilesByMode = {
         ollama: [],
         pi: [],

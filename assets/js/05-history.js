@@ -346,6 +346,178 @@
         refreshSidePanelRecent();
       }
 
+      // ---- SESSION EXPORT (MARKDOWN) ----
+      // The whole conversation on screen, written to a .md file: every turn,
+      // its attachments, the model's reasoning, the tools it ran and the
+      // library passages it was given. An export that quietly dropped any of
+      // that would be worse than none.
+
+      // Filename-safe stem from the conversation's opening line.
+      function slugifyForFilename(text) {
+        return String(text || "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 48);
+      }
+
+      function exportTimestamp(date) {
+        const pad = (n) => String(n).padStart(2, "0");
+        return (
+          `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+          `-${pad(date.getHours())}${pad(date.getMinutes())}`
+        );
+      }
+
+      // Markdown blockquote: reasoning and passages keep their own line breaks
+      // without their markdown bleeding into the surrounding document. `indent`
+      // keeps a quote inside the numbered list item it belongs to.
+      function markdownBlockquote(text, indent = "") {
+        return String(text || "")
+          .replace(/\r\n/g, "\n")
+          .split("\n")
+          .map((line) => (line.trim() ? `${indent}> ${line}` : `${indent}>`))
+          .join("\n");
+      }
+
+      // Attachment URLs are server paths; absolute ones still resolve when the
+      // exported file is opened in another editor while Dive is running.
+      function absoluteAttachmentUrl(url) {
+        if (!url) return "";
+        if (/^[a-z]+:/i.test(url)) return url;
+        return `${window.location.origin}${apiUrl(url)}`;
+      }
+
+      // Every message currently on screen, including a reply still streaming.
+      function getSessionExportHistory() {
+        const session = getActiveModeSession(mode);
+        const messages = Array.isArray(history) ? [...history] : [];
+        const draft = session.draftAssistant;
+        if (draft && messages[messages.length - 1] !== draft) {
+          messages.push(draft);
+        }
+        return messages;
+      }
+
+      function buildSessionMarkdown() {
+        const messages = getSessionExportHistory();
+        if (!messages.length) return "";
+        const firstUser = messages.find(
+          (m) => m && m.role === "user" && m.content,
+        );
+        const title =
+          (firstUser ? String(firstUser.content).split("\n")[0].trim() : "") ||
+          "Dive conversation";
+        const now = new Date();
+        const lines = [`# ${title}`, ""];
+        lines.push(`- **Mode:** ${mode}`);
+        // The picker's own label: the model name for Ollama and local modes,
+        // "provider · model" for Cloud, the Pi model for Pi.
+        const modelName = (
+          modelSelect?.selectedOptions?.[0]?.textContent || ""
+        ).trim();
+        if (modelName && !modelName.startsWith("("))
+          lines.push(`- **Model:** ${modelName}`);
+        if (currentConvId) lines.push(`- **Conversation:** ${currentConvId}`);
+        lines.push(`- **Exported:** ${now.toLocaleString()}`);
+        lines.push("");
+
+        messages.forEach((msg) => {
+          if (!msg || (msg.role !== "user" && msg.role !== "assistant")) return;
+          lines.push("---", "");
+          lines.push(msg.role === "user" ? "## You" : "## Assistant", "");
+          const images = Array.isArray(msg.images) ? msg.images : [];
+          for (const img of images) {
+            const name = img?.name || "attached image";
+            const url = absoluteAttachmentUrl(img?.url);
+            // Inline images (never stored) would embed megabytes of base64 —
+            // record that they were attached instead.
+            lines.push(
+              url ? `![${name}](${url})` : `*(attached image: ${name})*`,
+              "",
+            );
+          }
+          const content = String(msg.content || "").trim();
+          if (content) lines.push(content, "");
+          if (msg.role !== "assistant") return;
+
+          const metadata = getAssistantMetadataFromMessage(msg);
+          if (metadata.thinking && metadata.thinking.trim()) {
+            lines.push("**Reasoning**", "");
+            lines.push(markdownBlockquote(metadata.thinking.trim()), "");
+          }
+          if (metadata.traceLines && metadata.traceLines.length) {
+            lines.push("**Trace**", "");
+            metadata.traceLines.forEach((line) => lines.push(`- ${line}`));
+            lines.push("");
+          }
+          const sources = getMessageLibrarySources(msg);
+          if (sources.length) {
+            lines.push("**Sources**", "");
+            sources.forEach((source, index) => {
+              const label = source.author
+                ? `${source.title} — ${source.author}`
+                : source.title;
+              lines.push(`${index + 1}. ${label}`);
+              if (source.path) lines.push(`   - Path: \`${source.path}\``);
+              if (source.url) lines.push(`   - URL: ${source.url}`);
+              const passages = Array.isArray(source.passages)
+                ? source.passages
+                : [];
+              passages.forEach((passage) => {
+                const heading = passage?.heading
+                  ? ` (${passage.heading})`
+                  : "";
+                const text = String(passage?.text || "").trim();
+                if (!text) return;
+                lines.push("");
+                lines.push(`   Passage${heading}:`);
+                lines.push("");
+                lines.push(markdownBlockquote(text, "   "));
+              });
+              lines.push("");
+            });
+          }
+        });
+        // No blank-line squeezing: a reply's own spacing (code blocks
+        // especially) has to survive the export byte for byte.
+        return lines.join("\n").trim() + "\n";
+      }
+
+      // Hands the file to the browser, which drops it in the download folder
+      // (Downloads unless the user changed it) without a round trip.
+      function downloadSessionMarkdown() {
+        const markdown = buildSessionMarkdown();
+        if (!markdown) return;
+        const messages = getSessionExportHistory();
+        const firstUser = messages.find(
+          (m) => m && m.role === "user" && m.content,
+        );
+        const stem =
+          slugifyForFilename(firstUser ? firstUser.content : "") || "session";
+        const filename = `dive-${stem}-${exportTimestamp(new Date())}.md`;
+        const blob = new Blob([markdown], {
+          type: "text/markdown;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Revoke late: Chromium reads the blob after the click returns.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+
+      // Nothing on screen means nothing to export.
+      function updateDownloadButtonState() {
+        const btn = document.getElementById("downloadBtn");
+        if (!btn) return;
+        btn.disabled = !getSessionExportHistory().length;
+      }
+
       // Remove every attachment for the current mode.
       function clearPendingFiles() {
         pendingFiles = [];
@@ -383,7 +555,22 @@
           pill.appendChild(remove);
           fileChip.appendChild(pill);
         });
-        fileChip.classList.toggle("show", pendingFiles.length > 0);
+        // An upload in progress gets its own pill: without it a dropped file
+        // is invisible until it finishes, and the window looks like nothing
+        // happened.
+        if (pendingUploads > 0) {
+          const pill = document.createElement("span");
+          pill.className = "file-pill";
+          const label = document.createElement("span");
+          label.className = "file-pill-label";
+          label.textContent = "↑ Uploading…";
+          pill.appendChild(label);
+          fileChip.appendChild(pill);
+        }
+        fileChip.classList.toggle(
+          "show",
+          pendingFiles.length > 0 || pendingUploads > 0,
+        );
         fileInput.value = "";
       }
 
@@ -392,35 +579,57 @@
       async function ingestFiles(fileList) {
         const files = Array.from(fileList || []);
         if (!files.length) return;
-        for (const file of files) {
-          if (pendingFiles.length >= MAX_ATTACHMENTS) {
-            alert(`You can attach at most ${MAX_ATTACHMENTS} files.`);
-            break;
+        // The attachment belongs to the mode it was dropped into, even if the
+        // user switches mode while the upload is still running.
+        const targetMode = mode;
+        pendingUploads += 1;
+        renderPendingFileChips();
+        const run = (async () => {
+          for (const file of files) {
+            const targetFiles = pendingFilesByMode[targetMode] || pendingFiles;
+            if (targetFiles.length >= MAX_ATTACHMENTS) {
+              alert(`You can attach at most ${MAX_ATTACHMENTS} files.`);
+              break;
+            }
+            const form = new FormData();
+            form.append("file", file);
+            try {
+              const res = await fetch(apiUrl("/api/upload"), {
+                method: "POST",
+                body: form,
+              });
+              const data = await readJsonResponse(res, "Upload file");
+              const att =
+                data.kind === "image"
+                  ? {
+                      name: file.name,
+                      kind: "image",
+                      imageBase64: data.dataBase64,
+                      mimeType: data.mimeType,
+                      // Server-side copy of the image: what the chat bubble
+                      // renders and what history keeps, so the attachment
+                      // outlives this page load.
+                      url: data.url || "",
+                    }
+                  : { name: file.name, kind: "text", text: data.text };
+              targetFiles.push(att);
+              pendingFilesByMode[targetMode] = targetFiles;
+              if (targetMode === mode) pendingFiles = targetFiles;
+            } catch (e) {
+              alert(`Upload failed for ${file.name}: ${e.message}`);
+            }
           }
-          const form = new FormData();
-          form.append("file", file);
-          try {
-            const res = await fetch(apiUrl("/api/upload"), {
-              method: "POST",
-              body: form,
-            });
-            const data = await readJsonResponse(res, "Upload file");
-            const att =
-              data.kind === "image"
-                ? {
-                    name: file.name,
-                    kind: "image",
-                    imageBase64: data.dataBase64,
-                    mimeType: data.mimeType,
-                  }
-                : { name: file.name, kind: "text", text: data.text };
-            pendingFiles.push(att);
-            pendingFilesByMode[mode] = pendingFiles;
-            renderPendingFileChips();
-          } catch (e) {
-            alert(`Upload failed for ${file.name}: ${e.message}`);
-          }
-        }
+        })().finally(() => {
+          pendingUploads -= 1;
+          renderPendingFileChips();
+        });
+        // sendMessage awaits this, so a file dropped and sent in the same
+        // breath is still part of the turn.
+        pendingUploadsDone = pendingUploadsDone.then(
+          () => run,
+          () => run,
+        );
+        await run;
       }
 
       fileInput.addEventListener("change", async () => {
@@ -873,10 +1082,18 @@
             const gallery = document.createElement("div");
             gallery.className = "msg-images";
             for (const img of imgs) {
-              if (!img || !img.dataBase64 || !img.mimeType) continue;
+              if (!img) continue;
+              // Stored attachments come back as a URL into the attachments
+              // store; a freshly attached one may only have its bytes yet.
+              const src = img.url
+                ? apiUrl(img.url)
+                : img.dataBase64 && img.mimeType
+                  ? `data:${img.mimeType};base64,${img.dataBase64}`
+                  : "";
+              if (!src) continue;
               const el = document.createElement("img");
               el.className = "msg-image";
-              el.src = `data:${img.mimeType};base64,${img.dataBase64}`;
+              el.src = src;
               el.alt = img.name || "attached image";
               if (img.name) el.title = img.name;
               gallery.appendChild(el);
@@ -917,6 +1134,9 @@
         wrap.appendChild(actions);
         chat.appendChild(wrap);
         scrollChatToBottom();
+        // Every bubble goes through here, so this covers sending, loading a
+        // conversation and switching mode.
+        updateDownloadButtonState();
         return div;
       }
 
@@ -1478,6 +1698,7 @@
         // mode switch (a fresh controller is created below).
         session.thinkingController?.stopTimer?.();
         chat.innerHTML = "";
+        updateDownloadButtonState();
         session.streamingAssistantDiv = null;
         session.thinkingController = null;
         const sessionHistory = Array.isArray(session.history)
@@ -1485,7 +1706,8 @@
           : [];
         sessionHistory.forEach((msg) => {
           if (msg.role === "user") {
-            addMessage(msg.content, "user");
+            // Attachments are part of the turn: re-render their thumbnails.
+            addMessage(msg.content, "user", { images: msg.images });
           } else if (msg.role === "assistant") {
             renderAssistantHistoryMessage(msg);
           }

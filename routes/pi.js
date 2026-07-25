@@ -85,7 +85,8 @@ module.exports = function createPiDomain(deps) {
     upsertConversation,
     persistAsyncWakeTurn,
     sanitizeTraceEventForStorage,
-    normalizeAttachmentImages,
+    resolveAttachmentImages,
+    normalizeStoredConversationMessages,
     extForImageMime,
     emitSlashCommand,
     getCommandMessage,
@@ -1665,10 +1666,14 @@ module.exports = function createPiDomain(deps) {
         const originalMessage = body.message;
         const slashCommand = parseSlashCommand(originalMessage);
         const promptQuestion = getCommandMessage(slashCommand, originalMessage);
-        const messages = [
-          ...history,
-          { role: "user", content: originalMessage },
-        ];
+        // `messages` is what gets stored for this conversation: attachments are
+        // recorded as refs on the user turn so the thumbnails survive in
+        // history, exactly as in the other modes.
+        const messages = normalizeStoredConversationMessages(
+          history,
+          originalMessage,
+          body.images,
+        );
         let promptMessage = promptQuestion;
         let librarySourceResults = [];
         let libraryPassages = [];
@@ -1733,7 +1738,7 @@ module.exports = function createPiDomain(deps) {
         // and its path is referenced in the prompt; Pi can open it if it has
         // image/file-reading tools. Temp files self-delete after 10 minutes.
         // The staging directory is sandbox-readable — see piAttachmentStageDir.
-        const piImages = normalizeAttachmentImages(body.images);
+        const piImages = resolveAttachmentImages(body.images);
         const piStageDir = piImages.length ? piAttachmentStageDir() : null;
         if (piStageDir) sweepPiAttachments(piStageDir);
         if (piImages.length && piStageDir) {

@@ -44,7 +44,8 @@ module.exports = function createChatDomain(deps) {
     getLibraryContextSourceResults,
     getLibraryRequestForCommand,
     loadCloudSettings,
-    normalizeAttachmentImages,
+    resolveAttachmentImages,
+    hydrateHistoryImages,
     normalizeStoredConversationMessages,
     ollamaChat,
     ollamaConn,
@@ -150,10 +151,17 @@ module.exports = function createChatDomain(deps) {
       const originalMessage = body.message;
       const slashCommand = parseSlashCommand(originalMessage);
       const message = getCommandMessage(slashCommand, originalMessage);
-      const messages = normalizeCloudHistoryMessages(history, message);
+      // This turn's attachments. Refs sent by the client (a replay or a
+      // regenerate) are read back from the attachments store, so an image is
+      // uploaded once and stays usable for the life of the conversation.
+      const turnImages = resolveAttachmentImages(body.images);
+      const messages = hydrateHistoryImages(
+        normalizeCloudHistoryMessages(history, message),
+      );
       const storedMessages = normalizeStoredConversationMessages(
         history,
         originalMessage,
+        turnImages,
       );
       // Hard-mode override (proofread / translate): bypass policy, library, skills.
       const systemOverride =
@@ -419,6 +427,10 @@ module.exports = function createChatDomain(deps) {
         },
       );
 
+      // Applied last: the library/skills assembly above rewrites the system
+      // message, so the image notice has to go on after it.
+      requestMessages = withAttachedImageNotice(requestMessages, turnImages);
+
       let round = 0;
       for (;;) {
         throwIfClientAborted();
@@ -431,8 +443,9 @@ module.exports = function createChatDomain(deps) {
             baseUrl,
             model,
             messages: requestMessages,
-            // Attach the image only on the first (user) round.
-            images: round === 0 ? body.images : undefined,
+            // Every round, not just the first: a tool call mid-turn must not
+            // make the model lose sight of the image it is being asked about.
+            images: turnImages,
             params,
             tools: nativeToolsEnabled ? nativeTools : undefined,
             signal: abortController.signal,
@@ -1207,6 +1220,48 @@ module.exports = function createChatDomain(deps) {
     return merged;
   }
 
+  // Vision models routinely answer "please provide the image" when the system
+  // prompt in front of them is a long tool/agent policy — they reason their way
+  // to "I have no tool that can see images" and never look at the attachment
+  // that is right there in the message. One explicit line prevents it, and
+  // costs nothing on turns that carry no image.
+  function withAttachedImageNotice(messages, turnImages) {
+    const list = Array.isArray(messages) ? messages : [];
+    // This turn's images may already sit on the last user message (the Ollama
+    // path attaches them there), so count identities, not occurrences.
+    const seen = new Set();
+    const track = (img) => {
+      if (!img || typeof img !== "object") return;
+      const key =
+        img.url ||
+        (img.dataBase64 ? `b64:${img.dataBase64.slice(0, 128)}` : "");
+      if (key) seen.add(key);
+    };
+    (Array.isArray(turnImages) ? turnImages : []).forEach(track);
+    for (const item of list) {
+      if (item && item.role === "user" && Array.isArray(item.images)) {
+        item.images.forEach(track);
+      }
+    }
+    const count = seen.size;
+    if (!count) return list;
+    const notice =
+      `ATTACHED IMAGES — ${count} image${count === 1 ? " is" : "s are"} attached to this conversation and included in the messages as image content. ` +
+      "You can see them directly. Describe or analyse them from the image itself; no tool exists for this and none is needed. " +
+      "Never reply that no image was provided and never ask the user to upload it again.";
+    const out = [...list];
+    if (
+      out[0] &&
+      out[0].role === "system" &&
+      typeof out[0].content === "string"
+    ) {
+      out[0] = { ...out[0], content: `${out[0].content}\n\n${notice}` };
+      return out;
+    }
+    out.unshift({ role: "system", content: notice });
+    return out;
+  }
+
   function normalizeCloudHistoryMessages(history, message) {
     const messages = [];
     const sourceHistory = Array.isArray(history) ? history : [];
@@ -1214,10 +1269,20 @@ module.exports = function createChatDomain(deps) {
       if (!item || typeof item !== "object") continue;
       if (item.role !== "user" && item.role !== "assistant") continue;
       if (typeof item.content !== "string" || !item.content.trim()) continue;
-      messages.push({
+      const entry = {
         role: item.role,
         content: item.content,
-      });
+      };
+      // Carry image refs through: a past turn's images stay part of the
+      // conversation the model sees, not just of what the user saw.
+      if (
+        item.role === "user" &&
+        Array.isArray(item.images) &&
+        item.images.length
+      ) {
+        entry.images = item.images;
+      }
+      messages.push(entry);
     }
     messages.push({ role: "user", content: message });
     if (messages.length > MAX_HISTORY_MESSAGES) {
@@ -1616,10 +1681,16 @@ module.exports = function createChatDomain(deps) {
         const originalMessage = body.message;
         const slashCommand = parseSlashCommand(originalMessage);
         const message = getCommandMessage(slashCommand, originalMessage);
-        const messages = normalizeCloudHistoryMessages(history, message);
+        // See the local handler: attachments are resolved from the store, so
+        // history images stay available to the model and to the saved history.
+        const turnImages = resolveAttachmentImages(body.images);
+        const messages = hydrateHistoryImages(
+          normalizeCloudHistoryMessages(history, message),
+        );
         const storedMessages = normalizeStoredConversationMessages(
           history,
           originalMessage,
+          turnImages,
         );
         // Hard-mode override (proofread / translate): bypass policy, library, skills.
         const systemOverride =
@@ -1763,6 +1834,9 @@ module.exports = function createChatDomain(deps) {
             ? clampNumber(settings.agentMaxRounds, 1, 50, 25)
             : 6;
         const seenSkillCalls = new Set();
+        // Applied last: the library/skills assembly above rewrites the system
+        // message, so the image notice has to go on after it.
+        requestMessages = withAttachedImageNotice(requestMessages, turnImages);
         for (let round = 0; ; round += 1) {
           // Per-round parser state: peel a leading <thought>/<think> reasoning
           // block off this round's content stream and route it to the thinking
@@ -1774,9 +1848,9 @@ module.exports = function createChatDomain(deps) {
             provider,
             settings,
             messages: requestMessages,
-            // Attach the image only on the first round (the user's turn); later
-            // skill-continuation rounds must not re-send it.
-            images: round === 0 ? body.images : undefined,
+            // Every round, not just the first: a skill-continuation round must
+            // not make the model lose sight of the image it was asked about.
+            images: turnImages,
             signal: abortController.signal,
             onDelta: (delta) => {
               roundRaw += delta;
@@ -2050,14 +2124,17 @@ module.exports = function createChatDomain(deps) {
         const originalMessage = requestMessage;
         const slashCommand = parseSlashCommand(originalMessage);
         const message = getCommandMessage(slashCommand, originalMessage);
-        const attachmentImages = normalizeAttachmentImages(body.images);
+        const attachmentImages = resolveAttachmentImages(body.images);
         const userMessage = { role: "user", content: message };
         if (attachmentImages.length) {
           // Ollama /api/chat takes base64 (no data: prefix) in images[]. Vision
           // models (llava, gemma3, qwen2-vl…) use them; others ignore them.
-          userMessage.images = attachmentImages.map((img) => img.dataBase64);
+          // sanitizeModelMessages maps these to plain base64 at request time.
+          userMessage.images = attachmentImages;
         }
-        const messages = [...history, userMessage];
+        // Past turns keep their images too, so the model can still refer to an
+        // image from earlier in the conversation.
+        const messages = [...hydrateHistoryImages(history), userMessage];
         // Ollama builds its system context client-side (prompt overlays), so
         // lessons are injected here server-side — strictly the OLLAMA mode's
         // own lessons file, never another mode's.
@@ -2070,10 +2147,11 @@ module.exports = function createChatDomain(deps) {
               ollamaLessons,
           });
         }
-        const storedMessages = [
-          ...history,
-          { role: "user", content: originalMessage },
-        ];
+        const storedMessages = normalizeStoredConversationMessages(
+          history,
+          originalMessage,
+          attachmentImages,
+        );
         const safeOptions = sanitizeOllamaOptions(options);
 
         res.writeHead(200, {
@@ -2153,6 +2231,17 @@ module.exports = function createChatDomain(deps) {
           }
         } catch (e) {
           emit({ type: "library_error", error: e.message });
+        }
+
+        // Same reason as the local/cloud paths: tell the model the attachment
+        // is visible to it, so it stops asking for an image it already has.
+        if (attachmentImages.length) {
+          const withNotice = withAttachedImageNotice(
+            messages,
+            attachmentImages,
+          );
+          messages.length = 0;
+          messages.push(...withNotice);
         }
 
         if (isSkillSlashCommand(slashCommand)) {

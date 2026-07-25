@@ -367,6 +367,35 @@ async function bootLocalServer() {
   await waitForServer(localPort);
 }
 
+// Downloads (the composer's "save this conversation as Markdown" button) go
+// straight to the Downloads folder. Without this, Electron falls back to its
+// default routine and puts a Save As dialog in the way of every export.
+// A name already in use gets " (2)", " (3)"… rather than being overwritten.
+function uniqueDownloadPath(directory, filename) {
+  const ext = path.extname(filename);
+  const stem = path.basename(filename, ext);
+  let candidate = path.join(directory, filename);
+  for (let n = 2; fs.existsSync(candidate) && n < 1000; n++) {
+    candidate = path.join(directory, `${stem} (${n})${ext}`);
+  }
+  return candidate;
+}
+
+function setupDownloadHandling() {
+  const { session } = require("electron");
+  session.defaultSession.on("will-download", (_event, item) => {
+    try {
+      const dir = app.getPath("downloads");
+      fs.mkdirSync(dir, { recursive: true });
+      item.setSavePath(uniqueDownloadPath(dir, item.getFilename()));
+    } catch (error) {
+      // Leave it to Electron's own routine (a save dialog) rather than
+      // failing the download outright.
+      console.warn(`Download path could not be set: ${error.message}`);
+    }
+  });
+}
+
 function createMainWindow() {
   const iconPath = path.join(
     app.getAppPath(),
@@ -430,6 +459,7 @@ if (!singleLock) {
   app.whenReady().then(async () => {
     try {
       await bootLocalServer();
+      setupDownloadHandling();
       createMainWindow();
     } catch (error) {
       dialog.showErrorBox(
