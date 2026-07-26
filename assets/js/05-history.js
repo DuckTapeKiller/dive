@@ -2187,8 +2187,6 @@
           Number(piSettings.toolOutputMaxChars) || 12000;
         document.getElementById("piPermissionPolicySelect").value =
           piSettings.permissionPolicy || "normal";
-        document.getElementById("piPermissionAutoOpenInput").checked =
-          !!piSettings.permissionUx?.autoOpen;
         document.getElementById("piPermissionDefaultActionSelect").value =
           piSettings.permissionUx?.defaultAction || "deny";
         document.getElementById("piPermissionTimeoutMsInput").value =
@@ -2302,8 +2300,6 @@
               ? "strict"
               : "normal",
           permissionUx: {
-            autoOpen: document.getElementById("piPermissionAutoOpenInput")
-              .checked,
             defaultAction:
               document.getElementById("piPermissionDefaultActionSelect")
                 .value === "allow"

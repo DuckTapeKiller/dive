@@ -457,6 +457,54 @@
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
+      /* Pending permission request. Shares CLEAR's topbar geometry and
+         typography, but arrives filled rather than outlined: it appears only
+         when a tool is blocked waiting on the user, so it has to read as the
+         one thing on the bar asking for an answer. */
+      #piPermissionBtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        background: var(--text-inverse);
+        color: var(--bg-inverse);
+        border: var(--border-width) solid var(--text-inverse);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: calc(11px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 1px;
+        flex-shrink: 0;
+        animation: permission-pulse 1.6s ease-in-out infinite;
+        transition:
+          background 0.1s,
+          color 0.1s,
+          border-color 0.2s;
+      }
+      #piPermissionBtn svg {
+        width: 13px;
+        height: 13px;
+        stroke: currentColor;
+        flex-shrink: 0;
+      }
+      #piPermissionBtn:hover {
+        background: transparent;
+        color: var(--text-inverse);
+      }
+      @keyframes permission-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.55;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #piPermissionBtn {
+          animation: none;
+        }
+      }
       .topbar-icon-btn {
         width: 34px;
         height: 28px;

@@ -730,9 +730,9 @@ module.exports = function createChatDomain(deps) {
       toolCall.function.name,
       DATA_DIR,
     );
-    let executeAllowed = true;
+    let decision = { allowed: true, reason: "not-required" };
     if (requiresShellConfirmation) {
-      executeAllowed = await requestShellConfirmation({
+      decision = await requestShellConfirmation({
         emit,
         title: confirmationTitleForTool(toolCall.function.name),
         command: toolCall.function.arguments,
@@ -740,11 +740,18 @@ module.exports = function createChatDomain(deps) {
       });
     }
 
-    if (!executeAllowed) {
-      appendSecurityEvent("shell_command_denied", {
-        command: toolCall.function.arguments,
-        tool: toolCall.function.name,
-      });
+    if (!decision.allowed) {
+      const timedOut = decision.reason === "timeout";
+      appendSecurityEvent(
+        timedOut ? "shell_command_timeout_denied" : "shell_command_denied",
+        {
+          command: toolCall.function.arguments,
+          tool: toolCall.function.name,
+        },
+      );
+      if (timedOut) {
+        return `The confirmation prompt for ${toolCall.function.name} expired before the user answered it, so it was not run. Do not retry it silently; tell the user it needs their approval and ask them to confirm.`;
+      }
       return `User denied permission to execute ${toolCall.function.name}. Do not retry it; ask the user or continue without it.`;
     }
 
@@ -789,6 +796,10 @@ module.exports = function createChatDomain(deps) {
     return `The AI wants to run the tool "${toolName}" with these arguments:\n\n${pretty}\n\nDo you want to allow this?`;
   }
 
+  // Resolves to { allowed, reason }: "user" for a decision the user actually
+  // made, "timeout" when the prompt expired unanswered. The model is told which
+  // — reporting an expiry as "the user denied this" is a lie about something
+  // the user never saw.
   async function requestShellConfirmation({ emit, title, command, toolName }) {
     return await new Promise((resolve) => {
       const reqId = "ollama_req_" + Date.now() + "_" + randomUUID();
@@ -796,7 +807,7 @@ module.exports = function createChatDomain(deps) {
         () => {
           if (ollamaToolRequests.has(reqId)) {
             ollamaToolRequests.delete(reqId);
-            resolve(false);
+            resolve({ allowed: false, reason: "timeout" });
             appendSecurityEvent("shell_command_timeout_denied", { reqId });
           }
         },
@@ -1576,7 +1587,12 @@ module.exports = function createChatDomain(deps) {
             : false;
 
         clearTimeout(entry.timer);
-        entry.resolve(approved);
+        // The client flags a decision it made on the user's behalf when their
+        // prompt timed out, so the model is not told they refused.
+        entry.resolve({
+          allowed: approved,
+          reason: uiResponse.timedOut === true ? "timeout" : "user",
+        });
         ollamaToolRequests.delete(sessionId);
 
         send(200, { ok: true });

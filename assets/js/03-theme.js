@@ -2902,14 +2902,10 @@
         if (llamaCppModelsGroup) {
           llamaCppModelsGroup.style.display = m === "llamacpp" ? "" : "none";
         }
-        if (!isPiMode) {
-          piPermissionBtn.style.display = "none";
-        } else if (
-          activePiPermissionRequest &&
-          !piSettings.permissionUx.autoOpen
-        ) {
-          piPermissionBtn.style.display = "";
-        }
+        // A pending permission request belongs to whichever mode raised it, and
+        // every mode can raise one — the button follows the request, not the
+        // mode.
+        piPermissionBtn.style.display = activePiPermissionRequest ? "" : "none";
         if (!isOllamaMode && mcpOpen) {
           toggleMcp();
         }
@@ -2992,6 +2988,7 @@
           clearTimeout(activePiPermissionTimer);
           activePiPermissionTimer = null;
         }
+        stopPiPermissionCountdown();
         activePiPermissionRequest = null;
         activePiPermissionResolver = null;
         piPermissionBtn.style.display = "none";
@@ -3020,7 +3017,9 @@
         const editorEl = document.getElementById("piPermissionEditor");
         const optionsEl = document.getElementById("piPermissionOptions");
 
-        piPermissionBtn.style.display = "none";
+        // The button stays put while the request is pending — closing the
+        // modal must leave a way back to it, not strand the decision.
+        piPermissionBtn.style.display = "";
         titleEl.textContent = request.title || "Permission Request";
         msgEl.textContent = request.message || "";
         inputEl.style.display = "none";
@@ -3101,6 +3100,38 @@
         modal.style.display = "flex";
       }
 
+      // Counts the decision timeout down in the modal. An answer applied on the
+      // user's behalf has to be visibly coming, or it reads as the app refusing
+      // the tool for no reason.
+      function startPiPermissionCountdown(deadline) {
+        const el = document.getElementById("piPermissionCountdown");
+        if (!el) return;
+        const action = piSettings.permissionUx?.defaultAction || "deny";
+        const verb = action === "allow" ? "Allowing" : "Denying";
+        const tick = () => {
+          const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+          el.textContent = `No answer yet — ${verb.toLowerCase()} automatically in ${left}s.`;
+        };
+        tick();
+        el.style.display = "";
+        if (activePiPermissionCountdown) {
+          clearInterval(activePiPermissionCountdown);
+        }
+        activePiPermissionCountdown = setInterval(tick, 1000);
+      }
+
+      function stopPiPermissionCountdown() {
+        if (activePiPermissionCountdown) {
+          clearInterval(activePiPermissionCountdown);
+          activePiPermissionCountdown = null;
+        }
+        const el = document.getElementById("piPermissionCountdown");
+        if (el) {
+          el.style.display = "none";
+          el.textContent = "";
+        }
+      }
+
       function schedulePiPermissionDecisionTimeout() {
         const timeoutMs =
           Number(piSettings.permissionUx?.decisionTimeoutMs) > 0
@@ -3108,20 +3139,22 @@
             : 0;
         if (timeoutMs <= 0) return;
         if (activePiPermissionTimer) clearTimeout(activePiPermissionTimer);
+        startPiPermissionCountdown(Date.now() + timeoutMs);
         activePiPermissionTimer = setTimeout(() => {
           const defaultAction =
             piSettings.permissionUx?.defaultAction || "deny";
           const pendingRequest = activePiPermissionRequest;
           if (!pendingRequest) return;
+          // `timedOut` travels to the server so the model is told the prompt
+          // expired rather than that the user refused.
           if (pendingRequest.method === "confirm") {
-            if (defaultAction === "allow") {
-              resolvePiPermission({ confirmed: true });
-            } else {
-              resolvePiPermission({ confirmed: false });
-            }
+            resolvePiPermission({
+              confirmed: defaultAction === "allow",
+              timedOut: true,
+            });
             return;
           }
-          resolvePiPermission({ cancelled: true });
+          resolvePiPermission({ cancelled: true, timedOut: true });
         }, timeoutMs);
       }
 
@@ -3146,12 +3179,12 @@
             signal.addEventListener("abort", onAbort, { once: true });
           }
 
-          const shouldAutoOpen = piSettings.permissionUx?.autoOpen !== false;
-          if (shouldAutoOpen) {
-            renderAndOpenPiPermissionModal(request);
-          } else {
-            piPermissionBtn.style.display = mode === "pi" ? "" : "none";
-          }
+          // The modal always opens: a pending request that stays hidden runs
+          // its decision timer down and answers for the user. Any mode can ask
+          // for confirmation now, not just Pi, so the top-bar button rides
+          // along in every mode as the way back to a dismissed prompt.
+          piPermissionBtn.style.display = "";
+          renderAndOpenPiPermissionModal(request);
           schedulePiPermissionDecisionTimeout();
         });
       }

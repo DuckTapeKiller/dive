@@ -584,6 +584,8 @@
       let activePiPermissionRequest = null;
       let activePiPermissionResolver = null;
       let activePiPermissionTimer = null;
+      // Ticks the decision timeout down in the permission modal.
+      let activePiPermissionCountdown = null;
       let activeAppDialogResolver = null;
       let appDialogPreviousFocus = null;
       let piSettings = {
@@ -593,7 +595,6 @@
         timeoutMs: 300000,
         permissionPolicy: "normal",
         permissionUx: {
-          autoOpen: true,
           defaultAction: "deny",
           decisionTimeoutMs: 45000,
         },

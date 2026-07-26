@@ -1058,8 +1058,9 @@ function defaultPiSettings() {
     serverPort: PI_DEFAULT_SERVER_PORT,
     timeoutMs: PI_SESSION_TIMEOUT_MS,
     permissionPolicy: "normal",
+    // The permission modal always opens; only what happens when it goes
+    // unanswered is configurable.
     permissionUx: {
-      autoOpen: true,
       defaultAction: "deny",
       decisionTimeoutMs: 45 * 1000,
     },
@@ -1119,9 +1120,8 @@ function sanitizePiSettings(rawInput) {
     typeof raw.permissionUx === "object" &&
     !Array.isArray(raw.permissionUx)
   ) {
-    if (typeof raw.permissionUx.autoOpen === "boolean") {
-      next.permissionUx.autoOpen = raw.permissionUx.autoOpen;
-    }
+    // raw.permissionUx.autoOpen (pre-4.0.8) is deliberately dropped: a prompt
+    // that stays closed decides for the user when its timer runs out.
     if (
       raw.permissionUx.defaultAction === "allow" ||
       raw.permissionUx.defaultAction === "deny"
