@@ -683,6 +683,9 @@
                and the tool row, so the buttons sit inside the input rather than
                beside it. -->
           <div id="composer">
+            <!-- Messages typed while a response is streaming queue up here,
+                 one pill each, and send themselves as the run finishes. -->
+            <div id="queueStrip"></div>
             <!-- Attachment pills are rendered here dynamically, one per file. -->
             <div id="fileChip"></div>
             <textarea
@@ -1484,6 +1487,84 @@
             <div class="setting-help">
               Managed automatically when you LOAD a model. Only change this if
               you run your own external `llama-server`.
+            </div>
+            <label class="settings-subhead"
+              >ROUTER PRESET SYNC (ADVANCED)</label
+            >
+            <div class="setting-help">
+              For setups that run `llama-server` in router mode from a
+              LaunchAgent with `--models-preset`. Dive keeps those .ini files in
+              step with your models folder, so a download or delete does not
+              have to be hand-written afterwards. Leave this off if Dive starts
+              your llama.cpp servers itself — presets play no part there.
+            </div>
+            <div class="setting-row-inline">
+              <label style="font-size: calc(10px * var(--font-scale, 1))">
+                <input id="llamaCppPresetSyncEnabled" type="checkbox" />
+                SYNC ROUTER PRESET FILES
+              </label>
+            </div>
+            <label>CHAT PRESET FILE</label>
+            <input
+              id="llamaCppPresetChatPath"
+              type="text"
+              placeholder="/Users/you/models/llama-server-chat.ini"
+            />
+            <div class="setting-help">
+              Absolute path to the chat router's `--models-preset` file. Only
+              vision models get an entry — a router started with `--models-dir`
+              already finds plain chat models on its own, but it cannot pair a
+              multimodal projector.
+            </div>
+            <label>EMBEDDING PRESET FILE</label>
+            <input
+              id="llamaCppPresetEmbedPath"
+              type="text"
+              placeholder="/Users/you/models/llama-server-embed.ini"
+            />
+            <div class="setting-help">
+              Absolute path to the embedding router's `--models-preset` file.
+              Every embedding model needs an entry here, since an embed router
+              normally runs without `--models-dir`.
+            </div>
+            <label>EMBEDDING ROUTER LAUNCHAGENT LABEL</label>
+            <input
+              id="llamaCppPresetEmbedLabel"
+              type="text"
+              placeholder="com.user.llamacpp-embed-router"
+            />
+            <div class="setting-help">
+              Restarted with `launchctl kickstart` after its preset changes,
+              because llama-server reads the preset only at startup. Left empty,
+              nothing is restarted. The chat router is never restarted
+              automatically — that would drop a model mid-conversation. A
+              restart is also skipped while a library index job is running.
+            </div>
+            <div class="setting-row-inline">
+              <button
+                id="llamaCppPresetPreviewBtn"
+                type="button"
+                class="settings-action-btn"
+              >
+                PREVIEW CHANGES
+              </button>
+              <button
+                id="llamaCppPresetSyncBtn"
+                type="button"
+                class="settings-action-btn"
+              >
+                SYNC NOW
+              </button>
+            </div>
+            <pre id="llamaCppPresetOutput" class="setting-help"></pre>
+            <div class="setting-help">
+              Dive only ever rewrites the block it marks as its own. Comments,
+              `[*]` globals and hand-written sections outside that block are
+              left alone — including sections whose name it would otherwise
+              generate, so an embedding model keeps the alias your vector index
+              is keyed to. The first write leaves a `.dive-backup` copy beside
+              the file. Sections Dive did not write are reported as stale when
+              their model disappears, never deleted for you.
             </div>
           </div>
           <div id="piPaletteGroup" class="setting-group">

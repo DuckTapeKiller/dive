@@ -319,6 +319,9 @@
         if (typeof updateSendButtonState === "function") {
           updateSendButtonState();
         }
+        // Pi keeps generating on the channel after the prompt stream closes, so
+        // this is the point at which a queued message may finally go out.
+        if (typeof scheduleQueueDrain === "function") scheduleQueueDrain("pi");
       }
 
       function closePiEventChannel() {

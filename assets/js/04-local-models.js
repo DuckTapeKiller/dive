@@ -1243,8 +1243,71 @@
         if (evictInput) evictInput.checked = status.evictOnLoad !== false;
         const autoInput = document.getElementById("llamaCppAutostartInput");
         if (autoInput) autoInput.checked = status.autostart === true;
+        const sync = status.presetSync || {};
+        fillInput("llamaCppPresetChatPath", sync.chatPresetPath || "");
+        fillInput("llamaCppPresetEmbedPath", sync.embedPresetPath || "");
+        fillInput("llamaCppPresetEmbedLabel", sync.embedAgentLabel || "");
+        const presetEnabled = document.getElementById(
+          "llamaCppPresetSyncEnabled",
+        );
+        if (presetEnabled) presetEnabled.checked = sync.enabled === true;
         llamaCppManagerSchedulePoll(status);
         return status;
+      }
+
+      // Human-readable outcome of a preset sync. A dry run is shown as a plain
+      // diff so nothing is applied on the strength of a summary alone.
+      function renderPresetSyncResult(result, dryRun) {
+        const out = document.getElementById("llamaCppPresetOutput");
+        if (!out) return;
+        if (!result || result.enabled === false) {
+          out.textContent =
+            "Preset sync is off. Tick SYNC ROUTER PRESET FILES and set at least one file path.";
+          return;
+        }
+        if (result.error) {
+          out.textContent = `Sync failed: ${result.error}`;
+          return;
+        }
+        const lines = [];
+        for (const file of result.files || []) {
+          const label = `${file.kind.toUpperCase()} ${file.filePath}`;
+          if (file.error) {
+            lines.push(`${label}\n  error: ${file.error}`);
+            continue;
+          }
+          if (!file.changed) {
+            lines.push(`${label}\n  already up to date`);
+          } else if (dryRun) {
+            lines.push(`${label}\n  would change`);
+          } else {
+            lines.push(
+              `${label}\n  updated${file.backup ? ` (backup: ${file.backup})` : ""}`,
+            );
+          }
+          if (file.managed?.length) {
+            lines.push(`  dive-managed: ${file.managed.join(", ")}`);
+          }
+          for (const skip of file.skipped || []) {
+            lines.push(`  left alone: ${skip.file} — ${skip.reason}`);
+          }
+          for (const stale of file.stale || []) {
+            lines.push(
+              `  stale (yours to remove): [${stale.section}] -> ${stale.model}`,
+            );
+          }
+          if (dryRun && file.changed) {
+            lines.push("", "--- new file contents ---", file.after);
+          }
+        }
+        if (result.restart) {
+          lines.push(
+            result.restart.attempted
+              ? `embed router restart: ${result.restart.ok ? "ok" : `failed — ${result.restart.error}`}`
+              : `embed router not restarted: ${result.restart.reason}`,
+          );
+        }
+        out.textContent = lines.join("\n") || "Nothing to do.";
       }
 
       function renderLlamaCppHfResults(results) {
@@ -1437,6 +1500,52 @@
               "Save llama.cpp extra arguments",
             ),
           );
+        }
+        const savePresetSync = (patch, label) =>
+          saveManagerConfig({ presetSync: patch }, label);
+        const presetEnabled = document.getElementById(
+          "llamaCppPresetSyncEnabled",
+        );
+        if (presetEnabled) {
+          presetEnabled.addEventListener("change", () =>
+            savePresetSync(
+              { enabled: presetEnabled.checked },
+              "Save preset sync setting",
+            ),
+          );
+        }
+        for (const [id, key] of [
+          ["llamaCppPresetChatPath", "chatPresetPath"],
+          ["llamaCppPresetEmbedPath", "embedPresetPath"],
+          ["llamaCppPresetEmbedLabel", "embedAgentLabel"],
+        ]) {
+          const input = document.getElementById(id);
+          if (!input) continue;
+          input.addEventListener("change", () =>
+            savePresetSync({ [key]: input.value.trim() }, "Save preset sync"),
+          );
+        }
+        const runPresetSync = async (dryRun) => {
+          const out = document.getElementById("llamaCppPresetOutput");
+          if (out) out.textContent = dryRun ? "Previewing…" : "Syncing…";
+          try {
+            const result = await postJson(
+              "/api/llamacpp/manager/preset/sync",
+              { dryRun },
+              dryRun ? "Preview preset sync" : "Sync router presets",
+            );
+            renderPresetSyncResult(result, dryRun);
+          } catch (e) {
+            if (out) out.textContent = `Sync failed: ${e.message}`;
+          }
+        };
+        const previewBtn = document.getElementById("llamaCppPresetPreviewBtn");
+        if (previewBtn) {
+          previewBtn.addEventListener("click", () => runPresetSync(true));
+        }
+        const syncBtn = document.getElementById("llamaCppPresetSyncBtn");
+        if (syncBtn) {
+          syncBtn.addEventListener("click", () => runPresetSync(false));
         }
         const searchBtn = document.getElementById("llamaCppHfSearchBtn");
         const queryInput = document.getElementById("llamaCppHfQuery");

@@ -136,6 +136,10 @@
           lastExchangePersisted: true,
           activeAbortController: null,
           activeRunId: null,
+          // Messages typed while this mode was generating, sent one at a time
+          // as each run finishes. Per mode, so switching modes mid-stream
+          // leaves the queue with the conversation it was typed into.
+          queue: [],
           draftAssistant: null,
           streamingAssistantDiv: null,
           thinkingController: null,

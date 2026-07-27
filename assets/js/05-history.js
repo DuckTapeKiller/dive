@@ -115,6 +115,8 @@
           renderSessionTranscript(session);
         }
         if (typeof updateTokenCounter === "function") updateTokenCounter();
+        // The queue strip only ever shows the conversation now on screen.
+        if (typeof renderMessageQueue === "function") renderMessageQueue();
         // Never send switch_session into a conversation whose Pi process is
         // mid-generation: reloading the session file resets the agent and
         // cancels the in-flight turn. The live process already has its

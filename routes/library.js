@@ -653,5 +653,11 @@ module.exports = function createLibraryDomain(deps) {
     return false;
   }
 
-  return { handleRequest, resumePersistedLibraryIndexJob };
+  return {
+    handleRequest,
+    resumePersistedLibraryIndexJob,
+    // Read by the llama.cpp preset sync, which must not restart the embedding
+    // router while an index run is streaming through it.
+    isIndexJobRunning: () => !!activeLibraryIndexJob,
+  };
 };

@@ -495,6 +495,21 @@
         if (currentKnown) syncEmbeddingBaseUrlToModel(currentModel);
       }
 
+      // llama.cpp runs embedding models in their own llama-server on the chat
+      // port + 1 (see slotPort in routes/llamacpp.js), so an embedding model
+      // must be addressed there, not on the chat port.
+      function llamaCppEmbeddingBaseUrl(chatBaseUrl) {
+        try {
+          const url = new URL(chatBaseUrl);
+          const chatPort = Number(url.port);
+          if (!Number.isInteger(chatPort) || chatPort <= 0) return chatBaseUrl;
+          url.port = String(chatPort + 1);
+          return url.origin;
+        } catch {
+          return chatBaseUrl;
+        }
+      }
+
       // Embedding requests must go to the server that actually hosts the
       // selected model: an LM Studio model has to hit LM Studio's port (1234),
       // not Ollama's 11434 — otherwise indexing fails with "model not found".
@@ -510,10 +525,12 @@
         ) {
           return stripVersion(localModelConfig.lmstudio.baseUrl);
         }
-        if (
-          (localEmbeddingModelsCache.llamacpp || []).includes(modelName) ||
-          (localModelsCache.llamacpp || []).includes(modelName)
-        ) {
+        if ((localEmbeddingModelsCache.llamacpp || []).includes(modelName)) {
+          return llamaCppEmbeddingBaseUrl(
+            stripVersion(localModelConfig.llamacpp.baseUrl),
+          );
+        }
+        if ((localModelsCache.llamacpp || []).includes(modelName)) {
           return stripVersion(localModelConfig.llamacpp.baseUrl);
         }
         if (availableOllamaModels.includes(modelName)) {
@@ -522,11 +539,30 @@
         return "";
       }
 
-      function syncEmbeddingBaseUrlToModel(modelName) {
+      // The URL a saved config falls back to when the user never set one
+      // (normalizeDatabaseConfig fills it in), i.e. "not chosen by the user".
+      const DEFAULT_EMBEDDING_BASE_URL = "http://127.0.0.1:11434";
+
+      // Auto-routing may only rescue that unset default — a URL the user
+      // actually typed (llama.cpp's embedding port, a remote host…) is a
+      // deliberate choice and must survive every re-render, or the next save
+      // would write the overwritten value back to disk. Switching model in the
+      // dropdown is explicit, so that path passes force.
+      function resolveEmbeddingBaseUrl(modelName, savedUrl, { force } = {}) {
+        const saved = String(savedUrl || "").trim();
+        const routed = embeddingBaseUrlForModel(modelName);
+        if (!routed) return saved;
+        if (force || !saved || saved === DEFAULT_EMBEDDING_BASE_URL) {
+          return routed;
+        }
+        return saved;
+      }
+
+      function syncEmbeddingBaseUrlToModel(modelName, { force = false } = {}) {
         const input = document.getElementById("databaseEmbeddingBaseUrlInput");
         if (!input) return;
-        const routed = embeddingBaseUrlForModel(modelName);
-        if (routed && input.value.trim() !== routed) input.value = routed;
+        const next = resolveEmbeddingBaseUrl(modelName, input.value, { force });
+        if (next && input.value.trim() !== next) input.value = next;
       }
 
       function renderDatabaseSources(sources) {
@@ -678,11 +714,13 @@
         }
         renderEmbeddingModelSelect(databaseConfig.embedding.model);
         if (baseUrlInput) {
-          // Prefer the URL of the server that reports the saved model; a stale
-          // saved URL (e.g. Ollama's) would misroute LM Studio embeddings.
-          baseUrlInput.value =
-            embeddingBaseUrlForModel(databaseConfig.embedding.model) ||
-            databaseConfig.embedding.ollamaBaseUrl;
+          // Show what was saved. Only an untouched default gets replaced by the
+          // URL of the server that reports the saved model, so a stale default
+          // (e.g. Ollama's) can't misroute LM Studio embeddings.
+          baseUrlInput.value = resolveEmbeddingBaseUrl(
+            databaseConfig.embedding.model,
+            databaseConfig.embedding.ollamaBaseUrl,
+          );
         }
         if (batchInput) {
           batchInput.value = String(databaseConfig.embedding.batchSize);
@@ -2804,6 +2842,11 @@
         // not fire the input event, so resize the textarea to match.
         input.value = saved.draft || "";
         if (typeof autoResizeInput === "function") autoResizeInput();
+        // Must come after currentConvId is restored above: the strip only
+        // shows the queue belonging to the conversation now on screen, and it
+        // sends now if this mode is no longer busy.
+        if (typeof renderMessageQueue === "function") renderMessageQueue();
+        if (typeof scheduleQueueDrain === "function") scheduleQueueDrain(m);
         lastUserMessage = saved.lastUserMessage || null;
         lastSentMessage = saved.lastSentMessage || null;
         lastExchangePersisted =
@@ -2972,6 +3015,9 @@
         lastSentMessage = null;
         lastExchangePersisted = true;
         clearPendingFiles();
+        // clearModeSession above replaced the session, queue included — this
+        // just takes the now-empty strip off screen.
+        if (typeof renderMessageQueue === "function") renderMessageQueue();
         ensurePiEventChannel();
         if (typeof updateDownloadButtonState === "function") {
           updateDownloadButtonState();

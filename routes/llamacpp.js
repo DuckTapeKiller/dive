@@ -21,6 +21,7 @@ const os = require("os");
 const path = require("path");
 const https = require("https");
 const { spawn } = require("child_process");
+const preset = require("./llamacpp-preset");
 
 module.exports = function createLlamaCppDomain(deps) {
   const {
@@ -29,6 +30,9 @@ module.exports = function createLlamaCppDomain(deps) {
     buildExecutablePath,
     loadLocalModelSettings,
     saveLocalModelSettings,
+    // Preset sync restarts the embedding router; it must not do that while an
+    // index run is streaming through it. Absent, it assumes idle.
+    isLibraryIndexRunning = () => false,
   } = deps;
 
   const CONFIG_FILE = path.join(DATA_DIR, "llamacpp.json");
@@ -66,6 +70,17 @@ module.exports = function createLlamaCppDomain(deps) {
       lastModel: "",
       lastEmbeddingModel: "",
       models: {},
+      // Router preset sync. Off, and with no paths guessed: a preset file is
+      // only ever touched when its path was typed in here, so setups that run
+      // Dive's own managed servers (the common case) never see this at all.
+      presetSync: {
+        enabled: false,
+        chatPresetPath: "",
+        embedPresetPath: "",
+        // launchctl label of the EMBED router only. The chat router is never
+        // restarted automatically — that would drop a model mid-conversation.
+        embedAgentLabel: "",
+      },
     };
   }
 
@@ -128,8 +143,33 @@ module.exports = function createLlamaCppDomain(deps) {
           out.models[file] = sanitizeModelEntry(entry, file);
         }
       }
+      const sync = raw.presetSync;
+      if (sync && typeof sync === "object") {
+        out.presetSync = {
+          enabled: sync.enabled === true,
+          chatPresetPath: sanitizePresetPath(sync.chatPresetPath),
+          embedPresetPath: sanitizePresetPath(sync.embedPresetPath),
+          embedAgentLabel: sanitizeAgentLabel(sync.embedAgentLabel),
+        };
+      }
     }
     return out;
+  }
+
+  // Only an absolute path to a real .ini is accepted, so a stray relative path
+  // can never send a write somewhere unexpected.
+  function sanitizePresetPath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (!path.isAbsolute(raw) || !/\.ini$/i.test(raw)) return "";
+    return path.normalize(raw);
+  }
+
+  // A launchctl label reaches a shell-free spawn, but keep it to the character
+  // set launchd itself allows so nothing surprising is ever passed through.
+  function sanitizeAgentLabel(value) {
+    const raw = String(value || "").trim();
+    return /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : "";
   }
 
   function loadConfig() {
@@ -656,6 +696,127 @@ module.exports = function createLlamaCppDomain(deps) {
     return models.sort((a, b) => a.file.localeCompare(b.file));
   }
 
+  // ---- Router preset sync ----
+
+  // Restart the embedding router so a rewritten preset takes effect.
+  // `--models-preset` is read once at startup, so the file alone changes
+  // nothing. Only the embed agent is ever restarted: it idles asleep between
+  // library searches, whereas restarting the chat router would drop a loaded
+  // model in the middle of a conversation.
+  function kickstartAgent(label) {
+    return new Promise((resolve) => {
+      const target = `gui/${process.getuid()}/${label}`;
+      // No shell: the label is passed as its own argv entry.
+      const child = spawn("launchctl", ["kickstart", "-k", target], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk).slice(0, 500);
+      });
+      child.on("error", (e) => resolve({ ok: false, error: e.message }));
+      child.on("close", (code) =>
+        resolve(
+          code === 0
+            ? { ok: true }
+            : { ok: false, error: stderr.trim() || `launchctl exited ${code}` },
+        ),
+      );
+    });
+  }
+
+  // Regenerate the preset files from the models folder. `exclude` holds files
+  // that are about to be deleted, so their sections come out BEFORE the .gguf
+  // does — a preset that points at a missing file is the one state worth
+  // avoiding. Never throws: a broken preset path must not fail a download.
+  async function syncRouterPresets(options = {}) {
+    const { exclude = [], dryRun = false, restart = true } = options;
+    const cfg = loadConfig();
+    const sync = cfg.presetSync || {};
+    if (!sync.enabled) return { enabled: false, dryRun, files: [] };
+    const excludeSet = new Set(
+      exclude.map((f) => path.basename(String(f || ""))).filter(Boolean),
+    );
+    let models;
+    try {
+      models = scanModels(cfg);
+    } catch (e) {
+      return { enabled: true, dryRun, files: [], error: e.message };
+    }
+    const targets = [
+      { kind: "chat", filePath: sync.chatPresetPath },
+      { kind: "embed", filePath: sync.embedPresetPath },
+    ].filter((t) => t.filePath);
+    const files = [];
+    let embedChanged = false;
+    for (const target of targets) {
+      try {
+        const plan = preset.planPreset({
+          filePath: target.filePath,
+          kind: target.kind,
+          models,
+          modelsDir: cfg.modelsDir,
+          exclude: excludeSet,
+        });
+        const entry = {
+          kind: plan.kind,
+          filePath: plan.filePath,
+          existed: plan.existed,
+          changed: plan.changed,
+          managed: plan.managed,
+          skipped: plan.skipped,
+          stale: plan.stale,
+          written: false,
+          backup: "",
+        };
+        // A dry run carries the text so the caller can show a real diff.
+        if (dryRun) {
+          entry.before = plan.before;
+          entry.after = plan.after;
+        } else if (plan.changed) {
+          const result = preset.commitPlan(plan);
+          entry.written = result.written;
+          entry.backup = result.backup;
+          if (plan.kind === "embed") embedChanged = true;
+        }
+        files.push(entry);
+      } catch (e) {
+        files.push({
+          kind: target.kind,
+          filePath: target.filePath,
+          error: e.message || String(e),
+        });
+      }
+    }
+    const out = { enabled: true, dryRun, files, restart: null };
+    if (!dryRun && restart && embedChanged) {
+      out.restart = await restartEmbedRouter(sync.embedAgentLabel);
+    }
+    return out;
+  }
+
+  async function restartEmbedRouter(label) {
+    if (!label) {
+      return { attempted: false, reason: "no embed agent label configured" };
+    }
+    // An index run streams through the embedding server; restarting mid-run
+    // would fail the job. The preset is already on disk, so the restart can
+    // simply wait for the next sync or a manual one.
+    if (isLibraryIndexRunning()) {
+      return { attempted: false, reason: "a library index job is running" };
+    }
+    const result = await kickstartAgent(label);
+    return { attempted: true, ...result };
+  }
+
+  // Fire-and-forget sync for the paths where a failure must not surface as a
+  // download or delete failure.
+  function syncRouterPresetsSoon(options) {
+    syncRouterPresets(options).catch((e) =>
+      console.warn("[llamacpp] preset sync failed:", e.message || e),
+    );
+  }
+
   // ---- Managed llama-server processes (one per slot) ----
 
   function makeSlot() {
@@ -1090,6 +1251,9 @@ module.exports = function createLlamaCppDomain(deps) {
       }
       download.active = false;
       download.done = true;
+      // A newly downloaded model is useless to a router until its preset knows
+      // about it, so regenerate now rather than waiting for the next restart.
+      syncRouterPresetsSoon();
     };
     run().catch((e) => {
       const wasCancelled = !download.active && download.error === "Cancelled.";
@@ -1229,7 +1393,25 @@ module.exports = function createLlamaCppDomain(deps) {
         cacheTypes: CACHE_TYPES,
         models: scanModels(cfg),
         download: downloadStatus(),
+        presetSync: cfg.presetSync,
       });
+      return true;
+    }
+
+    // Regenerate the preset files on demand. `dryRun` returns the before/after
+    // text without writing anything or touching a router, which is how the
+    // settings panel previews a change before it is ever applied.
+    if (req.method === "POST" && route === "preset/sync") {
+      try {
+        const body = await parseJsonBody(req).catch(() => ({}));
+        const result = await syncRouterPresets({
+          dryRun: body?.dryRun === true,
+          restart: body?.restart !== false,
+        });
+        send(200, result);
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
       return true;
     }
 
@@ -1246,6 +1428,9 @@ module.exports = function createLlamaCppDomain(deps) {
           cfg.evictOnLoad = body.evictOnLoad;
         if (typeof body?.autostart === "boolean")
           cfg.autostart = body.autostart;
+        if (body?.presetSync && typeof body.presetSync === "object") {
+          cfg.presetSync = { ...cfg.presetSync, ...body.presetSync };
+        }
         send(200, { ok: true, config: saveConfig(cfg) });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
@@ -1281,6 +1466,9 @@ module.exports = function createLlamaCppDomain(deps) {
         }
         cfg.models[file] = sanitizeModelEntry(merged, file);
         const saved = saveConfig(cfg);
+        // Toggling EMBED moves a model between the two presets, and ctx / GPU
+        // layers are written into its section, so both need regenerating.
+        syncRouterPresetsSoon();
         send(200, { ok: true, settings: saved.models[file] });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
@@ -1301,6 +1489,12 @@ module.exports = function createLlamaCppDomain(deps) {
         for (const slotId of SLOT_IDS) {
           if (slots[slotId].model === file) stopSlot(slotId);
         }
+        // Drop the model from the presets and restart the embed router BEFORE
+        // the file goes, so no router is ever pointed at a path that has just
+        // stopped existing.
+        await syncRouterPresets({ exclude: [file] }).catch((e) =>
+          console.warn("[llamacpp] preset sync failed:", e.message || e),
+        );
         fs.rmSync(target, { force: true });
         // Split model: removing the listed first part removes its siblings
         // too, otherwise gigabytes of unloadable parts linger on disk.

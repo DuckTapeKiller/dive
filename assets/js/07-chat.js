@@ -719,6 +719,8 @@
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
+          // Anything typed while this run was streaming goes out now.
+          scheduleQueueDrain(runMode);
           // The server saves the conversation as the stream finishes; give it
           // a moment, then refresh the side panel's recent list.
           setTimeout(() => refreshSidePanelRecent(), 500);
@@ -1148,6 +1150,8 @@
           resetInputSize();
           updateSendButtonState();
           if (typeof updateTokenCounter === "function") updateTokenCounter();
+          // Anything typed while this run was streaming goes out now.
+          scheduleQueueDrain(runMode);
           // The server saves the conversation as the stream finishes; give it
           // a moment, then refresh the side panel's recent list.
           setTimeout(() => refreshSidePanelRecent(), 500);
@@ -1254,25 +1258,178 @@
         return false;
       }
 
+      // While generating, the one composer button means Stop — unless there is
+      // something typed, in which case it means "queue this", because text in
+      // the box is only ever there to be sent. Clearing the box turns it back
+      // into Stop.
+      function composerActionIsQueue() {
+        return isGenerationActive() && input.value.trim().length > 0;
+      }
+
       function updateSendButtonState() {
         const sendBtn = document.getElementById("send");
-        if (isGenerationActive()) {
+        if (isGenerationActive() && !composerActionIsQueue()) {
           sendBtn.innerHTML = STOP_ICON;
           sendBtn.setAttribute("aria-label", "Stop response");
           sendBtn.setAttribute("title", "Stop response");
           sendBtn.classList.add("stopping");
         } else {
+          const queueing = composerActionIsQueue();
           sendBtn.innerHTML = SEND_ICON;
-          sendBtn.setAttribute("aria-label", "Send message");
-          sendBtn.setAttribute("title", "Send message");
+          sendBtn.setAttribute(
+            "aria-label",
+            queueing ? "Queue message" : "Send message",
+          );
+          sendBtn.setAttribute(
+            "title",
+            queueing
+              ? "Queue this message — it sends when the current response finishes"
+              : "Send message",
+          );
           sendBtn.classList.remove("stopping");
         }
+      }
+
+      // ---- Queued messages ----
+
+      // Only the current conversation's queue is ever shown or sent: switching
+      // conversation must not fire a message into the wrong transcript.
+      function queuedForCurrentConv(modeName = mode) {
+        const session = getActiveModeSession(modeName);
+        if (!Array.isArray(session.queue)) session.queue = [];
+        return session.queue.filter((q) => q.convId === currentConvId);
+      }
+
+      function renderMessageQueue() {
+        const strip = document.getElementById("queueStrip");
+        if (!strip) return;
+        strip.textContent = "";
+        const queued = queuedForCurrentConv();
+        queued.forEach((item, idx) => {
+          const pill = document.createElement("div");
+          pill.className = "queue-pill";
+          const position = document.createElement("span");
+          position.className = "queue-pill-index";
+          position.textContent = `QUEUED ${idx + 1}`;
+          const label = document.createElement("span");
+          label.className = "queue-pill-label";
+          label.textContent = item.files.length
+            ? `${item.text} (${item.files.length} attached)`
+            : item.text;
+          label.title = item.text;
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "file-pill-x";
+          remove.setAttribute("aria-label", "Remove queued message");
+          remove.title = "Remove this queued message";
+          remove.textContent = "×";
+          remove.addEventListener("click", () => removeQueuedMessage(item));
+          pill.append(position, label, remove);
+          strip.appendChild(pill);
+        });
+        strip.classList.toggle("show", queued.length > 0);
+      }
+
+      function removeQueuedMessage(item) {
+        const session = getActiveModeSession();
+        session.queue = (session.queue || []).filter((q) => q !== item);
+        renderMessageQueue();
+      }
+
+      // Park the composer's contents until the current run finishes. The
+      // attachments go with it, so the composer is free for the next message.
+      function enqueueMessage() {
+        const text = input.value.trim();
+        if (!text) return;
+        const session = getActiveModeSession();
+        if (!Array.isArray(session.queue)) session.queue = [];
+        if (!currentConvId) currentConvId = "conv_" + Date.now();
+        // Bind the session to this conversation if nothing has yet, so leaving
+        // the mode and coming back still finds the queue. An active run has
+        // already bound it and must keep its own binding.
+        if (!session.convId) session.convId = currentConvId;
+        session.queue.push({
+          text,
+          files: pendingFiles.slice(),
+          convId: currentConvId,
+        });
+        input.value = "";
+        resetInputSize();
+        clearPendingFiles();
+        renderMessageQueue();
+        updateSendButtonState();
+      }
+
+      // Explicitly stopping means stopping: anything still queued would
+      // otherwise start generating again a moment later.
+      function clearMessageQueue(modeName = mode) {
+        const session = getActiveModeSession(modeName);
+        const had = (session.queue || []).length > 0;
+        session.queue = [];
+        if (modeName === mode) renderMessageQueue();
+        return had;
+      }
+
+      // One drain at a time. Without this, the drain scheduled by a finishing
+      // run and the one scheduled when a send settles could both fire before
+      // the new run has set its abort controller, sending two messages at once.
+      let queueDrainInFlight = false;
+
+      // Send the next queued message once the run that was blocking it ends.
+      // Deferred a tick so the finishing run's `finally` unwinds completely
+      // before a new turn starts from it.
+      function scheduleQueueDrain(modeName) {
+        setTimeout(() => {
+          if (queueDrainInFlight) return;
+          if (modeName !== mode) return; // it waits for that mode to come back
+          const session = getActiveModeSession(modeName);
+          if (!(session.queue || []).length) return;
+          if (isGenerationActive()) return;
+          // Entries typed into a conversation the user has since left are
+          // dropped rather than replayed into the current one.
+          session.queue = session.queue.filter(
+            (q) => q.convId === currentConvId,
+          );
+          const next = session.queue.shift();
+          renderMessageQueue();
+          if (!next) return;
+          // A message typed since the queue was filled wins the composer; the
+          // queued one goes back to the front and waits its turn.
+          if (input.value.trim()) {
+            session.queue.unshift(next);
+            renderMessageQueue();
+            return;
+          }
+          pendingFiles = next.files;
+          pendingFilesByMode[mode] = pendingFiles;
+          renderPendingFileChips();
+          input.value = next.text;
+          queueDrainInFlight = true;
+          // sendMessage can return without ever starting a run — a Pi slash
+          // command it handles locally, for one — and then no `finally` fires
+          // to drain the rest. Re-drain whenever the send settles without
+          // leaving something generating, so the queue can never stall.
+          Promise.resolve(sendMessage()).finally(() => {
+            queueDrainInFlight = false;
+            if (!isGenerationActive()) scheduleQueueDrain(modeName);
+          });
+        }, 0);
       }
 
       // Stop whatever is generating: a live stream (abort its controller) or a
       // Pi background continuation (send a real abort RPC + close the channel
       // run). Returns true if it stopped something.
+      // Stopping discards the queue — but ONLY when something was actually
+      // stopped. This is also the ordinary idle send path (submitComposer
+      // calls it before sendMessage), and a queue left waiting for the
+      // composer to clear must survive that.
       function stopActiveGeneration() {
+        const stopped = abortActiveGeneration();
+        if (stopped) clearMessageQueue();
+        return stopped;
+      }
+
+      function abortActiveGeneration() {
         const controller = getActiveAbortController();
         if (controller) {
           if (activePiPermissionRequest) {
@@ -1305,11 +1462,19 @@
         return false;
       }
 
-      document.getElementById("send").addEventListener("click", () => {
+      // One entry point for the button and Enter, so both agree on what the
+      // composer's contents mean while a response is streaming.
+      function submitComposer() {
+        if (composerActionIsQueue()) {
+          enqueueMessage();
+          return;
+        }
         if (!stopActiveGeneration()) {
           sendMessage();
         }
-      });
+      }
+
+      document.getElementById("send").addEventListener("click", submitComposer);
       piPermissionBtn.addEventListener("click", () => {
         if (!activePiPermissionRequest) return;
         renderAndOpenPiPermissionModal(activePiPermissionRequest);
@@ -1334,9 +1499,7 @@
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
-          if (!stopActiveGeneration()) {
-            sendMessage();
-          }
+          submitComposer();
         }
       });
       function autoResizeInput() {
@@ -1371,6 +1534,9 @@
 
       input.addEventListener("input", () => {
         autoResizeInput();
+        // Typing during a run flips the button from Stop to Queue (and back
+        // when the box is emptied again).
+        if (isGenerationActive()) updateSendButtonState();
       });
 
       // PANEL Toggles
@@ -2308,7 +2474,9 @@
                 e.target.value === "__custom__" ? "" : "none";
               if (e.target.value === "__custom__") customInput.focus();
             }
-            syncEmbeddingBaseUrlToModel(e.target.value);
+            // Picking a different model is explicit: the URL follows it even
+            // if one was set by hand for the previous model.
+            syncEmbeddingBaseUrlToModel(e.target.value, { force: true });
           }
         });
 

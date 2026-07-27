@@ -1,0 +1,367 @@
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const preset = require("../routes/llamacpp-preset.js");
+
+// Each case gets a throwaway models folder, because the generator stats every
+// model and projector path before writing a section for it.
+function makeDir(files = []) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dive-preset-"));
+  for (const name of files) fs.writeFileSync(path.join(dir, name), "x");
+  return dir;
+}
+
+function model(file, extra = {}) {
+  return {
+    file,
+    ctx: 4096,
+    gpuLayers: 99,
+    maxCtx: 0,
+    embedding: false,
+    isProjector: false,
+    ...extra,
+  };
+}
+
+function plan(dir, kind, models, text, exclude = new Set()) {
+  const filePath = path.join(dir, `preset-${kind}.ini`);
+  if (text !== undefined) fs.writeFileSync(filePath, text);
+  return preset.planPreset({
+    filePath,
+    kind,
+    models,
+    modelsDir: dir,
+    exclude,
+  });
+}
+
+test("embedding models each get a section in the managed block", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const result = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+  ]);
+  assert.ok(result.changed);
+  assert.deepStrictEqual(result.managed, ["bge-m3"]);
+  assert.match(result.after, /\[bge-m3\]/);
+  assert.match(result.after, /embeddings = true/);
+  assert.match(result.after, new RegExp(`model = ${dir}/bge-m3\\.gguf`));
+});
+
+test("a plain chat model gets no section — --models-dir already finds it", () => {
+  const dir = makeDir(["qwen3-8b.gguf"]);
+  const result = plan(dir, "chat", [model("qwen3-8b.gguf")]);
+  assert.deepStrictEqual(result.managed, []);
+});
+
+test("a vision model gets a section pairing its projector", () => {
+  const dir = makeDir(["vlm.gguf", "mmproj-vlm.gguf"]);
+  const result = plan(dir, "chat", [
+    model("vlm.gguf", { projector: "mmproj-vlm.gguf" }),
+    model("mmproj-vlm.gguf", { isProjector: true, arch: "clip" }),
+  ]);
+  assert.deepStrictEqual(result.managed, ["vlm"]);
+  assert.match(result.after, new RegExp(`mmproj = ${dir}/mmproj-vlm\\.gguf`));
+});
+
+test("a projector that is not on disk blocks the section entirely", () => {
+  const dir = makeDir(["vlm.gguf"]); // projector deliberately absent
+  const result = plan(dir, "chat", [
+    model("vlm.gguf", { projector: "mmproj-vlm.gguf" }),
+  ]);
+  assert.deepStrictEqual(result.managed, []);
+  assert.strictEqual(result.skipped[0].reason, "model or projector missing");
+});
+
+test("hand-written content outside the block survives verbatim", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const original = [
+    "; my careful notes",
+    "; WARNING: do not break this",
+    "",
+    "[*]",
+    "ctx-size = 0",
+    "sleep-idle-seconds = 3600",
+    "",
+    "[hand-written]",
+    "model = /elsewhere/other.gguf",
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("bge-m3.gguf", { embedding: true })],
+    original,
+  );
+  assert.match(result.after, /; my careful notes/);
+  assert.match(result.after, /; WARNING: do not break this/);
+  assert.match(
+    result.after,
+    /\[hand-written\]\nmodel = \/elsewhere\/other\.gguf/,
+  );
+  assert.match(result.after, /\[bge-m3\]/);
+});
+
+test("an existing section name is never re-created", () => {
+  const dir = makeDir(["nomic-embed.gguf"]);
+  const original = [
+    "[nomic-embed]",
+    `model = ${path.join(dir, "nomic-embed.gguf")}`,
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("nomic-embed.gguf", { embedding: true })],
+    original,
+  );
+  assert.deepStrictEqual(result.managed, []);
+  assert.strictEqual(result.skipped[0].reason, "section already in the file");
+});
+
+test("a model already referenced under a different alias is left alone", () => {
+  // The real hazard: generating [nomic-embed-text-v2-moe.f16] beside a
+  // hand-written [text-embedding-...] pointing at the same file would make the
+  // router advertise one file as two models, and orphan the vector index.
+  const dir = makeDir(["nomic-embed-text-v2-moe.f16.gguf"]);
+  const original = [
+    "[text-embedding-nomic-embed-text-v2-moe]",
+    `model = ${path.join(dir, "nomic-embed-text-v2-moe.f16.gguf")}`,
+    "embeddings = true",
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("nomic-embed-text-v2-moe.f16.gguf", { embedding: true })],
+    original,
+  );
+  assert.deepStrictEqual(result.managed, []);
+  assert.strictEqual(result.skipped[0].reason, "file already has a section");
+  assert.match(result.after, /\[text-embedding-nomic-embed-text-v2-moe\]/);
+});
+
+test("a section Dive wrote disappears once its model is gone", () => {
+  const dir = makeDir(["bge-m3.gguf", "e5-small.gguf"]);
+  const first = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+    model("e5-small.gguf", { embedding: true }),
+  ]);
+  preset.commitPlan(first);
+  fs.rmSync(path.join(dir, "e5-small.gguf"));
+  const second = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+  ]);
+  assert.match(second.after, /\[bge-m3\]/);
+  assert.doesNotMatch(second.after, /\[e5-small\]/);
+});
+
+test("exclude drops a model before its file is deleted", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const first = plan(dir, "embed", [model("bge-m3.gguf", { embedding: true })]);
+  preset.commitPlan(first);
+  // Same models list, but the file is about to go: the section must come out
+  // first so the router is never pointed at a path that stops existing.
+  const second = plan(
+    dir,
+    "embed",
+    [model("bge-m3.gguf", { embedding: true })],
+    undefined,
+    new Set(["bge-m3.gguf"]),
+  );
+  assert.doesNotMatch(second.after, /\[bge-m3\]/);
+});
+
+test("`[*]` globals are copied into generated sections", () => {
+  // A named section may replace the globals rather than merge with them, so
+  // omitting them would silently change how the model runs.
+  const dir = makeDir(["vlm.gguf", "mmproj-vlm.gguf"]);
+  const original = [
+    "[*]",
+    "ctx-size = 0",
+    "n-gpu-layers = 99",
+    "jinja = true",
+    "sleep-idle-seconds = 3600",
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "chat",
+    [
+      model("vlm.gguf", { projector: "mmproj-vlm.gguf" }),
+      model("mmproj-vlm.gguf", { isProjector: true }),
+    ],
+    original,
+  );
+  for (const line of [
+    "ctx-size = 0",
+    "n-gpu-layers = 99",
+    "jinja = true",
+    "sleep-idle-seconds = 3600",
+  ]) {
+    assert.ok(result.after.includes(line), `missing ${line}`);
+  }
+});
+
+test("house style is learned when a file has no [*] section", () => {
+  const dir = makeDir(["bge-m3.gguf", "other.gguf"]);
+  const original = [
+    "[other]",
+    `model = ${path.join(dir, "other.gguf")}`,
+    "sleep-idle-seconds = 3600",
+    "embeddings = true",
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("bge-m3.gguf", { embedding: true })],
+    original,
+  );
+  assert.match(result.after, /\[bge-m3\][\s\S]*sleep-idle-seconds = 3600/);
+});
+
+test("jinja is never copied onto an embedding section", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const original = ["[*]", "jinja = true", "sleep-idle-seconds = 60", ""].join(
+    "\n",
+  );
+  const result = plan(
+    dir,
+    "embed",
+    [model("bge-m3.gguf", { embedding: true })],
+    original,
+  );
+  // Assert on the generated block only: the user's own `[*] jinja = true`
+  // stays in the file untouched, which is the whole point of the block.
+  const block = preset.splitManagedBlock(result.after).managed.join("\n");
+  assert.doesNotMatch(block, /jinja/);
+  assert.match(block, /sleep-idle-seconds = 60/);
+  assert.match(result.after, /\[\*\]\njinja = true/);
+});
+
+test("an embedding model is capped at its trained context", () => {
+  const dir = makeDir(["nomic.gguf"]);
+  const result = plan(dir, "embed", [
+    model("nomic.gguf", { embedding: true, ctx: 4096, maxCtx: 512 }),
+  ]);
+  assert.match(result.after, /ctx-size = 512/);
+});
+
+test("a second sync with no changes rewrites nothing", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const first = plan(dir, "embed", [model("bge-m3.gguf", { embedding: true })]);
+  preset.commitPlan(first);
+  const second = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+  ]);
+  assert.strictEqual(second.changed, false);
+  assert.strictEqual(preset.commitPlan(second).written, false);
+});
+
+test("the first write leaves a backup, later writes do not overwrite it", () => {
+  const dir = makeDir(["bge-m3.gguf", "e5-small.gguf"]);
+  const filePath = path.join(dir, "preset-embed.ini");
+  const original = "; original\n";
+  fs.writeFileSync(filePath, original);
+  const first = plan(dir, "embed", [model("bge-m3.gguf", { embedding: true })]);
+  const firstResult = preset.commitPlan(first);
+  assert.strictEqual(firstResult.backup, `${filePath}.dive-backup`);
+  assert.strictEqual(fs.readFileSync(firstResult.backup, "utf8"), original);
+  const second = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+    model("e5-small.gguf", { embedding: true }),
+  ]);
+  const secondResult = preset.commitPlan(second);
+  assert.strictEqual(secondResult.backup, "");
+  assert.strictEqual(
+    fs.readFileSync(`${filePath}.dive-backup`, "utf8"),
+    original,
+  );
+});
+
+test("stale hand-written sections are reported, never removed", () => {
+  const dir = makeDir([]);
+  const original = [
+    "[gone-model]",
+    "model = /Users/someone/models/gone-model.gguf",
+    "",
+  ].join("\n");
+  const result = plan(dir, "chat", [], original);
+  assert.strictEqual(result.stale.length, 1);
+  assert.strictEqual(result.stale[0].section, "gone-model");
+  assert.match(result.after, /\[gone-model\]/);
+});
+
+test("a file with nothing to manage is not touched at all", () => {
+  // Enabling sync on a preset where every model is already hand-written must
+  // not stamp an empty block (and a .dive-backup) onto it.
+  const dir = makeDir(["nomic.gguf"]);
+  const original = [
+    "; hand-written, nothing for Dive to add",
+    "[nomic]",
+    `model = ${path.join(dir, "nomic.gguf")}`,
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("nomic.gguf", { embedding: true })],
+    original,
+  );
+  assert.strictEqual(result.changed, false);
+  assert.strictEqual(result.after, original);
+  assert.doesNotMatch(result.after, /dive-managed/);
+});
+
+test("an existing block is still emptied when its last model goes", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const first = plan(dir, "embed", [model("bge-m3.gguf", { embedding: true })]);
+  preset.commitPlan(first);
+  fs.rmSync(path.join(dir, "bge-m3.gguf"));
+  const second = plan(dir, "embed", []);
+  assert.ok(second.changed);
+  assert.doesNotMatch(second.after, /\[bge-m3\]/);
+  assert.match(second.after, /dive-managed/);
+});
+
+test("a missing preset file is created containing only the block", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const result = plan(dir, "embed", [
+    model("bge-m3.gguf", { embedding: true }),
+  ]);
+  assert.strictEqual(result.existed, false);
+  preset.commitPlan(result);
+  const written = fs.readFileSync(path.join(dir, "preset-embed.ini"), "utf8");
+  assert.match(written, /dive-managed/);
+  assert.match(written, /\[bge-m3\]/);
+});
+
+test("a truncated block is reclaimed rather than duplicated", () => {
+  const dir = makeDir(["bge-m3.gguf"]);
+  const original = [
+    "; kept",
+    preset.BLOCK_START,
+    "[half-written]",
+    "model = /x.gguf",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "embed",
+    [model("bge-m3.gguf", { embedding: true })],
+    original,
+  );
+  assert.match(result.after, /; kept/);
+  assert.doesNotMatch(result.after, /half-written/);
+  assert.strictEqual(result.after.match(/dive-managed/g).length, 2);
+});
+
+test("split-model siblings and projectors never become embed sections", () => {
+  const dir = makeDir(["mmproj-vlm.gguf"]);
+  const result = plan(dir, "embed", [
+    model("mmproj-vlm.gguf", { isProjector: true, embedding: true }),
+  ]);
+  assert.deepStrictEqual(result.managed, []);
+});

@@ -615,3 +615,336 @@ test("markdown and sanitizer scripts are served locally", () => {
   assert.match(html, /<script src="\/vendor\/purify\.min\.js"><\/script>/);
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net/);
 });
+
+// ---- Queued messages while a response is streaming ----
+
+// Boot the app and pretend the current mode is mid-generation, which is the
+// only state in which the composer queues instead of sending.
+async function bootGenerating() {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const win = dom.window;
+  const doc = win.document;
+  const input = doc.getElementById("input");
+  const send = doc.getElementById("send");
+  const strip = doc.getElementById("queueStrip");
+  const startRun = () => {
+    win.getActiveModeSession().activeAbortController =
+      new win.AbortController();
+    win.updateSendButtonState();
+  };
+  const endRun = () => {
+    win.getActiveModeSession().activeAbortController = null;
+    win.updateSendButtonState();
+  };
+  const type = (text) => {
+    input.value = text;
+    input.dispatchEvent(new win.Event("input", { bubbles: true }));
+  };
+  const pressEnter = () =>
+    input.dispatchEvent(
+      new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+  // `mode` is a lexical binding, not a window property; the app mirrors it
+  // onto the root element, which is the only way in from a test.
+  const activeMode = () => doc.documentElement.getAttribute("data-mode");
+  return {
+    activeMode,
+    dom,
+    errors,
+    win,
+    doc,
+    input,
+    send,
+    strip,
+    startRun,
+    endRun,
+    type,
+    pressEnter,
+    queued: () => win.getActiveModeSession().queue,
+  };
+}
+
+test("Enter during a response queues it instead of stopping the stream", async () => {
+  const t = await bootGenerating();
+  t.startRun();
+  t.type("follow-up question");
+  t.pressEnter();
+
+  assert.strictEqual(t.queued().length, 1);
+  assert.strictEqual(t.queued()[0].text, "follow-up question");
+  assert.strictEqual(t.input.value, "", "composer is freed for the next one");
+  assert.ok(
+    t.win.getActiveModeSession().activeAbortController,
+    "the running stream must not have been aborted",
+  );
+  assert.ok(t.strip.classList.contains("show"));
+  assert.match(t.strip.textContent, /follow-up question/);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("Enter during a response with an empty composer still stops it", async () => {
+  const t = await bootGenerating();
+  t.startRun();
+  const controller = t.win.getActiveModeSession().activeAbortController;
+  t.type("   ");
+  t.pressEnter();
+
+  assert.strictEqual(t.queued().length, 0);
+  assert.ok(
+    controller.signal.aborted,
+    "empty composer keeps the stop shortcut",
+  );
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("the composer button flips between Stop and Queue as you type", async () => {
+  const t = await bootGenerating();
+  assert.strictEqual(t.send.getAttribute("aria-label"), "Send message");
+
+  t.startRun();
+  assert.strictEqual(t.send.getAttribute("aria-label"), "Stop response");
+  assert.ok(t.send.classList.contains("stopping"));
+
+  t.type("something");
+  assert.strictEqual(t.send.getAttribute("aria-label"), "Queue message");
+  assert.ok(!t.send.classList.contains("stopping"));
+
+  t.type("");
+  assert.strictEqual(t.send.getAttribute("aria-label"), "Stop response");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("queued messages can be removed individually", async () => {
+  const t = await bootGenerating();
+  t.startRun();
+  t.type("first");
+  t.pressEnter();
+  t.type("second");
+  t.pressEnter();
+  assert.strictEqual(t.queued().length, 2);
+
+  t.strip.querySelectorAll(".file-pill-x")[0].click();
+  assert.strictEqual(t.queued().length, 1);
+  assert.strictEqual(t.queued()[0].text, "second");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("stopping the response discards anything queued behind it", async () => {
+  const t = await bootGenerating();
+  t.startRun();
+  t.type("queued but unwanted");
+  t.pressEnter();
+  assert.strictEqual(t.queued().length, 1);
+
+  t.win.stopActiveGeneration();
+  assert.strictEqual(t.queued().length, 0);
+  assert.ok(!t.strip.classList.contains("show"));
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("the queue belongs to the mode it was typed in", async () => {
+  const t = await bootGenerating();
+  const BUTTON_FOR = {
+    ollama: "btnOllama",
+    pi: "btnPi",
+    cloud: "btnCloud",
+    lmstudio: "btnLmStudio",
+    llamacpp: "btnLlamaCpp",
+  };
+  const startMode = t.activeMode();
+  t.startRun();
+  t.type("typed in the first mode");
+  t.pressEnter();
+  assert.ok(t.strip.classList.contains("show"));
+
+  t.doc.getElementById("btnPi").click();
+  assert.ok(!t.strip.classList.contains("show"), "Pi has its own empty queue");
+
+  t.doc.getElementById(BUTTON_FOR[startMode]).click();
+  assert.ok(t.strip.classList.contains("show"));
+  assert.match(t.strip.textContent, /typed in the first mode/);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("a finished run sends the next queued message, in order", async () => {
+  const t = await bootGenerating();
+  const sent = [];
+  // Simulates a real send: a run starts, so the queue pauses until it ends.
+  t.win.sendMessage = function stubbedSend() {
+    sent.push(t.input.value);
+    t.input.value = "";
+    t.win.getActiveModeSession().activeAbortController =
+      new t.win.AbortController();
+  };
+  t.startRun();
+  t.type("first");
+  t.pressEnter();
+  t.type("second");
+  t.pressEnter();
+
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await waitFor(() => sent.length === 1);
+  assert.deepStrictEqual(sent, ["first"]);
+  assert.strictEqual(t.queued().length, 1, "the second one waits its turn");
+
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await waitFor(() => sent.length === 2);
+  assert.deepStrictEqual(sent, ["first", "second"]);
+  assert.strictEqual(t.queued().length, 0);
+  assert.ok(!t.strip.classList.contains("show"));
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("a queued message never drains into a different conversation", async () => {
+  const t = await bootGenerating();
+  const sent = [];
+  t.win.sendMessage = function stubbedSend() {
+    sent.push(t.input.value);
+  };
+  t.startRun();
+  t.type("meant for this chat");
+  t.pressEnter();
+
+  // The user opens another conversation before the run finishes. It has to go
+  // through loadConversation: `currentConvId` is a lexical binding, so setting
+  // it on `window` would not reach the app at all.
+  t.win.loadConversation({
+    id: "conv_somewhere_else",
+    mode: t.activeMode(),
+    history: [],
+  });
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepStrictEqual(sent, [], "nothing sent into the wrong transcript");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("text typed since queueing keeps the composer and defers the queue", async () => {
+  const t = await bootGenerating();
+  const sent = [];
+  t.win.sendMessage = function stubbedSend() {
+    sent.push(t.input.value);
+  };
+  t.startRun();
+  t.type("queued earlier");
+  t.pressEnter();
+  t.type("typed just now");
+
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepStrictEqual(sent, [], "the half-typed message is not clobbered");
+  assert.strictEqual(t.input.value, "typed just now");
+  assert.strictEqual(t.queued().length, 1);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("sending a new message does not silently drop a waiting queue", async () => {
+  // Regression: stopActiveGeneration() is also the ordinary idle send path, so
+  // clearing the queue there destroyed messages that were only waiting for the
+  // composer to empty.
+  const t = await bootGenerating();
+  const sent = [];
+  t.win.sendMessage = function stubbedSend() {
+    sent.push(t.input.value);
+    t.input.value = "";
+  };
+  t.startRun();
+  t.type("queued earlier");
+  t.pressEnter();
+
+  // Run ends while something else is half-typed: the queue defers.
+  t.type("typed just now");
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(t.queued().length, 1);
+
+  // Sending the typed message must not take the queued one with it.
+  t.pressEnter();
+  assert.deepStrictEqual(sent, ["typed just now"]);
+  assert.strictEqual(
+    t.queued().length,
+    1,
+    "the queued message is still waiting",
+  );
+
+  t.win.scheduleQueueDrain(t.activeMode());
+  await waitFor(() => sent.length === 2);
+  assert.deepStrictEqual(sent, ["typed just now", "queued earlier"]);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("a queued send that starts no run still drains the rest", async () => {
+  // A Pi slash command handled locally returns from sendMessage without ever
+  // starting a run, so no `finally` fires — the queue behind it must not stall.
+  const t = await bootGenerating();
+  const sent = [];
+  t.win.sendMessage = async function stubbedSend() {
+    sent.push(t.input.value);
+    t.input.value = "";
+    // deliberately starts nothing
+  };
+  t.startRun();
+  t.type("/local-command");
+  t.pressEnter();
+  t.type("real question");
+  t.pressEnter();
+  assert.strictEqual(t.queued().length, 2);
+
+  t.endRun();
+  t.win.scheduleQueueDrain(t.activeMode());
+  await waitFor(() => sent.length === 2);
+  assert.deepStrictEqual(sent, ["/local-command", "real question"]);
+  assert.strictEqual(t.queued().length, 0);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("overlapping drains never send two messages at once", async () => {
+  const t = await bootGenerating();
+  const sent = [];
+  let release;
+  t.win.sendMessage = function stubbedSend() {
+    sent.push(t.input.value);
+    t.input.value = "";
+    // Mimic a real run: the abort controller is only set after an await, the
+    // window in which a second drain could double-send.
+    return new Promise((resolve) => {
+      release = () => {
+        t.win.getActiveModeSession().activeAbortController = null;
+        resolve();
+      };
+      setTimeout(() => {
+        t.win.getActiveModeSession().activeAbortController =
+          new t.win.AbortController();
+      }, 5);
+    });
+  };
+  t.startRun();
+  t.type("one");
+  t.pressEnter();
+  t.type("two");
+  t.pressEnter();
+
+  t.endRun();
+  const activeMode = t.activeMode();
+  t.win.scheduleQueueDrain(activeMode);
+  t.win.scheduleQueueDrain(activeMode);
+  t.win.scheduleQueueDrain(activeMode);
+  await waitFor(() => sent.length === 1);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepStrictEqual(sent, ["one"], "the second must wait for the first");
+
+  release();
+  await waitFor(() => sent.length === 2);
+  assert.deepStrictEqual(sent, ["one", "two"]);
+  assert.deepStrictEqual(t.errors, []);
+});
