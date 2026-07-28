@@ -908,6 +908,7 @@
         display: flex;
         gap: 6px;
       }
+      #notesPreviewBtn,
       #saveNotesBtn,
       #closeNotesBtn {
         padding: 4px 10px;
@@ -923,7 +924,9 @@
           color 0.1s,
           border-color 0.2s;
       }
-      #saveNotesBtn:hover {
+      #saveNotesBtn:hover,
+      #notesPreviewBtn:hover,
+      #notesPanel.preview-mode #notesPreviewBtn {
         background: var(--text-inverse);
         color: var(--bg-inverse);
       }
@@ -970,8 +973,132 @@
         gap: 10px;
         align-content: start;
       }
-      #notesPanel.list-open #notesArea {
+      /* Rendered Markdown view of the current note. Shares #notesArea's box so
+         toggling does not move the text around. */
+      #notesPreview {
         display: none;
+      }
+      #notesPanel.preview-mode #notesArea {
+        display: none;
+      }
+      #notesPanel.preview-mode #notesPreview {
+        display: block;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-wrap: anywhere;
+        padding: 14px;
+        background: var(--bg-inverse);
+        color: var(--text-inverse);
+        font-size: calc(13px * var(--font-scale, 1));
+        line-height: 1.6;
+      }
+      /* Browsing the note list hides both views — this rule follows the
+         preview-mode one on purpose so it wins at equal specificity. */
+      #notesPanel.list-open #notesArea,
+      #notesPanel.list-open #notesPreview {
+        display: none;
+      }
+      .notes-preview-empty {
+        opacity: 0.5;
+        font-style: italic;
+      }
+      /* Markdown elements, scoped to the preview so no chat styling changes. */
+      #notesPreview > *:first-child {
+        margin-top: 0;
+      }
+      #notesPreview h1,
+      #notesPreview h2,
+      #notesPreview h3,
+      #notesPreview h4,
+      #notesPreview h5,
+      #notesPreview h6 {
+        margin: 1.1em 0 0.45em;
+        line-height: 1.25;
+        font-weight: 700;
+      }
+      #notesPreview h1 {
+        font-size: calc(19px * var(--font-scale, 1));
+      }
+      #notesPreview h2 {
+        font-size: calc(17px * var(--font-scale, 1));
+      }
+      #notesPreview h3 {
+        font-size: calc(15px * var(--font-scale, 1));
+      }
+      #notesPreview h4,
+      #notesPreview h5,
+      #notesPreview h6 {
+        font-size: calc(13px * var(--font-scale, 1));
+      }
+      #notesPreview p,
+      #notesPreview ul,
+      #notesPreview ol,
+      #notesPreview pre,
+      #notesPreview table,
+      #notesPreview blockquote {
+        margin: 0 0 0.75em;
+      }
+      #notesPreview ul,
+      #notesPreview ol {
+        padding-left: 1.4em;
+      }
+      #notesPreview li {
+        margin-bottom: 0.25em;
+      }
+      #notesPreview li > ul,
+      #notesPreview li > ol {
+        margin: 0.25em 0 0;
+      }
+      #notesPreview a {
+        color: inherit;
+        text-decoration: underline;
+      }
+      #notesPreview code {
+        padding: 1px 4px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.9em;
+        background: color-mix(in srgb, var(--text-inverse) 14%, transparent);
+      }
+      #notesPreview pre {
+        padding: 10px;
+        overflow-x: auto;
+        background: color-mix(in srgb, var(--text-inverse) 10%, transparent);
+      }
+      #notesPreview pre code {
+        padding: 0;
+        background: none;
+      }
+      #notesPreview blockquote {
+        padding-left: 10px;
+        border-left: 3px solid
+          color-mix(in srgb, var(--text-inverse) 40%, transparent);
+        opacity: 0.85;
+      }
+      #notesPreview hr {
+        margin: 1.2em 0;
+        border: none;
+        border-top: var(--border-width) solid
+          color-mix(in srgb, var(--text-inverse) 35%, transparent);
+      }
+      #notesPreview table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.95em;
+      }
+      #notesPreview th,
+      #notesPreview td {
+        padding: 4px 6px;
+        border: 1px solid
+          color-mix(in srgb, var(--text-inverse) 30%, transparent);
+        text-align: left;
+      }
+      #notesPreview img {
+        max-width: 100%;
+        height: auto;
+      }
+      #notesPreview input[type="checkbox"] {
+        margin-right: 6px;
       }
       .note-card {
         position: relative;

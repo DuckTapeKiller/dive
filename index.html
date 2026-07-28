@@ -811,6 +811,9 @@
         <div id="notesHeader">
           <span>NOTES</span>
           <div id="notesActions">
+            <button id="notesPreviewBtn" title="Render this note as Markdown">
+              PREVIEW
+            </button>
             <button id="saveNotesBtn">SAVE</button>
             <button id="closeNotesBtn">✕</button>
           </div>
@@ -819,6 +822,9 @@
           id="notesArea"
           placeholder="Write your notes here..."
         ></textarea>
+        <!-- Rendered, read-only view of the textarea above. Never edited and
+             never written back: the textarea stays the only source of truth. -->
+        <div id="notesPreview"></div>
         <div id="notesList"></div>
         <div id="notesSaved"></div>
         <div id="notesFooter">

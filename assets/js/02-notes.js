@@ -14,6 +14,81 @@
         }
       }
 
+      // ---- Markdown preview ----
+      //
+      // The textarea remains the only source of truth for a note. The preview
+      // is rendered FROM it and never written back, so no amount of toggling,
+      // switching notes or re-rendering can alter what gets saved. Rendering
+      // goes through the same marked + DOMPurify pipeline as chat messages,
+      // so a note is sanitized exactly like untrusted model output.
+      let notesPreviewMode = false;
+
+      function renderNotesPreview() {
+        const { area } = getNotesElements();
+        const preview = document.getElementById("notesPreview");
+        if (!area || !preview) return;
+        const text = area.value || "";
+        if (!text.trim()) {
+          preview.textContent = "";
+          const empty = document.createElement("div");
+          empty.className = "notes-preview-empty";
+          empty.textContent = "Nothing to preview yet.";
+          preview.appendChild(empty);
+          return;
+        }
+        // Never let a renderer problem hide the note. If the vendor scripts
+        // are missing or marked throws on some input, fall back to the raw
+        // text as plain text — unrendered beats invisible, and textContent
+        // cannot inject anything.
+        try {
+          if (
+            typeof marked === "undefined" ||
+            typeof DOMPurify === "undefined"
+          ) {
+            throw new Error("Markdown renderer unavailable");
+          }
+          preview.innerHTML = DOMPurify.sanitize(marked.parse(text));
+          // A note can contain any link; keep it out of the app's own window.
+          forceLinksToNewTab(preview);
+        } catch (error) {
+          console.error("Could not render note preview", error);
+          preview.textContent = text;
+        }
+      }
+
+      function setNotesPreview(on) {
+        const { panel, area } = getNotesElements();
+        if (!panel) return;
+        notesPreviewMode = !!on;
+        panel.classList.toggle("preview-mode", notesPreviewMode);
+        const button = document.getElementById("notesPreviewBtn");
+        if (button) {
+          button.textContent = notesPreviewMode ? "EDIT" : "PREVIEW";
+          button.title = notesPreviewMode
+            ? "Back to editing"
+            : "Render this note as Markdown";
+          button.setAttribute("aria-pressed", String(notesPreviewMode));
+        }
+        if (notesPreviewMode) {
+          // Browsing the note list hides both views, so entering preview from
+          // there would show an empty panel.
+          panel.classList.remove("list-open");
+          renderNotesPreview();
+        } else {
+          area?.focus();
+        }
+      }
+
+      function toggleNotesPreview() {
+        setNotesPreview(!notesPreviewMode);
+      }
+
+      // Opening or creating a note replaces the textarea's contents; the
+      // preview has to follow or it would show the note you just left.
+      function refreshNotesPreviewIfOpen() {
+        if (notesPreviewMode) renderNotesPreview();
+      }
+
       function formatNoteDate(value) {
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return "";
@@ -101,6 +176,7 @@
           if (area) area.value = notesLastSyncedText;
           if (titleInput) titleInput.value = activeNoteName;
           if (panel) panel.classList.remove("list-open");
+          refreshNotesPreviewIfOpen();
           updateNotesStatus("Synced");
         } catch (error) {
           console.error("Failed to open note", error);
@@ -132,6 +208,9 @@
             titleInput.select();
           }
           if (panel) panel.classList.remove("list-open");
+          // A brand new note exists to be typed into, so never leave the user
+          // staring at an empty rendered pane.
+          if (notesPreviewMode) setNotesPreview(false);
           updateNotesStatus("New note");
           refreshNotesList();
         } catch (error) {

@@ -5,12 +5,26 @@ const { JSDOM, VirtualConsole } = require("jsdom");
 
 // jsdom does not fetch external scripts; inline the split client files the
 // same way the browser composes them (sequential classic scripts).
+// Vendor scripts are served from node_modules at runtime (see
+// VENDOR_SCRIPT_FILES in server.js); inline them too, or marked/DOMPurify are
+// undefined and anything that renders Markdown silently does nothing.
+const VENDOR_FILES = {
+  "marked.umd.js": "node_modules/marked/lib/marked.umd.js",
+  "purify.min.js": "node_modules/dompurify/dist/purify.min.js",
+  "highlight.min.js": "node_modules/@highlightjs/cdn-assets/highlight.min.js",
+};
+
 const html = fs
   .readFileSync("index.html", "utf8")
   .replace(
     /<script src="\/assets\/(js\/[^"]+)"><\/script>/g,
     (_m, rel) => `<script>${fs.readFileSync(`assets/${rel}`, "utf8")}</script>`,
-  );
+  )
+  .replace(/<script src="\/vendor\/([^"]+)"><\/script>/g, (m, name) => {
+    const file = VENDOR_FILES[name];
+    if (!file || !fs.existsSync(file)) return m;
+    return `<script>${fs.readFileSync(file, "utf8")}</script>`;
+  });
 
 function jsonResponse(payload, status = 200) {
   const text = JSON.stringify(payload);
@@ -611,9 +625,13 @@ test("passages bubble survives history render and mode switch", async () => {
 });
 
 test("markdown and sanitizer scripts are served locally", () => {
-  assert.match(html, /<script src="\/vendor\/marked\.umd\.js"><\/script>/);
-  assert.match(html, /<script src="\/vendor\/purify\.min\.js"><\/script>/);
-  assert.doesNotMatch(html, /cdn\.jsdelivr\.net/);
+  // Reads index.html straight from disk on purpose: the `html` constant above
+  // has the vendor tags inlined for jsdom, and the minified libraries contain
+  // CDN strings of their own that would make this assertion meaningless.
+  const source = fs.readFileSync("index.html", "utf8");
+  assert.match(source, /<script src="\/vendor\/marked\.umd\.js"><\/script>/);
+  assert.match(source, /<script src="\/vendor\/purify\.min\.js"><\/script>/);
+  assert.doesNotMatch(source, /cdn\.jsdelivr\.net/);
 });
 
 // ---- Queued messages while a response is streaming ----
@@ -947,4 +965,125 @@ test("overlapping drains never send two messages at once", async () => {
   await waitFor(() => sent.length === 2);
   assert.deepStrictEqual(sent, ["one", "two"]);
   assert.deepStrictEqual(t.errors, []);
+});
+
+// ---- Notes Markdown preview ----
+
+async function bootNotes() {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const win = dom.window;
+  const doc = win.document;
+  return {
+    dom,
+    errors,
+    win,
+    doc,
+    panel: doc.getElementById("notesPanel"),
+    area: doc.getElementById("notesArea"),
+    preview: doc.getElementById("notesPreview"),
+    button: doc.getElementById("notesPreviewBtn"),
+  };
+}
+
+test("notes preview renders Markdown instead of showing raw syntax", async () => {
+  const t = await bootNotes();
+  t.area.value = "# Title\n\nSome **bold** text\n\n- one\n- two";
+  t.button.click();
+
+  assert.ok(t.panel.classList.contains("preview-mode"));
+  assert.strictEqual(t.preview.querySelector("h1")?.textContent, "Title");
+  assert.strictEqual(t.preview.querySelector("strong")?.textContent, "bold");
+  assert.strictEqual(t.preview.querySelectorAll("li").length, 2);
+  assert.doesNotMatch(t.preview.textContent, /\*\*|^# /m);
+  assert.strictEqual(t.button.textContent.trim(), "EDIT");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("previewing never alters the note's text", async () => {
+  // The safety property that matters: the textarea is the only source of
+  // truth, so no round trip through the renderer may change a single byte.
+  const t = await bootNotes();
+  const original =
+    "# Heading\n\n<b>literal html</b>\n\n\ttabbed\n\ntrailing   ";
+  t.area.value = original;
+  t.button.click();
+  t.button.click();
+  t.button.click();
+  t.button.click();
+  assert.strictEqual(t.area.value, original);
+  assert.ok(!t.panel.classList.contains("preview-mode"));
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("notes preview sanitizes dangerous markup", async () => {
+  const t = await bootNotes();
+  t.area.value =
+    '# Hi\n\n<script>window.__pwned = 1;</script>\n\n<img src=x onerror="window.__pwned=1">';
+  t.button.click();
+
+  assert.strictEqual(t.preview.querySelector("script"), null);
+  assert.strictEqual(
+    t.preview.querySelector("img")?.hasAttribute("onerror"),
+    false,
+  );
+  assert.strictEqual(t.win.__pwned, undefined);
+  // The note text itself is untouched — only the rendering is sanitized.
+  assert.match(t.area.value, /<script>/);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("an empty note previews as an empty state, not blank", async () => {
+  const t = await bootNotes();
+  t.area.value = "   \n\n";
+  t.button.click();
+  assert.ok(t.preview.querySelector(".notes-preview-empty"));
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("preview and editor are never both visible", async () => {
+  const t = await bootNotes();
+  t.area.value = "text";
+  assert.ok(!t.panel.classList.contains("preview-mode"));
+  t.button.click();
+  assert.ok(t.panel.classList.contains("preview-mode"));
+  // Browsing the note list hides both, and entering preview closes the list.
+  t.win.toggleNotesList();
+  assert.ok(t.panel.classList.contains("list-open"));
+  t.win.setNotesPreview(true);
+  assert.ok(!t.panel.classList.contains("list-open"));
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("typing still autosaves while the preview exists", async () => {
+  const t = await bootNotes();
+  let scheduled = 0;
+  const real = t.win.scheduleNotesSave;
+  t.win.scheduleNotesSave = function (immediate) {
+    scheduled += 1;
+    return real.call(this, immediate);
+  };
+  t.area.value = "typed";
+  t.area.dispatchEvent(new t.win.Event("input", { bubbles: true }));
+  assert.strictEqual(scheduled, 1, "the autosave listener is still attached");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("a broken Markdown renderer shows the raw note, never a blank pane", async () => {
+  const t = await bootNotes();
+  t.area.value = "# Heading\n\nbody text";
+  t.win.marked = {
+    parse() {
+      throw new Error("boom");
+    },
+  };
+  t.button.click();
+  assert.strictEqual(t.preview.querySelector("h1"), null);
+  assert.match(t.preview.textContent, /# Heading/);
+  assert.match(t.preview.textContent, /body text/);
+  assert.strictEqual(t.area.value, "# Heading\n\nbody text");
 });

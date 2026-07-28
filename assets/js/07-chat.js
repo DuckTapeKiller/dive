@@ -2570,6 +2570,13 @@
           updateDownloadButtonState();
         }
 
+        const btn_notesPreviewBtn = document.getElementById("notesPreviewBtn");
+        if (btn_notesPreviewBtn) {
+          btn_notesPreviewBtn.addEventListener("click", function (event) {
+            toggleNotesPreview();
+          });
+        }
+
         const btn_saveNotesBtn = document.getElementById("saveNotesBtn");
         if (btn_saveNotesBtn) {
           btn_saveNotesBtn.addEventListener("click", function (event) {
