@@ -1533,6 +1533,19 @@
               Every embedding model needs an entry here, since an embed router
               normally runs without `--models-dir`.
             </div>
+            <label>CHAT ROUTER LAUNCHAGENT LABEL</label>
+            <input
+              id="llamaCppPresetChatLabel"
+              type="text"
+              placeholder="com.user.llamacpp-router"
+            />
+            <div class="setting-help">
+              Restarted with `launchctl kickstart` when the chat preset changes
+              — a preset is only read at startup, so without this a deleted
+              model keeps being advertised until you restart it yourself. Note a
+              restart drops the loaded model; it reloads on the next message.
+              Leave empty to never restart it automatically.
+            </div>
             <label>EMBEDDING ROUTER LAUNCHAGENT LABEL</label>
             <input
               id="llamaCppPresetEmbedLabel"

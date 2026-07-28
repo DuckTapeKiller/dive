@@ -50,10 +50,42 @@
           preview.innerHTML = DOMPurify.sanitize(marked.parse(text));
           // A note can contain any link; keep it out of the app's own window.
           forceLinksToNewTab(preview);
+          addNoteCodeCopyButtons(preview);
         } catch (error) {
           console.error("Could not render note preview", error);
           preview.textContent = text;
         }
+      }
+
+      // A COPY control on each fenced block, matching the one chat messages
+      // get. The code text is read BEFORE the button is inserted, so the
+      // button's own label can never end up on the clipboard.
+      function addNoteCodeCopyButtons(root) {
+        root.querySelectorAll("pre").forEach((pre) => {
+          const codeText = pre.querySelector("code")?.textContent ?? pre.textContent;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "notes-code-copy";
+          button.textContent = "COPY";
+          button.title = "Copy this code block";
+          button.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            try {
+              // Absent outside a secure context; say so rather than throwing.
+              if (!navigator.clipboard?.writeText) {
+                throw new Error("Clipboard unavailable");
+              }
+              await navigator.clipboard.writeText(codeText);
+              button.textContent = "COPIED";
+            } catch (_error) {
+              button.textContent = "FAILED";
+            }
+            setTimeout(() => {
+              button.textContent = "COPY";
+            }, 1500);
+          });
+          pre.appendChild(button);
+        });
       }
 
       function setNotesPreview(on) {

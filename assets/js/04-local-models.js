@@ -460,8 +460,12 @@
       // Render the chat + embedding slot states as flat status cards: one card
       // per server, a header with the port, and one aligned row per model with
       // a state dot + badge. Uses theme vars so every palette works.
-      const LLAMA_DIM = "color-mix(in srgb, currentColor 45%, transparent)";
-      const LLAMA_DIM_SOFT = "color-mix(in srgb, currentColor 30%, transparent)";
+      // Inactive rows read as secondary, not as absent. At 45% an unloaded
+      // model measured 3.25:1 against the card — below the 4.5:1 needed for
+      // text this small. 60% measures 5.43:1 while the active row stays at
+      // 13.35:1, so the hierarchy is still obvious at a glance.
+      const LLAMA_DIM = "color-mix(in srgb, currentColor 60%, transparent)";
+      const LLAMA_DIM_SOFT = "color-mix(in srgb, currentColor 40%, transparent)";
       const LLAMA_HAIR = "color-mix(in srgb, currentColor 14%, transparent)";
 
       function llamaCppStatusDot(kind) {
@@ -478,12 +482,44 @@
         return dot;
       }
 
+      // Readable ink for a chip filled with --accent. Accents span #ebcb8b to
+      // #1f4e79 across the palettes, so no single fixed colour works: the old
+      // --bg-inverse measured 2.38:1 on the green palette. Picking black or
+      // white per accent — whichever contrasts more — is never worse than
+      // 4.61:1 on any palette Dive ships.
+      let llamaCppAccentInkCache = { accent: "", ink: "#fff" };
+      function llamaCppAccentInk() {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--accent)";
+        probe.style.display = "none";
+        document.body.appendChild(probe);
+        const accent = getComputedStyle(probe).color;
+        probe.remove();
+        if (accent === llamaCppAccentInkCache.accent) {
+          return llamaCppAccentInkCache.ink;
+        }
+        const parts = accent.match(/[\d.]+/g);
+        let ink = "#fff";
+        if (parts) {
+          const lin = (v) => {
+            v = Number(v) / 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          };
+          const L =
+            0.2126 * lin(parts[0]) +
+            0.7152 * lin(parts[1]) +
+            0.0722 * lin(parts[2]);
+          ink = 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? "#fff" : "#000";
+        }
+        llamaCppAccentInkCache = { accent, ink };
+        return ink;
+      }
+
       function llamaCppStatusBadge(kind, text) {
         const badge = document.createElement("span");
         let s = `font-size: calc(9px * var(--font-scale, 1)); letter-spacing: 1px; flex-shrink: 0; padding: 1px 6px;`;
         if (kind === "loaded")
-          s +=
-            " background: var(--accent); color: var(--bg-inverse); font-weight: bold; padding: 2px 7px;";
+          s += ` background: var(--accent); color: ${llamaCppAccentInk()}; font-weight: bold; padding: 2px 7px;`;
         else if (kind === "loading")
           s += " color: var(--accent); font-weight: bold;";
         else if (kind === "sleeping")
@@ -617,7 +653,16 @@
               `PORT ${external.port} · ONLINE`,
             );
             let anyLoaded = false;
-            for (const m of external.models || []) {
+            // A --models-dir router advertises the whole folder. Show only what
+            // belongs to THIS server: projectors are part of a model rather
+            // than one, and an embedding model cannot be chatted with. An
+            // "unknown" alias (no matching file) is still shown — the router
+            // genuinely offers it, and hiding it would mask a stale preset.
+            const wanted = label === "EMBEDDING" ? "embedding" : "chat";
+            const slotModels = (external.models || []).filter(
+              (m) => !m.kind || m.kind === wanted || m.kind === "unknown",
+            );
+            for (const m of slotModels) {
               const kind =
                 m.state === "loaded"
                   ? "loaded"
@@ -638,7 +683,14 @@
                 kind === "loaded",
               );
             }
-            if (!anyLoaded) {
+            if (!slotModels.length) {
+              llamaCppStatusHint(
+                card,
+                label === "EMBEDDING"
+                  ? "no embedding model registered on this server"
+                  : "no chat model registered on this server",
+              );
+            } else if (!anyLoaded) {
               llamaCppStatusHint(
                 card,
                 "models load automatically when you send a message",
@@ -771,25 +823,34 @@
         const renderedProjectors = new Set();
         // Nested sub-line for a vision adapter: tree glyph, filename + size, and
         // a delete control. Never loadable, so no LOAD button or tuning inputs.
+        // A projector is part of its model, so it is drawn INSIDE that model's
+        // card: tagged, indented and tied to it with a left rule, rather than
+        // floating as a sibling row that reads like another library entry.
+        // An orphan has no card to live in, so it stands alone and says why.
         const buildProjectorLine = (proj, orphan) => {
           const line = document.createElement("div");
           line.style.cssText =
-            "display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--flat-fill); opacity: 0.8; padding: 3px 0 5px " +
-            (orphan ? "0" : "18px") +
+            "display: flex; align-items: center; gap: 6px; flex: 1 1 100%; min-width: 0; margin: 3px 0 1px; padding: 3px 0 3px 8px; border-left: 2px solid " +
+            (orphan ? "#ff4444" : LLAMA_DIM) +
             ";";
+          const tag = document.createElement("span");
+          tag.textContent = orphan ? "ORPHANED ADAPTER" : "VISION ADAPTER";
+          tag.style.cssText =
+            "flex: 0 0 auto; font-size: calc(8px * var(--font-scale, 1)); font-weight: bold; letter-spacing: 1px; " +
+            (orphan ? "color: #ff4444;" : `color: ${LLAMA_DIM};`);
+          line.appendChild(tag);
           const label = document.createElement("div");
           label.style.cssText =
-            "flex: 1 1 auto; min-width: 0; font-size: calc(10px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;";
-          label.textContent =
-            (orphan
-              ? "vision adapter (no matching model) · "
-              : "└─ vision adapter · ") + proj.file;
-          label.title = `${proj.file} (${llamaCppFmtBytes(proj.sizeBytes)}) — multimodal projector, loaded automatically with its model. Not a standalone model.`;
+            "flex: 1 1 auto; min-width: 0; font-size: calc(9px * var(--font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;";
+          label.textContent = proj.file;
+          label.title = orphan
+            ? `${proj.file} (${llamaCppFmtBytes(proj.sizeBytes)}) — a multimodal projector with no matching model. Nothing will ever load it; deleting it frees the space.`
+            : `${proj.file} (${llamaCppFmtBytes(proj.sizeBytes)}) — multimodal projector, loaded automatically with this model so it can accept images. Not a standalone model.`;
           line.appendChild(label);
           const size = document.createElement("span");
           size.textContent = llamaCppFmtBytes(proj.sizeBytes);
           size.style.cssText =
-            "font-size: calc(9px * var(--font-scale, 1)); opacity: 0.7; min-width: 56px;";
+            "flex: 0 0 auto; font-size: calc(9px * var(--font-scale, 1)); opacity: 0.7;";
           line.appendChild(size);
           const del = document.createElement("button");
           del.type = "button";
@@ -877,12 +938,27 @@
                 : `${m.parts} parts`,
             );
           }
+          // A vision adapter belongs to this model rather than being one. The
+          // compact list gets a marker here; the full list draws the adapter
+          // itself inside the card just below, so the size is not said twice.
+          const ownProjector = m.projector && projectorByFile.get(m.projector);
+          if (ownProjector) {
+            metaBits.push(
+              full ? "vision" : `vision +${llamaCppFmtBytes(ownProjector.sizeBytes)}`,
+            );
+          }
           if (metaBits.length) {
             const metaLine = document.createElement("div");
             metaLine.textContent = metaBits.join(" · ");
             metaLine.style.cssText =
               "flex: 1 1 100%; font-size: calc(9px * var(--font-scale, 1)); opacity: 0.6;";
             row.appendChild(metaLine);
+          }
+          // Attached adapter sits with the model's own description, above its
+          // controls, so it is unmistakably part of this model.
+          if (full && ownProjector) {
+            row.appendChild(buildProjectorLine(ownProjector, false));
+            renderedProjectors.add(m.projector);
           }
 
           const size = document.createElement("span");
@@ -1115,22 +1191,11 @@
             row.appendChild(delBtn);
           }
           wrap.appendChild(container);
-          // Nest this model's vision adapter directly beneath it (settings list
-          // only — the compact loader stays a clean list of loadable models).
-          if (
-            full &&
-            m.projector &&
-            projectorByFile.has(m.projector) &&
-            !renderedProjectors.has(m.projector)
-          ) {
-            wrap.appendChild(
-              buildProjectorLine(projectorByFile.get(m.projector)),
-            );
-            renderedProjectors.add(m.projector);
-          }
         }
-        // Any adapters with no matching parent model — still shown (and
-        // deletable) so they're never invisible, just clearly unattached.
+        // Only adapters with NO parent model get a row: an attached one is
+        // already accounted for on its model's meta line, while an orphan is
+        // gigabytes that nothing will ever load — it has to stay visible and
+        // deletable rather than silently occupying the disk.
         if (full) {
           for (const p of projectorByFile.values()) {
             if (renderedProjectors.has(p.file)) continue;
@@ -1247,6 +1312,7 @@
         fillInput("llamaCppPresetChatPath", sync.chatPresetPath || "");
         fillInput("llamaCppPresetEmbedPath", sync.embedPresetPath || "");
         fillInput("llamaCppPresetEmbedLabel", sync.embedAgentLabel || "");
+        fillInput("llamaCppPresetChatLabel", sync.chatAgentLabel || "");
         const presetEnabled = document.getElementById(
           "llamaCppPresetSyncEnabled",
         );
@@ -1291,20 +1357,23 @@
           for (const skip of file.skipped || []) {
             lines.push(`  left alone: ${skip.file} — ${skip.reason}`);
           }
+          for (const gone of file.removed || []) {
+            lines.push(`  removed: [${gone.section}] — model file is gone`);
+          }
           for (const stale of file.stale || []) {
             lines.push(
-              `  stale (yours to remove): [${stale.section}] -> ${stale.model}`,
+              `  stale, outside the models folder (yours to remove): [${stale.section}] -> ${stale.model}`,
             );
           }
           if (dryRun && file.changed) {
             lines.push("", "--- new file contents ---", file.after);
           }
         }
-        if (result.restart) {
+        for (const r of result.restart || []) {
           lines.push(
-            result.restart.attempted
-              ? `embed router restart: ${result.restart.ok ? "ok" : `failed — ${result.restart.error}`}`
-              : `embed router not restarted: ${result.restart.reason}`,
+            r.attempted
+              ? `${r.kind} router restart: ${r.ok ? "ok" : `failed — ${r.error}`}`
+              : `${r.kind} router not restarted: ${r.reason}`,
           );
         }
         out.textContent = lines.join("\n") || "Nothing to do.";
@@ -1518,6 +1587,7 @@
           ["llamaCppPresetChatPath", "chatPresetPath"],
           ["llamaCppPresetEmbedPath", "embedPresetPath"],
           ["llamaCppPresetEmbedLabel", "embedAgentLabel"],
+          ["llamaCppPresetChatLabel", "chatAgentLabel"],
         ]) {
           const input = document.getElementById(id);
           if (!input) continue;

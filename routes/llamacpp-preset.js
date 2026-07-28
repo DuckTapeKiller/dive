@@ -19,9 +19,13 @@
 //     never given a second section, which would make the router advertise one
 //     file as two models.
 //
-// Consequence worth knowing: Dive can only remove what Dive added. Sections
-// written by hand are reported as stale when their file disappears, never
-// deleted behind the user's back.
+// Removal works differently, and by LOCATION rather than authorship: a section
+// pointing at a file inside the models folder describes something Dive
+// manages, so when that file is deleted the section goes with it, wherever in
+// the preset it happens to live. Leaving it behind is worse than editing a
+// hand-written line — the router keeps advertising a model that cannot load.
+// Sections pointing outside the models folder are never removed, only
+// reported. Any deletion also takes a dated .bak of the file first.
 "use strict";
 
 const fs = require("fs");
@@ -234,20 +238,75 @@ function buildEmbedSections(models, options) {
   return { sections: out, skipped };
 }
 
-// Sections outside Dive's block whose model file is gone. Reported, never
-// removed: Dive did not write them, so it does not get to delete them.
-function findStale(sections, modelsDir, exclude) {
-  const stale = [];
+// Is this path inside the models folder Dive manages?
+function insideModelsDir(resolved, modelsDir) {
+  const dir = path.resolve(modelsDir);
+  return resolved === dir || resolved.startsWith(dir + path.sep);
+}
+
+// Sections describing a model file that is gone (or is being deleted right
+// now). Ownership is by LOCATION, not by who typed it: a section pointing at
+// the models folder describes a file Dive manages, so when that file goes the
+// section goes with it — otherwise the router keeps advertising a model that
+// cannot load. A section pointing anywhere else is somebody else's and is only
+// ever reported.
+function findDeadSections(sections, modelsDir, exclude) {
+  const removable = [];
+  const foreign = [];
   for (const section of sections) {
     if (section.name === "*") continue;
     const model = section.entries.get("model");
     if (!model) continue;
     const resolved = path.resolve(modelsDir, model);
-    if (exclude.has(path.basename(resolved)) || !fileExists(resolved)) {
-      stale.push({ section: section.name, model: resolved });
-    }
+    const dead = exclude.has(path.basename(resolved)) || !fileExists(resolved);
+    if (!dead) continue;
+    const entry = { section: section.name, model: resolved };
+    if (insideModelsDir(resolved, modelsDir)) removable.push(entry);
+    else foreign.push(entry);
   }
-  return stale;
+  return { removable, foreign };
+}
+
+// Drop whole `[section]` blocks from raw text by name, keeping every other
+// line — including comments — byte for byte. Comment lines immediately above a
+// removed section go with it: they describe the model that just left.
+function removeSections(lines, names) {
+  if (!names.size) return lines;
+  const out = [];
+  let dropping = false;
+  let pendingComments = [];
+  for (const raw of lines) {
+    const line = String(raw ?? "");
+    const trimmed = line.trim();
+    const header = trimmed.match(/^\[(.+)\]$/);
+    if (header) {
+      dropping = names.has(header[1].trim());
+      if (dropping) {
+        pendingComments = [];
+        continue;
+      }
+      out.push(...pendingComments, line);
+      pendingComments = [];
+      continue;
+    }
+    if (dropping) {
+      // A blank line ends the section being dropped.
+      if (!trimmed) dropping = false;
+      continue;
+    }
+    if (trimmed.startsWith(";") || trimmed.startsWith("#")) {
+      pendingComments.push(line);
+      continue;
+    }
+    // A blank line breaks the association: comments above it belong to what
+    // came before, not to the next section, so they are kept even when that
+    // section is removed. Only an unbroken run of comments directly above a
+    // header is treated as describing it.
+    out.push(...pendingComments, line);
+    pendingComments = [];
+  }
+  out.push(...pendingComments);
+  return out;
 }
 
 function renderBlock(sections) {
@@ -278,7 +337,14 @@ function planPreset(options) {
   const hadFile = fileExists(filePath);
   const before = hadFile ? fs.readFileSync(filePath, "utf8") : "";
   const split = splitManagedBlock(before);
-  const outside = parseSections([...split.before, ...split.after]);
+  const outsideRaw = parseSections([...split.before, ...split.after]);
+  // Sections whose model file has gone come out first, so the rest of the plan
+  // is built against what the preset will actually contain.
+  const dead = findDeadSections(outsideRaw, modelsDir, exclude);
+  const removeNames = new Set(dead.removable.map((d) => d.section));
+  const keptBefore = removeSections(split.before, removeNames);
+  const keptAfter = removeSections(split.after, removeNames);
+  const outside = parseSections([...keptBefore, ...keptAfter]);
   const guard = guardFrom(outside, modelsDir);
   const defaults = inheritedDefaults(outside);
   const build = kind === "embed" ? buildEmbedSections : buildChatSections;
@@ -293,10 +359,17 @@ function planPreset(options) {
   // every model is already hand-written. Once a block exists it is always
   // rewritten, so emptying it is how the last managed section is removed.
   const hasBlock = split.found;
+  const trimmed = removeNames.size
+    ? [
+        ...keptBefore,
+        ...(hasBlock ? [BLOCK_START, ...split.managed, BLOCK_END] : []),
+        ...keptAfter,
+      ].join("\n")
+    : before;
   const after =
     !sections.length && !hasBlock
-      ? before
-      : applyBlock(before, renderBlock(sections), hadFile);
+      ? trimmed
+      : applyBlock(trimmed, renderBlock(sections), hadFile);
   return {
     filePath,
     kind,
@@ -306,7 +379,10 @@ function planPreset(options) {
     after,
     managed: sections.map((s) => s.name),
     skipped,
-    stale: findStale(outside, modelsDir, exclude),
+    // Sections this plan deletes because their model file is gone.
+    removed: dead.removable,
+    // Dead sections pointing outside the models folder — reported only.
+    stale: dead.foreign,
   };
 }
 
@@ -324,6 +400,14 @@ function commitPlan(plan) {
     if (!fs.existsSync(candidate)) {
       fs.copyFileSync(plan.filePath, candidate);
       backup = candidate;
+    }
+    // Deleting a section is the one irreversible edit, so it always gets its
+    // own dated copy rather than relying on the once-only backup above.
+    if ((plan.removed || []).length) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const dated = `${plan.filePath}.${stamp}.bak`;
+      fs.copyFileSync(plan.filePath, dated);
+      backup = backup || dated;
     }
   }
   const tmp = `${plan.filePath}.dive-tmp-${process.pid}`;
@@ -346,7 +430,8 @@ module.exports = {
   inheritedDefaults,
   buildChatSections,
   buildEmbedSections,
-  findStale,
+  findDeadSections,
+  removeSections,
   renderBlock,
   applyBlock,
   planPreset,

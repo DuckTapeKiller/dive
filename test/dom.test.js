@@ -1087,3 +1087,72 @@ test("a broken Markdown renderer shows the raw note, never a blank pane", async 
   assert.match(t.preview.textContent, /body text/);
   assert.strictEqual(t.area.value, "# Heading\n\nbody text");
 });
+
+test("code blocks in a note preview get a working COPY button", async () => {
+  const t = await bootNotes();
+  const copied = [];
+  t.win.navigator.clipboard = { writeText: async (v) => copied.push(v) };
+  t.area.value = "text\n\n```js\nconst a = 1;\nconsole.log(a);\n```";
+  t.button.click();
+
+  const pre = t.preview.querySelector("pre");
+  assert.ok(pre, "a fenced block renders as <pre>");
+  const btn = pre.querySelector(".notes-code-copy");
+  assert.ok(btn, "the block has a COPY button");
+  assert.strictEqual(btn.textContent, "COPY");
+
+  btn.click();
+  await waitFor(() => copied.length === 1);
+  assert.strictEqual(copied[0], "const a = 1;\nconsole.log(a);");
+  assert.doesNotMatch(copied[0], /COPY/, "the button label is never copied");
+  await waitFor(() => btn.textContent === "COPIED");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("a copy button on every block, and none without clipboard support", async () => {
+  const t = await bootNotes();
+  t.area.value = "```\none\n```\n\ntext\n\n```py\ntwo\n```";
+  t.button.click();
+  assert.strictEqual(t.preview.querySelectorAll("pre").length, 2);
+  assert.strictEqual(t.preview.querySelectorAll(".notes-code-copy").length, 2);
+
+  // No clipboard API (non-secure context): report, do not throw.
+  t.win.navigator.clipboard = undefined;
+  const btn = t.preview.querySelector(".notes-code-copy");
+  btn.click();
+  await waitFor(() => btn.textContent === "FAILED");
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("re-rendering a preview does not stack duplicate copy buttons", async () => {
+  const t = await bootNotes();
+  t.area.value = "```\ncode\n```";
+  t.button.click();
+  t.win.renderNotesPreview();
+  t.win.renderNotesPreview();
+  assert.strictEqual(t.preview.querySelectorAll(".notes-code-copy").length, 1);
+  assert.deepStrictEqual(t.errors, []);
+});
+
+test("note code blocks wrap instead of scrolling sideways", () => {
+  // jsdom does not load the linked stylesheet, so assert the rule itself.
+  const css = fs.readFileSync("assets/css/app.css", "utf8");
+  const rule = css.match(/#notesPreview pre \{[^}]*\}/);
+  assert.ok(rule, "#notesPreview pre rule exists");
+  assert.match(rule[0], /white-space:\s*pre-wrap/);
+  assert.match(rule[0], /overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(rule[0], /overflow-x:\s*auto/);
+  assert.match(rule[0], /position:\s*relative/);
+  // The wrapped text must not run underneath the COPY button.
+  assert.match(rule[0], /padding-right:\s*\d+px/);
+  // The .hljs palette is light-on-dark, so the block must use the app's fixed
+  // dark code surface. A theme-derived tint left light tokens on a light
+  // panel at a contrast ratio of 1.08 — effectively invisible.
+  assert.match(rule[0], /background:\s*#282c34/);
+  assert.match(rule[0], /color:\s*#abb2bf/);
+  const hljs = css.match(/\n\s*\.hljs \{[^}]*\}/);
+  assert.ok(
+    hljs && /#abb2bf/.test(hljs[0]),
+    "the .hljs colour is what pre pairs with",
+  );
+});

@@ -1060,14 +1060,44 @@
         font-size: 0.9em;
         background: color-mix(in srgb, var(--text-inverse) 14%, transparent);
       }
+      /* The notes panel is narrow and resizable, so a code block wraps rather
+         than scrolling sideways — a horizontal scrollbar inside a 320px column
+         hides most of the line. padding-right leaves room for COPY. */
+      /* Same fixed dark code surface as chat and the trace blocks: the .hljs
+         palette is tuned for it, so a theme-derived tint here would leave
+         light token colours on a light panel. */
       #notesPreview pre {
+        position: relative;
         padding: 10px;
-        overflow-x: auto;
-        background: color-mix(in srgb, var(--text-inverse) 10%, transparent);
+        padding-right: 56px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #282c34;
+        color: #abb2bf;
       }
       #notesPreview pre code {
         padding: 0;
+        white-space: inherit;
         background: none;
+      }
+      .notes-code-copy {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        padding: 3px 6px;
+        font-family: inherit;
+        font-size: calc(9px * var(--font-scale, 1));
+        font-weight: 700;
+        color: var(--text-normal);
+        background: var(--bg-secondary);
+        border: var(--border-width) solid var(--border-color);
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.1s;
+      }
+      .notes-code-copy:hover,
+      .notes-code-copy:focus-visible {
+        opacity: 1;
       }
       #notesPreview blockquote {
         padding-left: 10px;

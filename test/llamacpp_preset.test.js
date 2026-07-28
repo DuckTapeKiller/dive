@@ -365,3 +365,125 @@ test("split-model siblings and projectors never become embed sections", () => {
   ]);
   assert.deepStrictEqual(result.managed, []);
 });
+
+test("a hand-written section is removed once its model file is gone", () => {
+  // The rule that makes delete mean delete: ownership is by location, so a
+  // section pointing into the models folder goes when its file does — even
+  // though Dive never wrote it.
+  const dir = makeDir(["keep.gguf"]);
+  const original = [
+    "[*]",
+    "ctx-size = 0",
+    "",
+    "[gone-model]",
+    `model = ${path.join(dir, "gone-model.gguf")}`,
+    "ctx-size = 32768",
+    "",
+    "[keep]",
+    `model = ${path.join(dir, "keep.gguf")}`,
+    "",
+  ].join("\n");
+  const result = plan(dir, "chat", [model("keep.gguf")], original);
+  assert.ok(result.changed);
+  assert.doesNotMatch(result.after, /\[gone-model\]/);
+  assert.doesNotMatch(result.after, /gone-model\.gguf/);
+  assert.match(result.after, /\[keep\]/);
+  assert.match(result.after, /\[\*\]\nctx-size = 0/);
+  assert.deepStrictEqual(
+    result.removed.map((r) => r.section),
+    ["gone-model"],
+  );
+});
+
+test("deleting a model drops its section before the file goes", () => {
+  const dir = makeDir(["doomed.gguf"]);
+  const original = [
+    "[doomed]",
+    `model = ${path.join(dir, "doomed.gguf")}`,
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "chat",
+    [model("doomed.gguf")],
+    original,
+    new Set(["doomed.gguf"]),
+  );
+  assert.doesNotMatch(result.after, /\[doomed\]/);
+  assert.deepStrictEqual(
+    result.removed.map((r) => r.section),
+    ["doomed"],
+  );
+});
+
+test("comments describing a removed section go with it", () => {
+  const dir = makeDir([]);
+  const original = [
+    "; keep me — file header",
+    "",
+    "; this note is about the model below",
+    "[gone]",
+    `model = ${path.join(dir, "gone.gguf")}`,
+    "",
+    "; trailing note",
+    "",
+  ].join("\n");
+  const result = plan(dir, "chat", [], original);
+  assert.match(result.after, /; keep me — file header/);
+  assert.doesNotMatch(result.after, /this note is about the model below/);
+  assert.match(result.after, /; trailing note/);
+});
+
+test("a section pointing outside the models folder is never removed", () => {
+  const dir = makeDir([]);
+  const original = [
+    "[elsewhere]",
+    "model = /opt/other-models/thing.gguf",
+    "",
+  ].join("\n");
+  const result = plan(dir, "chat", [], original);
+  assert.match(result.after, /\[elsewhere\]/);
+  assert.deepStrictEqual(result.removed, []);
+  assert.deepStrictEqual(
+    result.stale.map((s) => s.section),
+    ["elsewhere"],
+  );
+});
+
+test("removing a section takes a dated backup first", () => {
+  const dir = makeDir([]);
+  const filePath = path.join(dir, "preset-chat.ini");
+  const original = [
+    "[gone]",
+    `model = ${path.join(dir, "gone.gguf")}`,
+    "",
+  ].join("\n");
+  fs.writeFileSync(filePath, original);
+  const result = preset.planPreset({
+    filePath,
+    kind: "chat",
+    models: [],
+    modelsDir: dir,
+    exclude: new Set(),
+  });
+  preset.commitPlan(result);
+  const backups = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+  assert.strictEqual(backups.length, 1, "a dated .bak was written");
+  assert.match(
+    fs.readFileSync(path.join(dir, backups[0]), "utf8"),
+    /\[gone\]/,
+    "the backup holds the section that was removed",
+  );
+});
+
+test("a preset with nothing dead is still left untouched", () => {
+  const dir = makeDir(["here.gguf"]);
+  const original = [
+    "[here]",
+    `model = ${path.join(dir, "here.gguf")}`,
+    "",
+  ].join("\n");
+  const result = plan(dir, "chat", [model("here.gguf")], original);
+  assert.strictEqual(result.changed, false);
+  assert.deepStrictEqual(result.removed, []);
+});

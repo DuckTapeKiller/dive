@@ -2882,6 +2882,7 @@ const llamaCppDomain = require("./routes/llamacpp")({
   loadLocalModelSettings,
   saveLocalModelSettings,
   isLibraryIndexRunning: () => libraryDomain.isIndexJobRunning(),
+  broadcastAppEvent,
 });
 
 const server = http.createServer(async (req, res) => {

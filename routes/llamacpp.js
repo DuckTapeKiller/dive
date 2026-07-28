@@ -33,6 +33,9 @@ module.exports = function createLlamaCppDomain(deps) {
     // Preset sync restarts the embedding router; it must not do that while an
     // index run is streaming through it. Absent, it assumes idle.
     isLibraryIndexRunning = () => false,
+    // Pushes a live event to every connected client. Absent, the UI falls back
+    // to its polling refresh.
+    broadcastAppEvent = () => {},
   } = deps;
 
   const CONFIG_FILE = path.join(DATA_DIR, "llamacpp.json");
@@ -77,9 +80,11 @@ module.exports = function createLlamaCppDomain(deps) {
         enabled: false,
         chatPresetPath: "",
         embedPresetPath: "",
-        // launchctl label of the EMBED router only. The chat router is never
-        // restarted automatically — that would drop a model mid-conversation.
+        // launchctl labels of the routers serving these presets. A preset is
+        // only read at startup, so without a label a change sits on disk doing
+        // nothing. Empty means "never restart this one".
         embedAgentLabel: "",
+        chatAgentLabel: "",
       },
     };
   }
@@ -150,6 +155,7 @@ module.exports = function createLlamaCppDomain(deps) {
           chatPresetPath: sanitizePresetPath(sync.chatPresetPath),
           embedPresetPath: sanitizePresetPath(sync.embedPresetPath),
           embedAgentLabel: sanitizeAgentLabel(sync.embedAgentLabel),
+          chatAgentLabel: sanitizeAgentLabel(sync.chatAgentLabel),
         };
       }
     }
@@ -748,7 +754,7 @@ module.exports = function createLlamaCppDomain(deps) {
       { kind: "embed", filePath: sync.embedPresetPath },
     ].filter((t) => t.filePath);
     const files = [];
-    let embedChanged = false;
+    const changedKinds = new Set();
     for (const target of targets) {
       try {
         const plan = preset.planPreset({
@@ -777,7 +783,7 @@ module.exports = function createLlamaCppDomain(deps) {
           const result = preset.commitPlan(plan);
           entry.written = result.written;
           entry.backup = result.backup;
-          if (plan.kind === "embed") embedChanged = true;
+          if (result.written) changedKinds.add(plan.kind);
         }
         files.push(entry);
       } catch (e) {
@@ -788,25 +794,50 @@ module.exports = function createLlamaCppDomain(deps) {
         });
       }
     }
-    const out = { enabled: true, dryRun, files, restart: null };
-    if (!dryRun && restart && embedChanged) {
-      out.restart = await restartEmbedRouter(sync.embedAgentLabel);
+    const out = {
+      enabled: true,
+      dryRun,
+      files,
+      restart: [],
+      // Which presets were rewritten, so a caller that deferred the restart
+      // (the delete route does) knows what still needs restarting.
+      changed: [...changedKinds],
+    };
+    if (!dryRun && restart) {
+      out.restart = await restartChangedRouters(out.changed);
     }
     return out;
   }
 
-  async function restartEmbedRouter(label) {
+  // A preset is read only at startup, so a rewritten file changes nothing
+  // until its router restarts. Restart exactly the ones whose file changed.
+  async function restartChangedRouters(kinds) {
+    const cfg = loadConfig();
+    const sync = cfg.presetSync || {};
+    const done = [];
+    for (const kind of ["embed", "chat"]) {
+      if (!kinds.includes(kind)) continue;
+      done.push({ kind, ...(await restartRouter(kind, sync)) });
+    }
+    return done;
+  }
+
+  async function restartRouter(kind, sync) {
+    const label = kind === "embed" ? sync.embedAgentLabel : sync.chatAgentLabel;
     if (!label) {
-      return { attempted: false, reason: "no embed agent label configured" };
+      return {
+        attempted: false,
+        reason: `no ${kind} agent label configured — restart it yourself for the change to take effect`,
+      };
     }
     // An index run streams through the embedding server; restarting mid-run
     // would fail the job. The preset is already on disk, so the restart can
     // simply wait for the next sync or a manual one.
-    if (isLibraryIndexRunning()) {
+    if (kind === "embed" && isLibraryIndexRunning()) {
       return { attempted: false, reason: "a library index job is running" };
     }
     const result = await kickstartAgent(label);
-    return { attempted: true, ...result };
+    return { attempted: true, label, ...result };
   }
 
   // Fire-and-forget sync for the paths where a failure must not surface as a
@@ -816,6 +847,74 @@ module.exports = function createLlamaCppDomain(deps) {
       console.warn("[llamacpp] preset sync failed:", e.message || e),
     );
   }
+
+  // ---- Live models folder ----
+  //
+  // Watch the models folder so the library reflects reality without waiting
+  // for the next poll, and so a .gguf added or removed OUTSIDE Dive (Finder, a
+  // download tool, another machine syncing) still updates the presets.
+  // Debounced, because a download writes .part then renames, and a delete of a
+  // split model removes several files in a burst.
+  let modelsWatcher = null;
+  let modelsWatchDir = "";
+  let modelsWatchTimer = null;
+
+  function onModelsFolderChanged() {
+    clearTimeout(modelsWatchTimer);
+    modelsWatchTimer = setTimeout(() => {
+      // Presets first, so a client refreshing on this event already sees the
+      // regenerated state rather than racing it.
+      syncRouterPresets()
+        .catch((e) =>
+          console.warn("[llamacpp] preset sync failed:", e.message || e),
+        )
+        .finally(() => broadcastModelsChanged());
+    }, 700);
+    modelsWatchTimer.unref?.();
+  }
+
+  function broadcastModelsChanged() {
+    try {
+      broadcastAppEvent("llamacpp_models_changed", {});
+    } catch (e) {
+      console.warn("[llamacpp] could not broadcast:", e.message || e);
+    }
+  }
+
+  function ensureModelsWatcher() {
+    const cfg = loadConfig();
+    const dir = cfg.modelsDir;
+    if (modelsWatcher && modelsWatchDir === dir) return;
+    if (modelsWatcher) {
+      try {
+        modelsWatcher.close();
+      } catch {
+        /* already gone */
+      }
+      modelsWatcher = null;
+    }
+    modelsWatchDir = dir;
+    try {
+      modelsWatcher = fs.watch(dir, (_event, filename) => {
+        // Only model files matter. Ignoring everything else keeps Dive's own
+        // preset writes — the .ini files live in this folder too — from
+        // triggering the sync that just wrote them.
+        if (filename && !/\.gguf$/i.test(String(filename))) return;
+        onModelsFolderChanged();
+      });
+      modelsWatcher.unref?.();
+      modelsWatcher.on?.("error", () => {
+        modelsWatcher = null;
+      });
+    } catch (e) {
+      // A missing folder is normal before the first download; the poll still
+      // covers the UI until one exists.
+      modelsWatcher = null;
+      console.warn("[llamacpp] models folder not watchable:", e.message || e);
+    }
+  }
+
+  ensureModelsWatcher();
 
   // ---- Managed llama-server processes (one per slot) ----
 
@@ -1314,6 +1413,38 @@ module.exports = function createLlamaCppDomain(deps) {
     }
   }
 
+  // Tag every model a router advertises with what it actually is, matched
+  // against the models folder by alias (the router names a model after its
+  // file, minus .gguf — the same join llamaCppRouterStateOf uses).
+  //
+  //   chat      a normal conversational model
+  //   embedding marked EMBED / detected as an embedder — cannot be chatted with
+  //   projector an mmproj/clip adapter — part of a model, not a model
+  //   unknown   advertised but absent from the folder (a preset pointing
+  //             elsewhere, or a stale entry whose file was deleted). Left for
+  //             the UI to show rather than hide: a router really is offering
+  //             it, and silently dropping it would mask a broken preset.
+  function classifyExternalModels(external, scanned) {
+    if (!external || !Array.isArray(external.models)) return external;
+    const byAlias = new Map(
+      (scanned || []).map((m) => [m.file.replace(/\.gguf$/i, ""), m]),
+    );
+    return {
+      ...external,
+      models: external.models.map((m) => {
+        const match = byAlias.get(m.id);
+        const kind = !match
+          ? "unknown"
+          : match.arch === "clip"
+            ? "projector"
+            : match.embedding
+              ? "embedding"
+              : "chat";
+        return { ...m, kind };
+      }),
+    };
+  }
+
   // Ask an external router-mode llama-server to load a model. Returns null if
   // the port isn't a router (caller falls back to its port-in-use error).
   async function routerLoad(port, file) {
@@ -1375,11 +1506,16 @@ module.exports = function createLlamaCppDomain(deps) {
           ? probeExternalServer(slotPort(cfg, "embedding"))
           : null,
       ]);
+      // A router started with --models-dir advertises every .gguf it can see,
+      // projectors and embedding models included. Classify each entry against
+      // the folder scan here, so the UI never has to re-derive it and a chat
+      // server is never shown offering something it cannot chat with.
+      const scanned = scanModels(cfg);
       send(200, {
         chat: slotStatus("chat"),
         embedding: slotStatus("embedding"),
-        chatExternal,
-        embeddingExternal,
+        chatExternal: classifyExternalModels(chatExternal, scanned),
+        embeddingExternal: classifyExternalModels(embeddingExternal, scanned),
         port: cfg.port,
         embeddingPort: cfg.port + 1,
         evictOnLoad: cfg.evictOnLoad,
@@ -1391,7 +1527,7 @@ module.exports = function createLlamaCppDomain(deps) {
         modelsDir: cfg.modelsDir,
         extraArgs: cfg.extraArgs,
         cacheTypes: CACHE_TYPES,
-        models: scanModels(cfg),
+        models: scanned,
         download: downloadStatus(),
         presetSync: cfg.presetSync,
       });
@@ -1431,7 +1567,11 @@ module.exports = function createLlamaCppDomain(deps) {
         if (body?.presetSync && typeof body.presetSync === "object") {
           cfg.presetSync = { ...cfg.presetSync, ...body.presetSync };
         }
-        send(200, { ok: true, config: saveConfig(cfg) });
+        const savedCfg = saveConfig(cfg);
+        // The folder may have moved; point the watcher at the new one or live
+        // refresh keeps reporting on the old location.
+        ensureModelsWatcher();
+        send(200, { ok: true, config: savedCfg });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }
@@ -1489,12 +1629,18 @@ module.exports = function createLlamaCppDomain(deps) {
         for (const slotId of SLOT_IDS) {
           if (slots[slotId].model === file) stopSlot(slotId);
         }
-        // Drop the model from the presets and restart the embed router BEFORE
-        // the file goes, so no router is ever pointed at a path that has just
-        // stopped existing.
-        await syncRouterPresets({ exclude: [file] }).catch((e) =>
-          console.warn("[llamacpp] preset sync failed:", e.message || e),
-        );
+        // Rewrite the presets BEFORE the file goes, so no router is ever
+        // pointed at a path that has just stopped existing — but hold the
+        // restart back. A router started with --models-dir rescans the folder
+        // when it comes up, so restarting while the .gguf is still on disk
+        // would simply re-discover the model that is being deleted.
+        const presetResult = await syncRouterPresets({
+          exclude: [file],
+          restart: false,
+        }).catch((e) => {
+          console.warn("[llamacpp] preset sync failed:", e.message || e);
+          return null;
+        });
         fs.rmSync(target, { force: true });
         // Split model: removing the listed first part removes its siblings
         // too, otherwise gigabytes of unloadable parts linger on disk.
@@ -1508,6 +1654,13 @@ module.exports = function createLlamaCppDomain(deps) {
         }
         delete cfg.models[file];
         saveConfig(cfg);
+        // Every part of the model is off disk now; a restarting router can no
+        // longer rediscover it, so the preset change can take effect.
+        if (presetResult?.changed?.length) {
+          await restartChangedRouters(presetResult.changed).catch((e) =>
+            console.warn("[llamacpp] router restart failed:", e.message || e),
+          );
+        }
         send(200, { ok: true });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });

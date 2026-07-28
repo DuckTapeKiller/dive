@@ -25,6 +25,15 @@
               evt.type === "conversation_deleted"
             ) {
               handleRemoteConversationSaved(evt);
+              return;
+            }
+            // The models folder changed on disk — refresh the library now
+            // instead of waiting for the next poll.
+            if (
+              evt.type === "llamacpp_models_changed" &&
+              typeof refreshLlamaCppManager === "function"
+            ) {
+              refreshLlamaCppManager().catch(() => {});
             }
           };
         } catch (_e) {
