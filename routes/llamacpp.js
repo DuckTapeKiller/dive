@@ -173,8 +173,17 @@ module.exports = function createLlamaCppDomain(deps) {
 
   // A launchctl label reaches a shell-free spawn, but keep it to the character
   // set launchd itself allows so nothing surprising is ever passed through.
+  //
+  // The natural thing to paste here is the plist's filename, but launchd wants
+  // the Label — "com.user.llamacpp-router", not "…-router.plist" — and the
+  // difference is invisible until a restart silently fails. Accept either and
+  // store the label. A full path is reduced to its basename for the same
+  // reason.
   function sanitizeAgentLabel(value) {
-    const raw = String(value || "").trim();
+    let raw = String(value || "").trim();
+    if (!raw) return "";
+    if (raw.includes("/")) raw = path.basename(raw);
+    raw = raw.replace(/\.plist$/i, "");
     return /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : "";
   }
 
