@@ -144,6 +144,19 @@ function renderSection(name, entries) {
   return lines.join("\n");
 }
 
+// Vision adapters are identified by their GGUF architecture ("clip"), but a
+// header that fails to parse — a truncated or half-downloaded file — would
+// leave one looking like an ordinary model and get it registered as something
+// chattable. The name check is the same one routes/chat.js already applies to
+// the model list, and costs nothing.
+function looksLikeProjector(model) {
+  return (
+    model.isProjector === true ||
+    model.arch === "clip" ||
+    /mmproj/i.test(String(model.file || ""))
+  );
+}
+
 function sectionNameFor(file) {
   return String(file).replace(/\.gguf$/i, "");
 }
@@ -156,19 +169,26 @@ function fileExists(p) {
   }
 }
 
-// Chat preset: `--models-dir` already auto-discovers plain chat models, so the
-// only sections worth generating are vision models, which need their
-// multimodal projector paired via `mmproj` — auto-discovery cannot do that.
+// Chat preset: EVERY chat model gets a section.
+//
+// `--models-dir` is not a substitute. A router scans that folder once, when it
+// starts, so a model downloaded afterwards is invisible to it — loading it
+// fails with "not registered in the external llama-server". Writing a section
+// makes the model explicit and, just as importantly, means the preset file
+// changes on every download and delete, which is what triggers the restart
+// that puts the change into effect.
+//
+// A model that appears in both the preset and the scanned folder is listed
+// once, from the preset, so this never doubles up with --models-dir.
 function buildChatSections(models, options) {
   const { modelsDir, guard, defaults, exclude } = options;
   const out = [];
   const skipped = [];
   for (const model of models) {
-    if (model.isProjector || model.embedding || !model.projector) continue;
+    if (looksLikeProjector(model) || model.embedding) continue;
     if (exclude.has(model.file)) continue;
     const name = sectionNameFor(model.file);
     const modelPath = path.join(modelsDir, model.file);
-    const projectorPath = path.join(modelsDir, model.projector);
     if (guard.names.has(name)) {
       skipped.push({ file: model.file, reason: "section already in the file" });
       continue;
@@ -177,15 +197,23 @@ function buildChatSections(models, options) {
       skipped.push({ file: model.file, reason: "file already has a section" });
       continue;
     }
-    // A projector path that does not resolve is worse than no projector at
-    // all, so never write one we cannot see on disk.
-    if (!fileExists(modelPath) || !fileExists(projectorPath)) {
-      skipped.push({ file: model.file, reason: "model or projector missing" });
+    if (!fileExists(modelPath)) {
+      skipped.push({ file: model.file, reason: "model file missing" });
       continue;
     }
     const entries = new Map();
     entries.set("model", modelPath);
-    entries.set("mmproj", projectorPath);
+    // Vision models need their projector paired explicitly; auto-discovery
+    // cannot do that. A projector path that does not resolve is worse than no
+    // projector at all, so it is only written when the file is really there.
+    if (model.projector) {
+      const projectorPath = path.join(modelsDir, model.projector);
+      if (fileExists(projectorPath)) {
+        entries.set("mmproj", projectorPath);
+      } else {
+        skipped.push({ file: model.file, reason: "projector missing" });
+      }
+    }
     for (const [key, value] of defaults) {
       if (!entries.has(key)) entries.set(key, value);
     }
@@ -201,7 +229,7 @@ function buildEmbedSections(models, options) {
   const out = [];
   const skipped = [];
   for (const model of models) {
-    if (model.isProjector || !model.embedding) continue;
+    if (looksLikeProjector(model) || !model.embedding) continue;
     if (exclude.has(model.file)) continue;
     const name = sectionNameFor(model.file);
     const modelPath = path.join(modelsDir, model.file);

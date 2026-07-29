@@ -50,10 +50,22 @@ test("embedding models each get a section in the managed block", () => {
   assert.match(result.after, new RegExp(`model = ${dir}/bge-m3\\.gguf`));
 });
 
-test("a plain chat model gets no section — --models-dir already finds it", () => {
-  const dir = makeDir(["qwen3-8b.gguf"]);
-  const result = plan(dir, "chat", [model("qwen3-8b.gguf")]);
-  assert.deepStrictEqual(result.managed, []);
+test("a plain chat model gets a section — --models-dir only scans at startup", () => {
+  // Regression: a model downloaded after the router booted is invisible to
+  // --models-dir, so loading it fails with "not registered in the external
+  // llama-server". Every chat model needs an explicit section.
+  const dir = makeDir(["Bonsai-27B-dspark-bf16.gguf"]);
+  const result = plan(dir, "chat", [model("Bonsai-27B-dspark-bf16.gguf")]);
+  assert.deepStrictEqual(result.managed, ["Bonsai-27B-dspark-bf16"]);
+  assert.match(result.after, /\[Bonsai-27B-dspark-bf16\]/);
+  assert.match(
+    result.after,
+    new RegExp(`model = ${dir}/Bonsai-27B-dspark-bf16\\.gguf`),
+  );
+  assert.ok(
+    result.changed,
+    "the preset changes, which is what triggers a restart",
+  );
 });
 
 test("a vision model gets a section pairing its projector", () => {
@@ -66,13 +78,17 @@ test("a vision model gets a section pairing its projector", () => {
   assert.match(result.after, new RegExp(`mmproj = ${dir}/mmproj-vlm\\.gguf`));
 });
 
-test("a projector that is not on disk blocks the section entirely", () => {
+test("a missing projector costs the mmproj line, not the whole model", () => {
+  // A dangling mmproj path is fatal to that model, but the model itself is
+  // still loadable as text — dropping its section entirely would make it
+  // unloadable for no reason.
   const dir = makeDir(["vlm.gguf"]); // projector deliberately absent
   const result = plan(dir, "chat", [
     model("vlm.gguf", { projector: "mmproj-vlm.gguf" }),
   ]);
-  assert.deepStrictEqual(result.managed, []);
-  assert.strictEqual(result.skipped[0].reason, "model or projector missing");
+  assert.deepStrictEqual(result.managed, ["vlm"]);
+  assert.doesNotMatch(result.after, /mmproj/);
+  assert.strictEqual(result.skipped[0].reason, "projector missing");
 });
 
 test("hand-written content outside the block survives verbatim", () => {
@@ -486,4 +502,25 @@ test("a preset with nothing dead is still left untouched", () => {
   const result = plan(dir, "chat", [model("here.gguf")], original);
   assert.strictEqual(result.changed, false);
   assert.deepStrictEqual(result.removed, []);
+});
+
+test("a projector is never registered as a chat model", () => {
+  // Detection is by GGUF architecture, but a header that fails to parse would
+  // leave a projector looking like an ordinary model. Registering it would
+  // advertise an mmproj file as something you can chat with.
+  const dir = makeDir(["mmproj-vlm-BF16.gguf", "real-model.gguf"]);
+  const result = plan(dir, "chat", [
+    model("mmproj-vlm-BF16.gguf"), // arch missing, isProjector unset
+    model("real-model.gguf"),
+  ]);
+  assert.deepStrictEqual(result.managed, ["real-model"]);
+  assert.doesNotMatch(result.after, /\[mmproj-vlm-BF16\]/);
+});
+
+test("a projector is never registered as an embedding model either", () => {
+  const dir = makeDir(["mmproj-vlm-BF16.gguf"]);
+  const result = plan(dir, "embed", [
+    model("mmproj-vlm-BF16.gguf", { embedding: true }),
+  ]);
+  assert.deepStrictEqual(result.managed, []);
 });
