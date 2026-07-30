@@ -22,6 +22,7 @@ const path = require("path");
 const https = require("https");
 const { spawn } = require("child_process");
 const preset = require("./llamacpp-preset");
+const routers = require("./llamacpp-router-discovery");
 
 module.exports = function createLlamaCppDomain(deps) {
   const {
@@ -73,18 +74,18 @@ module.exports = function createLlamaCppDomain(deps) {
       lastModel: "",
       lastEmbeddingModel: "",
       models: {},
-      // Router preset sync. Off, and with no paths guessed: a preset file is
-      // only ever touched when its path was typed in here, so setups that run
-      // Dive's own managed servers (the common case) never see this at all.
+      // Router preset sync. Automatic and unconfigured: the preset file and
+      // models folder are read back from the running router's own command
+      // line, and a restart is a signal to that process (launchd's KeepAlive
+      // brings it back), so there is nothing to type in and nothing to switch
+      // on. Setups that run Dive's own managed servers — the common case —
+      // have no router to discover and never see this at all.
+      //
+      // The two paths remain only as an override for a router Dive cannot see
+      // for itself; both are empty by default and normally stay that way.
       presetSync: {
-        enabled: false,
         chatPresetPath: "",
         embedPresetPath: "",
-        // launchctl labels of the routers serving these presets. A preset is
-        // only read at startup, so without a label a change sits on disk doing
-        // nothing. Empty means "never restart this one".
-        embedAgentLabel: "",
-        chatAgentLabel: "",
       },
     };
   }
@@ -150,12 +151,13 @@ module.exports = function createLlamaCppDomain(deps) {
       }
       const sync = raw.presetSync;
       if (sync && typeof sync === "object") {
+        // A stored `enabled` is deliberately ignored rather than migrated: it
+        // defaulted to false, so almost every config on disk carries
+        // `enabled: false` by inheritance rather than by choice, and honouring
+        // it would keep exactly the users this change is for switched off.
         out.presetSync = {
-          enabled: sync.enabled === true,
           chatPresetPath: sanitizePresetPath(sync.chatPresetPath),
           embedPresetPath: sanitizePresetPath(sync.embedPresetPath),
-          embedAgentLabel: sanitizeAgentLabel(sync.embedAgentLabel),
-          chatAgentLabel: sanitizeAgentLabel(sync.chatAgentLabel),
         };
       }
     }
@@ -169,22 +171,6 @@ module.exports = function createLlamaCppDomain(deps) {
     if (!raw) return "";
     if (!path.isAbsolute(raw) || !/\.ini$/i.test(raw)) return "";
     return path.normalize(raw);
-  }
-
-  // A launchctl label reaches a shell-free spawn, but keep it to the character
-  // set launchd itself allows so nothing surprising is ever passed through.
-  //
-  // The natural thing to paste here is the plist's filename, but launchd wants
-  // the Label — "com.user.llamacpp-router", not "…-router.plist" — and the
-  // difference is invisible until a restart silently fails. Accept either and
-  // store the label. A full path is reduced to its basename for the same
-  // reason.
-  function sanitizeAgentLabel(value) {
-    let raw = String(value || "").trim();
-    if (!raw) return "";
-    if (raw.includes("/")) raw = path.basename(raw);
-    raw = raw.replace(/\.plist$/i, "");
-    return /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : "";
   }
 
   function loadConfig() {
@@ -713,31 +699,95 @@ module.exports = function createLlamaCppDomain(deps) {
 
   // ---- Router preset sync ----
 
-  // Restart the embedding router so a rewritten preset takes effect.
-  // `--models-preset` is read once at startup, so the file alone changes
-  // nothing. Only the embed agent is ever restarted: it idles asleep between
-  // library searches, whereas restarting the chat router would drop a loaded
-  // model in the middle of a conversation.
-  function kickstartAgent(label) {
-    return new Promise((resolve) => {
-      const target = `gui/${process.getuid()}/${label}`;
-      // No shell: the label is passed as its own argv entry.
-      const child = spawn("launchctl", ["kickstart", "-k", target], {
-        stdio: ["ignore", "ignore", "pipe"],
+  // Ports where a preset-mode router has been seen, and the restarts currently
+  // in flight on them.
+  //
+  // Both exist to stop Dive taking a router's port. Restarting a router leaves
+  // it free for about a second; a load arriving in that window finds the port
+  // dead, concludes it is available and starts a managed single-model server on
+  // it. That is unrecoverable without intervention: launchd can no longer bind,
+  // so the router stays down, and Dive ends up serving ONE model on a port that
+  // was serving every model in the preset — with a context fixed at whatever it
+  // spawned with, which no amount of editing the preset will change.
+  const knownRouterPorts = new Set();
+  const routerRestartsInFlight = new Map();
+
+  // Discovery shells out to lsof and ps — about 28ms a port — and the status
+  // endpoint is polled every 8 seconds (1.2 while anything is loading), for an
+  // answer that only changes when a router restarts. So it is cached briefly,
+  // and the restart path clears it rather than waiting for the entry to lapse.
+  const ROUTER_CACHE_MS = 4000;
+  const routerCache = new Map();
+
+  async function discoverRouterCached(port, { fresh = false } = {}) {
+    const hit = routerCache.get(port);
+    if (!fresh && hit && Date.now() - hit.at < ROUTER_CACHE_MS) {
+      return hit.router;
+    }
+    const router = await routers.discoverRouter(port).catch(() => null);
+    routerCache.set(port, { at: Date.now(), router });
+    return router;
+  }
+
+  // Wait for any restart on this port to finish, then — if a router belongs
+  // here — for it to answer again. Returns false only when a router was
+  // expected and never came back, which is the one case where starting a
+  // managed server would be wrong rather than merely unlucky.
+  async function waitForRouterPort(port) {
+    const inFlight = routerRestartsInFlight.get(port);
+    if (inFlight) await inFlight.catch(() => {});
+    if (!knownRouterPorts.has(port)) return true;
+    if (await checkHealth(port)) return true;
+    const back = await routers
+      .waitForRouter(port, { timeoutMs: 20000 })
+      .catch(() => null);
+    if (back) return true;
+    // Twenty seconds is far longer than launchd needs (it returns in about
+    // one), so the router is genuinely gone rather than restarting — retired,
+    // or crash-looping and throttled. Refuse this attempt so the reason gets
+    // said out loud, then forget the port: a second attempt goes ahead and
+    // starts Dive's own server, rather than the guard blocking the app for
+    // good over a router that is never coming back.
+    knownRouterPorts.delete(port);
+    return false;
+  }
+
+  // What each router is actually serving, asked of the routers themselves.
+  //
+  // The chat router listens on cfg.port and the embedding router on the next
+  // port, the same pair Dive's own slots would use. A slot Dive is running
+  // itself is skipped: that process is a managed single-model server, has no
+  // preset, and is nothing to sync.
+  //
+  // `filePath` prefers an explicitly configured path so a router Dive cannot
+  // see for itself can still be pointed at, but nothing has to be configured
+  // for the usual case.
+  async function discoverRouterTargets(cfg) {
+    const sync = cfg.presetSync || {};
+    const wanted = [
+      { kind: "chat", slot: "chat", override: sync.chatPresetPath },
+      { kind: "embed", slot: "embedding", override: sync.embedPresetPath },
+    ];
+    const found = [];
+    for (const { kind, slot, override } of wanted) {
+      if (slots[slot].state === "running" || slots[slot].state === "starting") {
+        continue;
+      }
+      const port = slotPort(cfg, slot);
+      const router = await discoverRouterCached(port);
+      if (router) knownRouterPorts.add(port);
+      if (!router && !override) continue;
+      found.push({
+        kind,
+        router,
+        filePath: override || router.presetPath,
+        // Only the chat router is started with --models-dir; everything else
+        // falls back to the folder Dive downloads into, which is the folder
+        // being synced in the first place.
+        modelsDir: router?.modelsDir || cfg.modelsDir,
       });
-      let stderr = "";
-      child.stderr?.on("data", (chunk) => {
-        stderr += String(chunk).slice(0, 500);
-      });
-      child.on("error", (e) => resolve({ ok: false, error: e.message }));
-      child.on("close", (code) =>
-        resolve(
-          code === 0
-            ? { ok: true }
-            : { ok: false, error: stderr.trim() || `launchctl exited ${code}` },
-        ),
-      );
-    });
+    }
+    return found;
   }
 
   // Regenerate the preset files from the models folder. `exclude` holds files
@@ -747,21 +797,19 @@ module.exports = function createLlamaCppDomain(deps) {
   async function syncRouterPresets(options = {}) {
     const { exclude = [], dryRun = false, restart = true } = options;
     const cfg = loadConfig();
-    const sync = cfg.presetSync || {};
-    if (!sync.enabled) return { enabled: false, dryRun, files: [] };
     const excludeSet = new Set(
       exclude.map((f) => path.basename(String(f || ""))).filter(Boolean),
     );
+    // No router running means Dive is managing its own servers, which need no
+    // preset. Nothing to do, and nothing worth reporting as a failure.
+    const targets = await discoverRouterTargets(cfg);
+    if (!targets.length) return { enabled: false, dryRun, files: [] };
     let models;
     try {
       models = scanModels(cfg);
     } catch (e) {
       return { enabled: true, dryRun, files: [], error: e.message };
     }
-    const targets = [
-      { kind: "chat", filePath: sync.chatPresetPath },
-      { kind: "embed", filePath: sync.embedPresetPath },
-    ].filter((t) => t.filePath);
     const files = [];
     const changedKinds = new Set();
     for (const target of targets) {
@@ -770,7 +818,7 @@ module.exports = function createLlamaCppDomain(deps) {
           filePath: target.filePath,
           kind: target.kind,
           models,
-          modelsDir: cfg.modelsDir,
+          modelsDir: target.modelsDir,
           exclude: excludeSet,
         });
         const entry = {
@@ -822,31 +870,61 @@ module.exports = function createLlamaCppDomain(deps) {
   // until its router restarts. Restart exactly the ones whose file changed.
   async function restartChangedRouters(kinds) {
     const cfg = loadConfig();
-    const sync = cfg.presetSync || {};
     const done = [];
     for (const kind of ["embed", "chat"]) {
       if (!kinds.includes(kind)) continue;
-      done.push({ kind, ...(await restartRouter(kind, sync)) });
+      done.push({ kind, ...(await restartRouter(kind, cfg)) });
     }
     return done;
   }
 
-  async function restartRouter(kind, sync) {
-    const label = kind === "embed" ? sync.embedAgentLabel : sync.chatAgentLabel;
-    if (!label) {
-      return {
-        attempted: false,
-        reason: `no ${kind} agent label configured — restart it yourself for the change to take effect`,
-      };
-    }
+  const SLOT_FOR_KIND = { chat: "chat", embed: "embedding" };
+
+  // Restarting is just ending the process: both routers run under launchd with
+  // KeepAlive=true, so it comes straight back having re-read its preset. The
+  // router is re-discovered here rather than reused from the sync above, so
+  // the signal always goes to the process that is on the port right now.
+  async function restartRouter(kind, cfg) {
     // An index run streams through the embedding server; restarting mid-run
     // would fail the job. The preset is already on disk, so the restart can
     // simply wait for the next sync or a manual one.
     if (kind === "embed" && isLibraryIndexRunning()) {
       return { attempted: false, reason: "a library index job is running" };
     }
-    const result = await kickstartAgent(label);
-    return { attempted: true, label, ...result };
+    const port = slotPort(cfg, SLOT_FOR_KIND[kind]);
+    // Fresh: this is about to signal a PID, so a cached one is not good enough.
+    const router = await discoverRouterCached(port, { fresh: true });
+    if (!router) {
+      return {
+        attempted: false,
+        reason: `no llama-server router is listening on port ${port}`,
+      };
+    }
+    knownRouterPorts.add(port);
+    const result = await routers.restartRouter(router);
+    if (!result.ok) return { attempted: true, port, ...result };
+    // Wait for launchd to bring it back, so a model load that follows a
+    // download is not sent to a port with nothing on it yet. The wait is
+    // published while it runs: anything trying to load in this window must
+    // queue behind it rather than find the port free and take it.
+    const waiting = routers.waitForRouter(port, { previousPid: router.pid });
+    routerRestartsInFlight.set(port, waiting);
+    let back = null;
+    try {
+      back = await waiting;
+    } finally {
+      routerRestartsInFlight.delete(port);
+      // The PID changed, so anything remembered about this port is stale.
+      routerCache.delete(port);
+    }
+    return {
+      attempted: true,
+      port,
+      ok: true,
+      pid: router.pid,
+      restored: Boolean(back),
+      newPid: back ? back.pid : 0,
+    };
   }
 
   // Fire-and-forget sync for the paths where a failure must not surface as a
@@ -1041,12 +1119,21 @@ module.exports = function createLlamaCppDomain(deps) {
     }
     stopSlot(slotId);
     const port = slotPort(cfg, slotId);
+    // If a router lives on this port, wait for it — it may be a second into a
+    // restart. Starting a managed server here instead would take the port for
+    // good: launchd could not rebind, and one model would replace the whole
+    // preset until somebody noticed and killed it by hand.
+    if (!(await waitForRouterPort(port))) {
+      return {
+        error: `The llama-server router on port ${port} stopped answering, so Dive did not start its own server there — taking the port would stop the router coming back. Check it with "launchctl list | grep llamacpp". Try LOAD again to start Dive's own server on that port instead.`,
+      };
+    }
     // A foreign process already listening on the port would make llama-server
     // exit with a bind error — and worse, /health polls would answer from the
     // wrong server. If it's a router-mode llama-server, forward the load to it
     // (it applies its own eviction policy); otherwise fail with a clear message.
     if (await checkHealth(port)) {
-      const forwarded = await routerLoad(port, file);
+      const forwarded = await routerLoad(port, file, modelPath);
       if (forwarded) return forwarded;
       return {
         error: `Port ${port} is already in use by another llama-server (not managed by this Dive instance). Stop it, or change SERVER PORT in the MODELS tab.`,
@@ -1164,6 +1251,11 @@ module.exports = function createLlamaCppDomain(deps) {
   setTimeout(async () => {
     const cfg = loadConfig();
     if (!cfg.autostart) return;
+    // Arm the port guard before loading anything. It is populated by discovery,
+    // and the first status poll only happens once a client asks — which may be
+    // after this runs, or never if nothing opens the UI. Without this, autostart
+    // is precisely the thing most likely to take a restarting router's port.
+    await discoverRouterTargets(cfg).catch(() => []);
     // Chat first (it's what the user is waiting on), then the embedding
     // server so library semantic search comes back without manual loads.
     for (const file of [cfg.lastModel, cfg.lastEmbeddingModel]) {
@@ -1411,6 +1503,8 @@ module.exports = function createLlamaCppDomain(deps) {
           id: String(m?.id || m?.name || m?.model || "")
             .split("/")
             .pop(),
+          // The .gguf behind this entry, which is what identifies it reliably.
+          modelPath: routers.routerModelPath(m),
           state:
             m?.status && typeof m.status === "object"
               ? String(m.status.value || "unknown")
@@ -1423,8 +1517,8 @@ module.exports = function createLlamaCppDomain(deps) {
   }
 
   // Tag every model a router advertises with what it actually is, matched
-  // against the models folder by alias (the router names a model after its
-  // file, minus .gguf — the same join llamaCppRouterStateOf uses).
+  // against the models folder by the file each entry points at, falling back to
+  // the filename stem when a router reports no path.
   //
   //   chat      a normal conversational model
   //   embedding marked EMBED / detected as an embedder — cannot be chatted with
@@ -1433,15 +1527,21 @@ module.exports = function createLlamaCppDomain(deps) {
   //             elsewhere, or a stale entry whose file was deleted). Left for
   //             the UI to show rather than hide: a router really is offering
   //             it, and silently dropping it would mask a broken preset.
-  function classifyExternalModels(external, scanned) {
+  function classifyExternalModels(external, scanned, modelsDir) {
     if (!external || !Array.isArray(external.models)) return external;
+    const list = scanned || [];
     const byAlias = new Map(
-      (scanned || []).map((m) => [m.file.replace(/\.gguf$/i, ""), m]),
+      list.map((m) => [m.file.replace(/\.gguf$/i, ""), m]),
+    );
+    const byPath = new Map(
+      list.map((m) => [path.resolve(modelsDir, m.file), m]),
     );
     return {
       ...external,
       models: external.models.map((m) => {
-        const match = byAlias.get(m.id);
+        const match =
+          (m.modelPath && byPath.get(path.resolve(m.modelPath))) ||
+          byAlias.get(m.id);
         const kind = !match
           ? "unknown"
           : match.arch === "clip"
@@ -1456,13 +1556,13 @@ module.exports = function createLlamaCppDomain(deps) {
 
   // Ask an external router-mode llama-server to load a model. Returns null if
   // the port isn't a router (caller falls back to its port-in-use error).
-  async function routerLoad(port, file) {
-    const alias = file.replace(/\.gguf$/, "");
+  async function routerLoad(port, file, modelPath) {
     const ext = await probeExternalServer(port);
     if (!ext || !ext.router) return null;
-    if (!ext.models.some((m) => m.id === alias)) {
+    const alias = routers.routerAliasFor(ext, modelPath, file);
+    if (!alias) {
       return {
-        error: `"${alias}" is not registered in the external llama-server on port ${port}. Add it to the router preset file and restart the service.`,
+        error: `"${file}" is not registered in the external llama-server on port ${port}. Add it to the router preset file and restart the service.`,
       };
     }
     try {
@@ -1484,17 +1584,35 @@ module.exports = function createLlamaCppDomain(deps) {
     }
   }
 
-  async function routerUnload(port, file) {
-    const alias = file.replace(/\.gguf$/, "");
+  // Unloading is best-effort — a router that has gone away has nothing to
+  // unload — but a WRONG name is not the same thing as no router, and used to
+  // be swallowed just the same: the model stayed resident while the caller was
+  // told the stop had worked. The outcome is returned so that cannot recur.
+  async function routerUnload(port, file, modelPath) {
+    const ext = await probeExternalServer(port);
+    if (!ext || !ext.router) return { ok: false, reason: "no router" };
+    const alias = routers.routerAliasFor(ext, modelPath, file);
+    if (!alias) {
+      return {
+        ok: false,
+        reason: `"${file}" is not registered on port ${port}`,
+      };
+    }
     try {
-      await fetch(`http://127.0.0.1:${port}/models/unload`, {
+      const res = await fetch(`http://127.0.0.1:${port}/models/unload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: alias }),
         signal: AbortSignal.timeout(10000),
       });
-    } catch {
-      /* router gone — nothing to unload */
+      if (res.ok) return { ok: true, alias };
+      const data = await res.json().catch(() => ({}));
+      return {
+        ok: false,
+        reason: data?.error?.message || `router unload failed (${res.status})`,
+      };
+    } catch (e) {
+      return { ok: false, reason: e.message || String(e) };
     }
   }
 
@@ -1523,8 +1641,16 @@ module.exports = function createLlamaCppDomain(deps) {
       send(200, {
         chat: slotStatus("chat"),
         embedding: slotStatus("embedding"),
-        chatExternal: classifyExternalModels(chatExternal, scanned),
-        embeddingExternal: classifyExternalModels(embeddingExternal, scanned),
+        chatExternal: classifyExternalModels(
+          chatExternal,
+          scanned,
+          cfg.modelsDir,
+        ),
+        embeddingExternal: classifyExternalModels(
+          embeddingExternal,
+          scanned,
+          cfg.modelsDir,
+        ),
         port: cfg.port,
         embeddingPort: cfg.port + 1,
         evictOnLoad: cfg.evictOnLoad,
@@ -1538,7 +1664,21 @@ module.exports = function createLlamaCppDomain(deps) {
         cacheTypes: CACHE_TYPES,
         models: scanned,
         download: downloadStatus(),
-        presetSync: cfg.presetSync,
+        // What preset sync found for itself. There is nothing here for the
+        // user to fill in — the panel reports the routers it detected, or says
+        // there are none and that Dive is managing its own servers instead.
+        presetSync: {
+          ...cfg.presetSync,
+          routers: (await discoverRouterTargets(cfg).catch(() => [])).map(
+            (t) => ({
+              kind: t.kind,
+              filePath: t.filePath,
+              modelsDir: t.modelsDir,
+              pid: t.router ? t.router.pid : 0,
+              discovered: Boolean(t.router),
+            }),
+          ),
+        },
       });
       return true;
     }
@@ -1701,10 +1841,20 @@ module.exports = function createLlamaCppDomain(deps) {
           body?.model
         ) {
           const cfg = loadConfig();
-          await routerUnload(
+          const file = path.basename(String(body.model));
+          const result = await routerUnload(
             slotPort(cfg, slotId),
-            path.basename(String(body.model)),
+            file,
+            modelFilePath(cfg, file) || "",
           );
+          // Saying "stopped" while the model is still resident is how this went
+          // unnoticed before; a refused unload is now reported as one.
+          if (!result.ok && result.reason !== "no router") {
+            send(500, {
+              error: `Could not unload "${file}": ${result.reason}`,
+            });
+            return true;
+          }
         } else {
           stopSlot(slotId);
         }
