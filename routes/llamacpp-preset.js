@@ -19,13 +19,22 @@
 //     never given a second section, which would make the router advertise one
 //     file as two models.
 //
-// Removal works differently, and by LOCATION rather than authorship: a section
-// pointing at a file inside the models folder describes something Dive
-// manages, so when that file is deleted the section goes with it, wherever in
-// the preset it happens to live. Leaving it behind is worse than editing a
-// hand-written line — the router keeps advertising a model that cannot load.
-// Sections pointing outside the models folder are never removed, only
-// reported. Any deletion also takes a dated .bak of the file first.
+// Two things work differently, and by LOCATION rather than authorship. A
+// section pointing at a file inside the models folder describes a model Dive
+// manages, so:
+//
+//   - REMOVAL: when that file is deleted the section goes with it, wherever in
+//     the preset it lives. Leaving it behind is worse than editing a
+//     hand-written line — the router keeps advertising a model that cannot
+//     load. Any deletion takes a dated .bak first.
+//   - ctx-size: the CONTEXT slider sets it, so Dive brings that one line into
+//     line even in a hand-written section. Otherwise the slider does nothing
+//     for such a model while the token counter reports the real (different)
+//     figure, and the user has three numbers and no way to tell which is true.
+//     Only that key is rewritten; every other byte of the section is kept.
+//
+// Sections pointing outside the models folder are never removed or edited, only
+// reported.
 "use strict";
 
 const fs = require("fs");
@@ -161,6 +170,17 @@ function sectionNameFor(file) {
   return String(file).replace(/\.gguf$/i, "");
 }
 
+// The context Dive should ask for: what the user chose on the CONTEXT slider,
+// capped by what the GGUF was actually trained for. A model's trained maximum
+// is not a safe default — Ministral 3 3B is a 3B model with a 256K window and
+// no sliding-window discount, so its full context wants more KV cache than a
+// 24 GB machine has — which is exactly why the chosen value has to be honoured.
+function desiredCtx(model) {
+  return model.maxCtx > 0
+    ? Math.min(model.ctx || model.maxCtx, model.maxCtx)
+    : model.ctx;
+}
+
 function fileExists(p) {
   try {
     return fs.statSync(p).isFile();
@@ -214,9 +234,31 @@ function buildChatSections(models, options) {
         skipped.push({ file: model.file, reason: "projector missing" });
       }
     }
+    // The context the user chose for THIS model, capped by what the GGUF was
+    // trained for. Set before the inherited defaults so it wins over a global
+    // `ctx-size` — a per-model choice is more specific than `[*]`.
+    //
+    // Without this the section inherited `[*] ctx-size = 0`, which means "use
+    // the trained maximum", and the CONTEXT slider did nothing for any
+    // router-served model. That is not just a cosmetic loss: a small model with
+    // a very long trained window (Ministral 3 3B is 3B parameters with a 256K
+    // context and no sliding-window discount) asks for a KV cache far larger
+    // than the machine has, and loading it takes the whole machine down.
+    const ctx = desiredCtx(model);
+    if (ctx > 0) entries.set("ctx-size", String(ctx));
     for (const [key, value] of defaults) {
       if (!entries.has(key)) entries.set(key, value);
     }
+    // Jinja chat templates, which native tool calling needs — llama-server
+    // answers "tools param requires --jinja flag" without them. Dive's own
+    // managed servers always pass --jinja, so a router-served model should not
+    // be the odd one out.
+    //
+    // It cannot come from `defaults` alone: those only carry what the file
+    // already says, so a preset with no `[*]` (or with sections that disagree)
+    // yielded sections holding nothing but `model =`, and tool calling failed
+    // on every model Dive added. Only set when the file has not spoken.
+    if (!entries.has("jinja")) entries.set("jinja", "true");
     out.push({ name, entries });
   }
   return { sections: out, skipped };
@@ -249,10 +291,7 @@ function buildEmbedSections(models, options) {
     entries.set("model", modelPath);
     // An embedding model wants its trained context, not a chat-sized one, so
     // the GGUF's own maximum caps whatever Dive has stored for it.
-    const ctx =
-      model.maxCtx > 0
-        ? Math.min(model.ctx || model.maxCtx, model.maxCtx)
-        : model.ctx;
+    const ctx = desiredCtx(model);
     if (ctx > 0) entries.set("ctx-size", String(ctx));
     if (model.gpuLayers > 0)
       entries.set("n-gpu-layers", String(model.gpuLayers));
@@ -337,6 +376,66 @@ function removeSections(lines, names) {
   return out;
 }
 
+// Force `key = value` inside named sections that already exist, rewriting just
+// that one line and leaving every other byte — comments, ordering, spacing —
+// exactly as it was. Keys not already present are appended at the end of the
+// section.
+//
+// This is how the CONTEXT slider reaches a model whose section somebody wrote
+// by hand. Ownership is the same rule the delete path uses, by LOCATION: a
+// section pointing into the models folder describes a model Dive manages, so
+// the setting Dive's UI controls for it has to win. Otherwise the slider, the
+// token counter and the running model disagree and none of them can be trusted.
+// Sections pointing outside the models folder are never passed in here.
+function setSectionKeys(lines, updates) {
+  if (!updates.size) return lines;
+  const out = [];
+  let current = null;
+  let applied = null;
+  // Emit whatever this section still owes before leaving it.
+  const flush = () => {
+    if (!current || !applied) return;
+    for (const [key, value] of updates.get(current) || []) {
+      if (!applied.has(key)) out.push(`${key} = ${value}`);
+    }
+  };
+  for (const raw of lines) {
+    const line = String(raw ?? "");
+    const trimmed = line.trim();
+    const header = trimmed.match(/^\[(.+)\]$/);
+    if (header) {
+      flush();
+      current = header[1].trim();
+      applied = new Set();
+      out.push(line);
+      continue;
+    }
+    // A blank line ends the section, so anything owed goes in above it.
+    if (!trimmed && current) {
+      flush();
+      current = null;
+      applied = null;
+      out.push(line);
+      continue;
+    }
+    const wanted = current ? updates.get(current) : null;
+    if (wanted) {
+      const eq = line.indexOf("=");
+      if (eq !== -1) {
+        const key = line.slice(0, eq).trim();
+        if (wanted.has(key)) {
+          out.push(`${key} = ${wanted.get(key)}`);
+          applied.add(key);
+          continue;
+        }
+      }
+    }
+    out.push(line);
+  }
+  flush();
+  return out;
+}
+
 function renderBlock(sections) {
   if (!sections.length) return [BLOCK_START, BLOCK_END].join("\n");
   const body = sections
@@ -382,16 +481,53 @@ function planPreset(options) {
     defaults,
     exclude,
   });
+  // A model already described by a hand-written section gets no section of its
+  // own — but its ctx-size is still Dive's to set, by the same location rule
+  // that lets a delete remove such a section. Without this the CONTEXT slider
+  // silently does nothing for those models, and the slider, the token counter
+  // and the running model all report different numbers.
+  const ctxByModelPath = new Map();
+  for (const model of models) {
+    if (looksLikeProjector(model)) continue;
+    if (exclude.has(model.file)) continue;
+    if (kind === "embed" ? !model.embedding : model.embedding) continue;
+    const ctx = desiredCtx(model);
+    if (ctx > 0) {
+      ctxByModelPath.set(path.resolve(modelsDir, model.file), String(ctx));
+    }
+  }
+  const retuned = [];
+  const updates = new Map();
+  for (const section of outside) {
+    if (section.name === "*") continue;
+    const raw = section.entries.get("model");
+    if (!raw) continue;
+    const resolved = path.resolve(modelsDir, raw);
+    // Somebody else's model, somewhere else on disk: never touched.
+    if (!insideModelsDir(resolved, modelsDir)) continue;
+    const ctx = ctxByModelPath.get(resolved);
+    if (ctx === undefined) continue;
+    if (section.entries.get("ctx-size") === ctx) continue;
+    updates.set(section.name, new Map([["ctx-size", ctx]]));
+    retuned.push({
+      section: section.name,
+      from: section.entries.get("ctx-size") ?? "",
+      to: ctx,
+    });
+  }
+  const tunedBefore = setSectionKeys(keptBefore, updates);
+  const tunedAfter = setSectionKeys(keptAfter, updates);
   // Nothing to manage and no block yet: leave the file exactly as it is rather
   // than stamping an empty block (and a .dive-backup) onto a preset where
   // every model is already hand-written. Once a block exists it is always
   // rewritten, so emptying it is how the last managed section is removed.
   const hasBlock = split.found;
-  const trimmed = removeNames.size
+  const rewroteOutside = removeNames.size > 0 || updates.size > 0;
+  const trimmed = rewroteOutside
     ? [
-        ...keptBefore,
+        ...tunedBefore,
         ...(hasBlock ? [BLOCK_START, ...split.managed, BLOCK_END] : []),
-        ...keptAfter,
+        ...tunedAfter,
       ].join("\n")
     : before;
   const after =
@@ -411,6 +547,9 @@ function planPreset(options) {
     removed: dead.removable,
     // Dead sections pointing outside the models folder — reported only.
     stale: dead.foreign,
+    // Hand-written sections whose ctx-size was brought into line with the
+    // CONTEXT slider, so a caller can say what it changed and why.
+    retuned,
   };
 }
 
@@ -460,6 +599,8 @@ module.exports = {
   buildEmbedSections,
   findDeadSections,
   removeSections,
+  setSectionKeys,
+  desiredCtx,
   renderBlock,
   applyBlock,
   planPreset,
