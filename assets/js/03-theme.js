@@ -2632,7 +2632,17 @@
         } else if (LOCAL_MODE_IDS.includes(mode)) {
           localModelConfig[mode].model = val;
           const els = localModeEls(mode);
-          if (els.select) els.select.value = val;
+          if (els.select) {
+            els.select.value = val;
+            // The settings dropdown is a custom-select widget built from this
+            // native one, so its trigger keeps showing the old model until it
+            // is rebuilt — setting .value alone changes nothing you can see.
+            // The Ollama pair opposite has always done this; these two did not,
+            // which is why the two halves of one setting disagreed on screen.
+            if (typeof refreshCustomSelectUi === "function") {
+              refreshCustomSelectUi(els.select);
+            }
+          }
           saveLocalModeSettings();
         } else if (mode === "cloud") {
           // Ignore the "No API key" placeholder; only switch to a real provider.

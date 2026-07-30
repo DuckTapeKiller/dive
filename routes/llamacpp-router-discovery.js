@@ -123,6 +123,20 @@ function routerModelPath(entry) {
   return fromPreset ? fromPreset[1].trim() : "";
 }
 
+// The .gguf paths a router currently has RESIDENT, which is what a restart
+// costs and therefore what has to be put back afterwards.
+//
+// Strictly the models reporting "loaded". A router advertises everything in its
+// preset, and llama-server parks an idle model as "sleeping" — reloading either
+// of those would drag models into memory that nobody asked for, which is worse
+// than the unload this repairs.
+function loadedModelPaths(advertised) {
+  const models = Array.isArray(advertised?.models) ? advertised.models : [];
+  return models
+    .filter((m) => m && m.state === "loaded" && m.modelPath)
+    .map((m) => m.modelPath);
+}
+
 // The name a router knows a given FILE by, or "" if it does not serve it.
 // Path first, since that is unambiguous; the filename stem remains as a
 // fallback for a router that reports no path per model.
@@ -184,6 +198,7 @@ module.exports = {
   parseRouterCommand,
   routerModelPath,
   routerAliasFor,
+  loadedModelPaths,
   discoverRouter,
   restartRouter,
   waitForRouter,

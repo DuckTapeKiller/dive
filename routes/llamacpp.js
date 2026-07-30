@@ -23,6 +23,7 @@ const https = require("https");
 const { spawn } = require("child_process");
 const preset = require("./llamacpp-preset");
 const routers = require("./llamacpp-router-discovery");
+const derived = require("./llamacpp-derived");
 
 module.exports = function createLlamaCppDomain(deps) {
   const {
@@ -31,6 +32,12 @@ module.exports = function createLlamaCppDomain(deps) {
     buildExecutablePath,
     loadLocalModelSettings,
     saveLocalModelSettings,
+    // The library's copy of "which embedding model, on which port". Derived
+    // from this domain's config, so this domain keeps it in step — see
+    // llamacpp-derived.js. Absent, the library half is simply not synced.
+    loadLibraryConfig,
+    saveLibraryConfig,
+    readIndexedEmbeddingModel,
     // Preset sync restarts the embedding router; it must not do that while an
     // index run is streaming through it. Absent, it assumes idle.
     isLibraryIndexRunning = () => false,
@@ -886,6 +893,40 @@ module.exports = function createLlamaCppDomain(deps) {
 
   const SLOT_FOR_KIND = { chat: "chat", embed: "embedding" };
 
+  // Put back the models a restart unloaded.
+  //
+  // A router reads its preset once, at startup, so applying a changed one means
+  // ending the process — and what comes back is a fresh llama-server holding
+  // nothing. Every model that was resident is gone, including the one being
+  // chatted with. That is the whole cost of the restart, and it used to be left
+  // there: changing CONTEXT unloaded the model and nothing ever loaded it
+  // again, so an ordinary settings tweak read as the app dropping the model
+  // mid-conversation.
+  //
+  // Best-effort by design. The restart itself succeeded; a model that will not
+  // come back is worth reporting, not worth turning into a failed download,
+  // delete or settings save.
+  async function restoreResidentModels(port, modelPaths) {
+    const restored = [];
+    for (const modelPath of modelPaths) {
+      // The file may be exactly why the restart happened — a delete rewrites
+      // the preset to drop it, and reloading it now would only fail.
+      if (!fs.existsSync(modelPath)) continue;
+      const file = path.basename(modelPath);
+      const result = await routerLoad(port, file, modelPath).catch((e) => ({
+        error: e.message || String(e),
+      }));
+      if (result?.ok) {
+        restored.push({ file, ok: true });
+      } else {
+        const reason = result?.error || "the router is not serving it";
+        console.warn(`[llamacpp] could not reload ${file}: ${reason}`);
+        restored.push({ file, ok: false, error: reason });
+      }
+    }
+    return restored;
+  }
+
   // Restarting is just ending the process: both routers run under launchd with
   // KeepAlive=true, so it comes straight back having re-read its preset. The
   // router is re-discovered here rather than reused from the sync above, so
@@ -907,6 +948,11 @@ module.exports = function createLlamaCppDomain(deps) {
       };
     }
     knownRouterPorts.add(port);
+    // Read what is resident BEFORE the process ends — afterwards there is
+    // nothing left to ask.
+    const resident = routers.loadedModelPaths(
+      await probeExternalServer(port).catch(() => null),
+    );
     const result = await routers.restartRouter(router);
     if (!result.ok) return { attempted: true, port, ...result };
     // Wait for launchd to bring it back, so a model load that follows a
@@ -923,6 +969,9 @@ module.exports = function createLlamaCppDomain(deps) {
       // The PID changed, so anything remembered about this port is stale.
       routerCache.delete(port);
     }
+    // Only once the router is back: loading into a port that has not rebound
+    // yet would just fail.
+    const reloaded = back ? await restoreResidentModels(port, resident) : [];
     return {
       attempted: true,
       port,
@@ -930,7 +979,99 @@ module.exports = function createLlamaCppDomain(deps) {
       pid: router.pid,
       restored: Boolean(back),
       newPid: back ? back.pid : 0,
+      reloaded,
     };
+  }
+
+  // Per-model options that are baked into llama-server's command line when a
+  // MANAGED slot starts, and therefore cannot change in a running process.
+  //
+  // The router path has a preset to rewrite; a managed server has only its
+  // argv, fixed at spawn. Without a relaunch, changing any of these saved the
+  // number and altered nothing — while the token counter went on reporting the
+  // value you chose, on the assumption a restart was coming. `embedding` is in
+  // the list because it decides which slot the model belongs to at all.
+  const LAUNCH_ARG_KEYS = [
+    "ctx",
+    "gpuLayers",
+    "threads",
+    "batchSize",
+    "flashAttn",
+    "mlock",
+    "cacheTypeK",
+    "cacheTypeV",
+    "embedding",
+  ];
+
+  // Relaunches in flight, by slot: { file, run, pending }.
+  const managedRestarts = new Map();
+
+  // The managed slot serving this file, or "" when none is — which is also the
+  // answer in router mode, where Dive spawns nothing and preset sync applies
+  // the change instead.
+  function managedSlotFor(file) {
+    const live = SLOT_IDS.find(
+      (id) =>
+        slots[id].model === file &&
+        (slots[id].state === "running" || slots[id].state === "starting"),
+    );
+    if (live) return live;
+    // Halfway through a relaunch the slot is briefly stopped and its model
+    // cleared. A change arriving in that window is still a change to a model
+    // that is running, and treating it as "nothing to do" dropped it silently —
+    // leaving the process on settings the config no longer agreed with, which
+    // is the very thing this is here to prevent.
+    for (const [id, entry] of managedRestarts) {
+      if (entry.file === file) return id;
+    }
+    return "";
+  }
+
+  function launchArgsDiffer(before, after) {
+    return LAUNCH_ARG_KEYS.some((key) => before?.[key] !== after?.[key]);
+  }
+
+  // Relaunch a managed slot so new launch options take effect.
+  //
+  // One relaunch at a time per slot, with a single trailing repeat. Two
+  // overlapping restarts would race for the same port and one would lose the
+  // bind, leaving the slot dead; but simply ignoring a change that arrives
+  // mid-restart would lose it. Since every start re-reads the config, one more
+  // pass after the current one is enough to land on the newest values however
+  // many changes arrived while it ran.
+  function restartManagedSlot(slotId, file) {
+    const existing = managedRestarts.get(slotId);
+    if (existing && existing.file === file) {
+      existing.pending = true;
+      return existing.run;
+    }
+    const entry = { file, pending: false, run: null };
+    entry.run = (async () => {
+      try {
+        do {
+          entry.pending = false;
+          // Stop the slot it is running in, which is not necessarily the one it
+          // will start in — toggling EMBED moves a model between the two, and
+          // leaving the old process up would hold both the port and the memory.
+          stopSlot(slotId);
+          const result = await startServer(file).catch((e) => ({
+            error: e.message || String(e),
+          }));
+          if (result?.error) {
+            console.warn(
+              `[llamacpp:${slotId}] could not relaunch ${file} with the new settings: ${result.error}`,
+            );
+          }
+        } while (entry.pending);
+      } finally {
+        managedRestarts.delete(slotId);
+      }
+      // The slot's state changed with no request behind it, so tell the UI
+      // rather than let it discover this on its next poll.
+      broadcastAppEvent("llamacpp_models_changed", {});
+    })();
+    managedRestarts.set(slotId, entry);
+    return entry.run;
   }
 
   // Fire-and-forget sync for the paths where a failure must not surface as a
@@ -1046,20 +1187,52 @@ module.exports = function createLlamaCppDomain(deps) {
     }
   }
 
-  // Point the chat pipeline at the server AND the model that was just loaded.
-  //
-  // Both halves matter. The pipeline reads the baseUrl from
-  // local-model-settings, which is what makes "load in Dive -> chat in Dive"
-  // seamless; it reads the model name from the same place, and that used to be
-  // left alone. So LOAD put one model on the server while the topbar still
-  // named another, and the next message asked for the old one — which on a
-  // router running --models-max 1 evicted the model you had just loaded and
-  // replaced it with the stale choice. The two have to move together.
-  function pointChatModeAtServer(port, file) {
-    const settings = loadLocalModelSettings();
-    settings.llamacpp.baseUrl = `http://127.0.0.1:${port}/v1`;
-    if (file) settings.llamacpp.model = file.replace(/\.gguf$/i, "");
-    saveLocalModelSettings(settings);
+  // Every copy of "which model is loaded" and "which port serves it" outside
+  // llamacpp.json is written through here and nowhere else. Load, delete and
+  // the port setting each used to update only the copy they happened to own,
+  // which is the single defect behind a stale topbar selection, an autostart
+  // that reloads a deleted model, and a library still calling the old port.
+  const selection = derived.createDerivedState({
+    loadLlamaConfig: loadConfig,
+    saveLlamaConfig: saveConfig,
+    loadLocalModelSettings,
+    saveLocalModelSettings,
+    // The library is optional: without it the chat-side copies are still kept
+    // in step, and the embedding ones are left to the Database settings.
+    loadLibraryConfig: loadLibraryConfig || null,
+    saveLibraryConfig: saveLibraryConfig || null,
+    readIndexedEmbeddingModel,
+    onChatSelectionChanged: (model) =>
+      broadcastAppEvent("llamacpp_selection_changed", { model }),
+    warn: (message) => console.warn(`[llamacpp] ${message}`),
+  });
+
+  // The name the server that just loaded `file` will answer to. A router names
+  // a model after its preset section, which need not resemble the filename —
+  // the embedding preset deliberately uses an alias the library's vector index
+  // is keyed to — so the router is asked rather than guessed at. Dive's own
+  // managed servers serve one file and answer to any name, hence "".
+  async function advertisedNameFor(port, file, modelPath) {
+    try {
+      const ext = await probeExternalServer(port);
+      if (!ext || !ext.router) return "";
+      return routers.routerAliasFor(ext, modelPath, file);
+    } catch {
+      return "";
+    }
+  }
+
+  // Record a finished load: the slot's own config entry, the port, and the
+  // selection every other subsystem reads. An embedding load can report back
+  // that the library is deliberately still using a different model.
+  async function recordLoadedModel(slotId, port, file, modelPath) {
+    const cfg = loadConfig();
+    const alias = await advertisedNameFor(port, file, modelPath);
+    if (slotId === "chat") {
+      selection.setChatSelection(cfg, file, { port, alias });
+      return { warning: "" };
+    }
+    return selection.setEmbeddingSelection(cfg, file, { alias });
   }
 
   function stopSlot(slotId) {
@@ -1153,14 +1326,13 @@ module.exports = function createLlamaCppDomain(deps) {
         // or the topbar and the autostart choice keep naming the model this one
         // replaced, and the next message loads that instead of this.
         if (forwarded.ok) {
-          if (slotId === "chat") pointChatModeAtServer(port, file);
-          const freshCfg = loadConfig();
-          const lastKey =
-            slotId === "chat" ? "lastModel" : "lastEmbeddingModel";
-          if (freshCfg[lastKey] !== file) {
-            freshCfg[lastKey] = file;
-            saveConfig(freshCfg);
-          }
+          const { warning } = await recordLoadedModel(
+            slotId,
+            port,
+            file,
+            modelPath,
+          );
+          if (warning) return { ...forwarded, warning };
         }
         return forwarded;
       }
@@ -1253,18 +1425,23 @@ module.exports = function createLlamaCppDomain(deps) {
       if (await checkHealth(port)) {
         slot.state = "running";
         // Remember the model per slot so "load last model on startup" can
-        // restore both the chat and the embedding server.
-        const freshCfg = loadConfig();
-        const lastKey = slotId === "chat" ? "lastModel" : "lastEmbeddingModel";
-        if (freshCfg[lastKey] !== file) {
-          freshCfg[lastKey] = file;
-          saveConfig(freshCfg);
-        }
-        if (slotId === "chat") pointChatModeAtServer(port, file);
+        // restore both the chat and the embedding server — and point every
+        // other copy of the selection at it in the same breath.
+        const { warning } = await recordLoadedModel(
+          slotId,
+          port,
+          file,
+          modelPath,
+        );
         console.log(
           `[llamacpp:${slotId}] serving ${file} on port ${port} (ctx ${modelCfg.ctx}, gpu layers ${modelCfg.gpuLayers})`,
         );
-        return { ok: true, slot: slotId, port };
+        return {
+          ok: true,
+          slot: slotId,
+          port,
+          ...(warning ? { warning } : {}),
+        };
       }
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -1736,6 +1913,9 @@ module.exports = function createLlamaCppDomain(deps) {
         if (typeof body?.modelsDir === "string") cfg.modelsDir = body.modelsDir;
         if (typeof body?.binaryPath === "string")
           cfg.binaryPath = body.binaryPath;
+        // Compared against the SAVED port below, not this one: sanitizeConfig
+        // clamps it, so a rejected value must not count as a change.
+        const previousPort = cfg.port;
         if (body?.port !== undefined) cfg.port = Number(body.port);
         if (typeof body?.extraArgs === "string") cfg.extraArgs = body.extraArgs;
         if (typeof body?.evictOnLoad === "boolean")
@@ -1749,6 +1929,12 @@ module.exports = function createLlamaCppDomain(deps) {
         // The folder may have moved; point the watcher at the new one or live
         // refresh keeps reporting on the old location.
         ensureModelsWatcher();
+        // Two addresses are derived from this port and stored elsewhere: the
+        // chat pipeline's baseUrl, and the library's embedding URL on port + 1.
+        // The first used to right itself on the next model load; the second
+        // never did, so changing the port left library search calling an
+        // address with nothing behind it, permanently and without a word.
+        if (savedCfg.port !== previousPort) selection.syncPorts(savedCfg);
         send(200, { ok: true, config: savedCfg });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
@@ -1787,7 +1973,22 @@ module.exports = function createLlamaCppDomain(deps) {
         // Toggling EMBED moves a model between the two presets, and ctx / GPU
         // layers are written into its section, so both need regenerating.
         syncRouterPresetsSoon();
-        send(200, { ok: true, settings: saved.models[file] });
+        // A managed slot has no preset — these options were fixed in its argv
+        // when it spawned, so the change is not real until it is relaunched.
+        // Compared against the SANITIZED entry, not the request: a value the
+        // clamps rejected leaves the model exactly as it was running.
+        const slotId = managedSlotFor(file);
+        const relaunching =
+          Boolean(slotId) && launchArgsDiffer(current, saved.models[file]);
+        // Answered before the relaunch, not after: reloading a large model can
+        // take minutes, and the settings form must not hang on it. The UI is
+        // told it is coming, and the state change is broadcast when it lands.
+        send(200, {
+          ok: true,
+          settings: saved.models[file],
+          reloading: relaunching,
+        });
+        if (relaunching) restartManagedSlot(slotId, file);
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }
@@ -1832,6 +2033,12 @@ module.exports = function createLlamaCppDomain(deps) {
         }
         delete cfg.models[file];
         saveConfig(cfg);
+        // The per-model settings are not the only thing naming this file. The
+        // startup choice and the topbar selection do too, and leaving them
+        // pointing at a deleted model makes the next message ask a server for
+        // something it cannot serve, then makes autostart try to load it again
+        // on the next launch.
+        selection.forgetModel(file);
         // Every part of the model is off disk now; a restarting router can no
         // longer rediscover it, so the preset change can take effect.
         if (presetResult?.changed?.length) {

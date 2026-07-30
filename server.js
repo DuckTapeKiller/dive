@@ -7,6 +7,7 @@ const { randomBytes, createHash } = require("crypto");
 const { ALL_SKILLS } = require("./skills");
 const { initMcpServers, getMcpOllamaTools } = require("./mcp");
 const { isDatabaseSlashCommand } = require("./slash_commands");
+const libraryStore = require("./library/store");
 
 const DEFAULT_PORT = 8080;
 const PORT = Number.parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -2905,6 +2906,13 @@ const llamaCppDomain = require("./routes/llamacpp")({
   buildExecutablePath,
   loadLocalModelSettings,
   saveLocalModelSettings,
+  // The library stores its own copy of which embedding model is in use and
+  // where it lives, both derived from the llama.cpp port and slots. Handing
+  // the store's accessors over lets that domain keep them in step instead of
+  // letting them drift apart — see routes/llamacpp-derived.js.
+  loadLibraryConfig: libraryStore.loadLibraryConfig,
+  saveLibraryConfig: libraryStore.saveLibraryConfig,
+  readIndexedEmbeddingModel: libraryStore.getIndexedEmbeddingModel,
   isLibraryIndexRunning: () => libraryDomain.isIndexJobRunning(),
   broadcastAppEvent,
 });

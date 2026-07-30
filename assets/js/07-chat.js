@@ -35,6 +35,15 @@
             ) {
               refreshLlamaCppManager().catch(() => {});
             }
+            // Which model is selected moved on the server — a load, or a delete
+            // that cleared it. Every window shows that name in two dropdowns and
+            // posts it with each message, so they all have to follow it.
+            if (
+              evt.type === "llamacpp_selection_changed" &&
+              typeof refreshLocalModelSelection === "function"
+            ) {
+              refreshLocalModelSelection().catch(() => {});
+            }
           };
         } catch (_e) {
           /* EventSource unavailable — sync simply stays manual */

@@ -1256,6 +1256,32 @@ function vectorStorageMode(config) {
   return normalizeVectorQuantization(config.embedding?.quantization);
 }
 
+// The embedding model the STORED vectors were built with, or "" when the
+// library has none yet.
+//
+// This is the fact that decides whether changing the configured embedding model
+// is free or destructive: with vectors on disk, a different name means indexing
+// will drop them all and search will meanwhile compare two unrelated vector
+// spaces. Anything about to rewrite `embedding.model` asks this first, so it is
+// deliberately cheap — one row from a table with three of them, and no schema
+// creation. A database that has never been indexed has no such table, which
+// reads as "nothing stored" rather than an error.
+async function getIndexedEmbeddingModel(config) {
+  const dbPath = config?.databasePath;
+  if (!dbPath || !fs.existsSync(dbPath)) return "";
+  const rows = await runSqliteJson(
+    dbPath,
+    "SELECT value FROM library_vector_meta WHERE key = 'model' LIMIT 1;",
+  ).catch((error) => {
+    // "no such table" is the normal answer before the first index run. Any
+    // other failure is not something to guess past: report it, so the caller
+    // blocks the rename instead of risking it.
+    if (/no such table/i.test(error.message || "")) return [];
+    throw error;
+  });
+  return String(rows[0]?.value || "");
+}
+
 function vectorColumnType(config, dimensions) {
   const prefix = vectorStorageMode(config) === "int8" ? "int8" : "float";
   return `${prefix}[${sqlInteger(dimensions, 0)}]`;
@@ -5446,6 +5472,7 @@ module.exports = {
   buildLibraryContext,
   collectSourceFiles,
   estimateLibraryIndex,
+  getIndexedEmbeddingModel,
   getLibraryStatus,
   indexLibrary,
   initDatabase,

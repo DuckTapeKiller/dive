@@ -189,6 +189,47 @@
           renderLocalModelOptions(id);
           renderLocalParams(id);
         }
+        // renderLocalModelOptions repaints the SETTINGS dropdown only, and the
+        // topbar reads the same value. Whichever of this fetch and the model
+        // list arrived last used to win, so on a slow settings response the
+        // topbar sat on "Automatic" while the server had a model named — and
+        // "Automatic" resolves to whichever model the server happens to list
+        // first, which is the wrong one as soon as the order is not lucky.
+        if (LOCAL_MODE_IDS.includes(mode)) populateTopbarModelSelect();
+      }
+
+      // Re-read WHICH MODEL IS SELECTED, and repaint both dropdowns that name
+      // it.
+      //
+      // The topbar dropdown and the settings dropdown are two views of a single
+      // value that the server owns, and the page caches its own copy at boot.
+      // Loading a model from the MODELS tab moves the server's copy; nothing
+      // moved the page's. That is not merely cosmetic: sending a message posts
+      // the topbar's value EXPLICITLY, and an explicit choice beats the server's
+      // own record — so the next message asked for the model selected before,
+      // and the router dutifully loaded it back over the one just loaded.
+      //
+      // Deliberately narrower than loadLocalModeSettings(), which rebuilds every
+      // parameter field from the server and would throw away anything typed into
+      // the settings form but not yet saved.
+      async function refreshLocalModelSelection() {
+        let data;
+        try {
+          const res = await fetch(apiUrl("/api/local-models/settings"));
+          data = await readJsonResponse(res, "Load local model settings");
+        } catch (e) {
+          console.error("Could not refresh the local model selection", e);
+          return;
+        }
+        for (const id of LOCAL_MODE_IDS) {
+          const next = data?.settings?.[id]?.model;
+          if (typeof next !== "string" || next === localModelConfig[id].model) {
+            continue;
+          }
+          localModelConfig[id].model = next;
+          renderLocalModelOptions(id, localModelsCache[id]);
+          if (mode === id) populateTopbarModelSelect();
+        }
       }
 
       // "MERGE SYSTEM PROMPTS" for one model.
@@ -846,12 +887,18 @@
         renderLlamaCppStatusFromCache();
         clearInterval(llamaCppLoadTimer);
         llamaCppLoadTimer = setInterval(renderLlamaCppStatusFromCache, 1000);
+        let loadWarning = "";
         try {
-          await postJson(
+          const result = await postJson(
             "/api/llamacpp/manager/start",
             { model: m.file },
             "Start llama.cpp server",
           );
+          // A load can succeed and still not mean what it appears to. Loading
+          // an embedding model does NOT switch the library over to it — the
+          // stored vectors were built by another model and are not comparable
+          // — so the server says so rather than let this tab imply otherwise.
+          loadWarning = String(result?.warning || "");
         } catch (e) {
           await appAlert(e.message || String(e), "llama.cpp");
         } finally {
@@ -861,10 +908,21 @@
           llamaCppLoadingModel = "";
           llamaCppLoadStartMs = 0;
           await refreshLlamaCppManager().catch(() => {});
-          // A chat load makes the managed server this mode's backend: refresh
-          // the chat model list + context-length token counter.
-          if (!m.embedding) await fetchLocalModelList("llamacpp").catch(() => {});
+          // A chat load makes the managed server this mode's backend: pick up
+          // the selection it just moved, then refresh the chat model list +
+          // context-length token counter.
+          //
+          // Selection first: the list refresh repaints the topbar from it, and
+          // repainting it from the stale one is what left the panel naming the
+          // model this load replaced.
+          if (!m.embedding) {
+            await refreshLocalModelSelection().catch(() => {});
+            await fetchLocalModelList("llamacpp").catch(() => {});
+          }
         }
+        // After the refresh, so the list already shows the model as loaded when
+        // the caveat about it appears.
+        if (loadWarning) await appAlert(loadWarning, "llama.cpp");
       }
 
       // One model list, two flavours: MAIN gets the compact loader (name, size,

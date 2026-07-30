@@ -9,6 +9,7 @@ const {
   parseRouterCommand,
   routerModelPath,
   routerAliasFor,
+  loadedModelPaths,
 } = require("../routes/llamacpp-router-discovery.js");
 
 const CHAT =
@@ -210,4 +211,53 @@ test("an unnormalised path still matches the same file", () => {
     ),
     "text-embedding-nomic-embed-text-v2-moe",
   );
+});
+
+// Applying a changed preset means ending the router, and what comes back holds
+// nothing — so what was resident has to be captured first and reloaded after.
+// Getting this set wrong is not neutral in either direction: too few and the
+// model you are talking to stays unloaded, too many and a settings tweak drags
+// models into memory nobody asked for.
+test("only the models actually loaded are the ones to put back", () => {
+  const advertised = {
+    models: [
+      { id: "chat", modelPath: "/Users/x/models/chat.gguf", state: "loaded" },
+      {
+        id: "other",
+        modelPath: "/Users/x/models/other.gguf",
+        state: "unloaded",
+      },
+    ],
+  };
+  assert.deepStrictEqual(loadedModelPaths(advertised), [
+    "/Users/x/models/chat.gguf",
+  ]);
+});
+
+test("a model parked as sleeping is left asleep", () => {
+  // llama-server unloads an idle model itself (sleep-idle-seconds); waking it
+  // on every preset change would defeat the setting.
+  const advertised = {
+    models: [
+      {
+        id: "text-embedding-nomic-embed-text-v2-moe",
+        modelPath: "/Users/x/models/nomic.gguf",
+        state: "sleeping",
+      },
+    ],
+  };
+  assert.deepStrictEqual(loadedModelPaths(advertised), []);
+});
+
+test("an entry with no path is skipped rather than guessed at", () => {
+  const advertised = {
+    models: [{ id: "chat", modelPath: "", state: "loaded" }],
+  };
+  assert.deepStrictEqual(loadedModelPaths(advertised), []);
+});
+
+test("a router that answered nothing leaves nothing to restore", () => {
+  assert.deepStrictEqual(loadedModelPaths(null), []);
+  assert.deepStrictEqual(loadedModelPaths({}), []);
+  assert.deepStrictEqual(loadedModelPaths({ models: [] }), []);
 });
