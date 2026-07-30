@@ -1046,11 +1046,19 @@ module.exports = function createLlamaCppDomain(deps) {
     }
   }
 
-  function pointChatModeAtManagedServer(port) {
-    // The chat pipeline reads the llamacpp baseUrl from local-model-settings;
-    // updating it here is what makes "load in Dive -> chat in Dive" seamless.
+  // Point the chat pipeline at the server AND the model that was just loaded.
+  //
+  // Both halves matter. The pipeline reads the baseUrl from
+  // local-model-settings, which is what makes "load in Dive -> chat in Dive"
+  // seamless; it reads the model name from the same place, and that used to be
+  // left alone. So LOAD put one model on the server while the topbar still
+  // named another, and the next message asked for the old one — which on a
+  // router running --models-max 1 evicted the model you had just loaded and
+  // replaced it with the stale choice. The two have to move together.
+  function pointChatModeAtServer(port, file) {
     const settings = loadLocalModelSettings();
     settings.llamacpp.baseUrl = `http://127.0.0.1:${port}/v1`;
+    if (file) settings.llamacpp.model = file.replace(/\.gguf$/i, "");
     saveLocalModelSettings(settings);
   }
 
@@ -1140,7 +1148,22 @@ module.exports = function createLlamaCppDomain(deps) {
     // (it applies its own eviction policy); otherwise fail with a clear message.
     if (await checkHealth(port)) {
       const forwarded = await routerLoad(port, file, modelPath);
-      if (forwarded) return forwarded;
+      if (forwarded) {
+        // A router load is a load: record it exactly as the managed path does,
+        // or the topbar and the autostart choice keep naming the model this one
+        // replaced, and the next message loads that instead of this.
+        if (forwarded.ok) {
+          if (slotId === "chat") pointChatModeAtServer(port, file);
+          const freshCfg = loadConfig();
+          const lastKey =
+            slotId === "chat" ? "lastModel" : "lastEmbeddingModel";
+          if (freshCfg[lastKey] !== file) {
+            freshCfg[lastKey] = file;
+            saveConfig(freshCfg);
+          }
+        }
+        return forwarded;
+      }
       return {
         error: `Port ${port} is already in use by another llama-server (not managed by this Dive instance). Stop it, or change SERVER PORT in the MODELS tab.`,
       };
@@ -1237,7 +1260,7 @@ module.exports = function createLlamaCppDomain(deps) {
           freshCfg[lastKey] = file;
           saveConfig(freshCfg);
         }
-        if (slotId === "chat") pointChatModeAtManagedServer(port);
+        if (slotId === "chat") pointChatModeAtServer(port, file);
         console.log(
           `[llamacpp:${slotId}] serving ${file} on port ${port} (ctx ${modelCfg.ctx}, gpu layers ${modelCfg.gpuLayers})`,
         );
