@@ -46,7 +46,13 @@ module.exports = function createLlamaCppDomain(deps) {
   const DEFAULT_PORT = 8130;
   // Per-model load options. 0/"" means "let llama.cpp decide" (flag omitted).
   const MODEL_DEFAULTS = {
-    ctx: 4096,
+    // Enough to be useful on a fresh download without having to touch the
+    // slider, and small enough to be safe on any machine: the KV cache is
+    // roughly 2 GB here even for an architecture with no sliding-window
+    // discount, against 26 GB if a 256K-context model were allowed its
+    // trained maximum. A model trained for less gets less — the chosen
+    // context is always capped by the GGUF's own maximum.
+    ctx: 20480,
     gpuLayers: 99,
     threads: 0,
     batchSize: 0,
