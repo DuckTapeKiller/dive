@@ -1590,6 +1590,14 @@ function defaultLocalModelSettings() {
       // Agent mode: plan-first prompting and a larger tool-call budget.
       agentMode: false,
       agentMaxRounds: 25,
+      // Models whose chat template refuses a system message that is not the
+      // very first one. Keyed by model name, and empty by default: the normal
+      // layout sends the assistant policy, the database context and the skills
+      // policy as separate system messages, which small models follow better
+      // than one merged block. A strict template rejects that outright
+      // ("System message must be at the beginning"), so those models — and
+      // only those — get the blocks merged into one.
+      singleSystemMessage: {},
     };
   }
   return out;
@@ -1616,8 +1624,24 @@ function sanitizeLocalModelSettings(raw) {
         out[id].agentMaxRounds = Number.isFinite(rounds)
           ? Math.min(50, Math.max(1, Math.round(rounds)))
           : 25;
+        out[id].singleSystemMessage = sanitizeSingleSystemMessageMap(
+          entry.singleSystemMessage,
+        );
       }
     }
+  }
+  return out;
+}
+
+// Only models explicitly switched ON are kept, so unticking a box removes the
+// entry rather than storing a false the file would carry forever.
+function sanitizeSingleSystemMessageMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [name, value] of Object.entries(raw)) {
+    if (value !== true) continue;
+    const key = String(name).trim().slice(0, 200);
+    if (key) out[key] = true;
   }
   return out;
 }

@@ -150,6 +150,14 @@
                   agentMaxRounds: Number.isFinite(Number(s.agentMaxRounds))
                     ? Math.min(50, Math.max(1, Math.round(s.agentMaxRounds)))
                     : 25,
+                  // Carried through explicitly: saving posts this whole object
+                  // back, so a field dropped here would be wiped on the next
+                  // unrelated settings change.
+                  singleSystemMessage:
+                    s.singleSystemMessage &&
+                    typeof s.singleSystemMessage === "object"
+                      ? { ...s.singleSystemMessage }
+                      : {},
                 };
               }
             }
@@ -183,6 +191,43 @@
         }
       }
 
+      // "MERGE SYSTEM PROMPTS" for one model.
+      //
+      // Dive normally sends the assistant policy, the database context and the
+      // skills policy as three separate system messages, which small models
+      // follow more reliably. A few chat templates reject any system message
+      // after the first ("System message must be at the beginning") and fail the
+      // whole request, so those models get the blocks merged into one instead.
+      //
+      // Off for every model by default, and stored per model, so ticking it for
+      // an awkward model leaves every other one exactly as it was.
+      function mkSingleSystemCheck(file, parent) {
+        const conf = localModelConfig.llamacpp;
+        if (!conf.singleSystemMessage) conf.singleSystemMessage = {};
+        const holder = document.createElement("label");
+        holder.style.cssText =
+          "display: flex; align-items: center; gap: 4px; font-size: calc(9px * var(--font-scale, 1));";
+        holder.title =
+          "Send the assistant policy, database context and skills policy as ONE system message instead of three. " +
+          "Only needed for models whose chat template refuses a system message that is not the first one — " +
+          'they fail with "System message must be at the beginning". Leave off otherwise: separate messages are followed more reliably.';
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "dive-check";
+        input.checked = conf.singleSystemMessage[file] === true;
+        input.addEventListener("change", () => {
+          if (input.checked) conf.singleSystemMessage[file] = true;
+          // Deleted rather than set to false, so the saved file only ever lists
+          // the models actually opted in.
+          else delete conf.singleSystemMessage[file];
+          saveLocalModeSettings();
+        });
+        holder.appendChild(input);
+        holder.appendChild(document.createTextNode("MERGE SYSTEM PROMPTS"));
+        parent.appendChild(holder);
+        return input;
+      }
+
       function saveLocalModeSettings() {
         postJson(
           "/api/local-models/settings",
@@ -205,6 +250,31 @@
       // The loaded context window each local server reports (LM Studio
       // /api/v0/models, llama.cpp /props) — shown as the token-counter limit.
       const localContextCache = { lmstudio: null, llamacpp: null };
+
+      // Total for the token counter: the context CHOSEN for the selected model,
+      // falling back to whatever the server reports when there is no choice on
+      // record for it.
+      //
+      // The chosen value leads deliberately. It is what the CONTEXT slider
+      // shows, it is what Dive writes into the preset section and passes as -c,
+      // and it is therefore what the model will be running with the moment the
+      // router has restarted. Leading with the server's figure instead made the
+      // counter lag a reload behind the slider, so the two disagreed for as
+      // long as the old model stayed loaded — which is exactly the confusion
+      // this is meant to remove.
+      function llamaCppTokenCounterTotal() {
+        const selected = String(localModelConfig.llamacpp.model || "");
+        if (selected) {
+          const stem = selected.replace(/\.gguf$/i, "");
+          const entry = (llamaCppLastStatus.models || []).find(
+            (m) =>
+              m.file === selected || m.file.replace(/\.gguf$/i, "") === stem,
+          );
+          if (entry && entry.ctx > 0) return entry.ctx;
+        }
+        const reported = localContextCache.llamacpp;
+        return typeof reported === "number" && reported > 0 ? reported : null;
+      }
 
       async function fetchLocalModelList(
         modeId,
@@ -238,7 +308,9 @@
           updateTokenCounter(
             modeId,
             typeof st.used === "number" ? st.used : 0,
-            localContextCache[modeId] || null,
+            modeId === "llamacpp"
+              ? llamaCppTokenCounterTotal()
+              : localContextCache[modeId] || null,
           );
         }
         return localModelsCache[modeId];
@@ -1070,9 +1142,27 @@
             ctxSlider.addEventListener("input", () =>
               setCtxLabel(ctxSlider.value),
             );
-            ctxSlider.addEventListener("change", () =>
-              saveModelSettings({ ctx: parseInt(ctxSlider.value, 10) }),
-            );
+            ctxSlider.addEventListener("change", () => {
+              const next = parseInt(ctxSlider.value, 10);
+              saveModelSettings({ ctx: next });
+              // Move the token counter now rather than on the next poll: the
+              // slider and the counter showing different numbers is what makes
+              // this setting feel like it has not applied.
+              const selected = String(localModelConfig.llamacpp.model || "");
+              const stem = selected.replace(/\.gguf$/i, "");
+              if (
+                mode === "llamacpp" &&
+                (m.file === selected || m.file.replace(/\.gguf$/i, "") === stem)
+              ) {
+                updateTokenCounter(
+                  "llamacpp",
+                  typeof llamacppTokenState.used === "number"
+                    ? llamacppTokenState.used
+                    : 0,
+                  next,
+                );
+              }
+            });
             ctxSlider.title =
               "Context window in tokens. The KV cache grows with it — larger contexts use more memory. Max is what the model was trained for.";
             ctxHolder.appendChild(ctxSlider);
@@ -1124,6 +1214,11 @@
             mkCheck("KEEP IN RAM (MLOCK)", "mlock", m.mlock, advPanel);
             mkSelect("KV CACHE K", "cacheTypeK", m.cacheTypeK, cacheTypes, advPanel);
             mkSelect("KV CACHE V", "cacheTypeV", m.cacheTypeV, cacheTypes, advPanel);
+            // Compatibility switch, and the odd one out here: it lives in the
+            // local-model settings (the chat path reads those) rather than in
+            // the llama.cpp model settings the helpers above write, so it needs
+            // its own handler instead of mkCheck.
+            mkSingleSystemCheck(m.file, advPanel);
             container.appendChild(advPanel);
           }
 
@@ -1275,6 +1370,17 @@
         if (loadedNow !== llamaCppLastLoadedChatModel) {
           llamaCppLastLoadedChatModel = loadedNow;
           fetchLocalModelList("llamacpp").catch(() => {});
+        } else if (mode === "llamacpp") {
+          // Same model still loaded (or still none), but its configured context
+          // may have just changed on the CONTEXT slider — the counter tracks
+          // that without waiting for the model list to be refetched.
+          updateTokenCounter(
+            "llamacpp",
+            typeof llamacppTokenState.used === "number"
+              ? llamacppTokenState.used
+              : 0,
+            llamaCppTokenCounterTotal(),
+          );
         }
         // MAIN: status + compact loader. MODELS tab: status + full management.
         renderLlamaCppStatusInto(
@@ -1308,17 +1414,28 @@
         if (evictInput) evictInput.checked = status.evictOnLoad !== false;
         const autoInput = document.getElementById("llamaCppAutostartInput");
         if (autoInput) autoInput.checked = status.autostart === true;
-        const sync = status.presetSync || {};
-        fillInput("llamaCppPresetChatPath", sync.chatPresetPath || "");
-        fillInput("llamaCppPresetEmbedPath", sync.embedPresetPath || "");
-        fillInput("llamaCppPresetEmbedLabel", sync.embedAgentLabel || "");
-        fillInput("llamaCppPresetChatLabel", sync.chatAgentLabel || "");
-        const presetEnabled = document.getElementById(
-          "llamaCppPresetSyncEnabled",
-        );
-        if (presetEnabled) presetEnabled.checked = sync.enabled === true;
+        renderPresetRouters(status.presetSync || {});
         llamaCppManagerSchedulePoll(status);
         return status;
+      }
+
+      // What preset sync found for itself, in place of the fields that used to
+      // have to be filled in. Nothing here is editable — it is a report.
+      function renderPresetRouters(sync) {
+        const el = document.getElementById("llamaCppPresetRouters");
+        if (!el) return;
+        const found = (sync.routers || []).filter((r) => r.discovered);
+        if (!found.length) {
+          el.textContent =
+            "No llama-server router detected — Dive is managing its own servers, so there are no presets to keep in step.";
+          return;
+        }
+        el.textContent = found
+          .map(
+            (r) =>
+              `${r.kind === "embed" ? "EMBEDDING" : "CHAT"} router (pid ${r.pid}) → ${r.filePath}`,
+          )
+          .join("\n");
       }
 
       // Human-readable outcome of a preset sync. A dry run is shown as a plain
@@ -1328,7 +1445,7 @@
         if (!out) return;
         if (!result || result.enabled === false) {
           out.textContent =
-            "Preset sync is off. Tick SYNC ROUTER PRESET FILES and set at least one file path.";
+            "No llama-server router is running, so there is no preset to sync.";
           return;
         }
         if (result.error) {
@@ -1570,31 +1687,8 @@
             ),
           );
         }
-        const savePresetSync = (patch, label) =>
-          saveManagerConfig({ presetSync: patch }, label);
-        const presetEnabled = document.getElementById(
-          "llamaCppPresetSyncEnabled",
-        );
-        if (presetEnabled) {
-          presetEnabled.addEventListener("change", () =>
-            savePresetSync(
-              { enabled: presetEnabled.checked },
-              "Save preset sync setting",
-            ),
-          );
-        }
-        for (const [id, key] of [
-          ["llamaCppPresetChatPath", "chatPresetPath"],
-          ["llamaCppPresetEmbedPath", "embedPresetPath"],
-          ["llamaCppPresetEmbedLabel", "embedAgentLabel"],
-          ["llamaCppPresetChatLabel", "chatAgentLabel"],
-        ]) {
-          const input = document.getElementById(id);
-          if (!input) continue;
-          input.addEventListener("change", () =>
-            savePresetSync({ [key]: input.value.trim() }, "Save preset sync"),
-          );
-        }
+        // Nothing to save: preset sync configures itself from the running
+        // routers. PREVIEW / SYNC NOW remain, for looking at what it would do.
         const runPresetSync = async (dryRun) => {
           const out = document.getElementById("llamaCppPresetOutput");
           if (out) out.textContent = dryRun ? "Previewing…" : "Syncing…";

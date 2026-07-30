@@ -9,6 +9,11 @@ const http = require("http");
 const path = require("path");
 const { buildChatLibraryContext } = require("../library/store");
 const {
+  collapseLeadingSystemMessages,
+  wantsSingleSystemMessage,
+  isNativeToolsRejection,
+} = require("./chat-local-request.js");
+const {
   buildForcedSkillToolCall,
   isDatabaseSlashCommand,
   isSkillSlashCommand,
@@ -431,6 +436,11 @@ module.exports = function createChatDomain(deps) {
       // message, so the image notice has to go on after it.
       requestMessages = withAttachedImageNotice(requestMessages, turnImages);
 
+      // Whether THIS model needs its system blocks merged. Resolved once; the
+      // merge itself happens per send, on a copy, because requestMessages grows
+      // as tool results are appended.
+      const mergeSystem = wantsSingleSystemMessage(conf, model);
+
       let round = 0;
       for (;;) {
         throwIfClientAborted();
@@ -442,7 +452,9 @@ module.exports = function createChatDomain(deps) {
           streamResult = await streamLocalOpenAiCompletion({
             baseUrl,
             model,
-            messages: requestMessages,
+            messages: mergeSystem
+              ? collapseLeadingSystemMessages(requestMessages)
+              : requestMessages,
             // Every round, not just the first: a tool call mid-turn must not
             // make the model lose sight of the image it is being asked about.
             images: turnImages,
@@ -481,7 +493,13 @@ module.exports = function createChatDomain(deps) {
         } catch (streamError) {
           // The server rejected the native `tools` parameter (e.g. llama.cpp
           // started without --jinja): retry the same round on the XML path.
-          if (nativeToolsEnabled && streamError?.statusCode === 400) {
+          //
+          // llama.cpp answers 400 for some refusals and 500 for others — the
+          // missing-jinja one is a 500 ("tools param requires --jinja flag"),
+          // which used to fall straight through to the user. A 500 is only
+          // retried when the message names the cause, so genuine server faults
+          // are not silently attempted twice.
+          if (nativeToolsEnabled && isNativeToolsRejection(streamError)) {
             nativeToolsEnabled = false;
             if (skillsPromptMessage) {
               skillsPromptMessage.content = getCloudSkillsPolicyPrompt({

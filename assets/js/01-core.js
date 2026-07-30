@@ -353,6 +353,9 @@
           nativeTools: true,
           agentMode: false,
           agentMaxRounds: 25,
+          // Model names whose chat template refuses a system message that is
+          // not the first one; those get the system blocks merged into one.
+          singleSystemMessage: {},
         },
         llamacpp: {
           baseUrl: "http://127.0.0.1:8080/v1",
@@ -361,6 +364,9 @@
           nativeTools: true,
           agentMode: false,
           agentMaxRounds: 25,
+          // Model names whose chat template refuses a system message that is
+          // not the first one; those get the system blocks merged into one.
+          singleSystemMessage: {},
         },
       };
       const DEFAULT_UI_FONTS = Object.freeze({
