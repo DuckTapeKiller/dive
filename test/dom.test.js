@@ -287,7 +287,7 @@ function waitFor(predicate, timeoutMs = 1000) {
 // event loop alive forever and hang `node --test`.
 const openDoms = [];
 
-function createDom() {
+function createDom(fetchImpl = createFetchStub()) {
   const errors = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on("jsdomError", (error) => errors.push(error));
@@ -298,7 +298,7 @@ function createDom() {
     runScripts: "dangerously",
     virtualConsole,
     beforeParse(window) {
-      window.fetch = createFetchStub();
+      window.fetch = fetchImpl;
     },
   });
 
@@ -453,6 +453,63 @@ test("frontend boots without network fetch crashes", async () => {
     dom.window.document.getElementById("ollamaRepeatLastNInput").value,
     "256",
   );
+});
+
+test("embedding model discovery retries and preserves an explicit Custom choice", async () => {
+  const model = "text-embedding-nomic-embed-text-v2-moe";
+  const baseFetch = createFetchStub();
+  let llamacppReady = false;
+  const fetchImpl = async (url, options) => {
+    const path = String(url).replace("http://localhost", "");
+    if (path === "/api/library/config") {
+      const response = await baseFetch(url, options);
+      const payload = await response.json();
+      payload.config.embedding.model = model;
+      payload.config.embedding.ollamaBaseUrl = "http://127.0.0.1:8131";
+      return jsonResponse(payload);
+    }
+    if (path === "/api/llamacpp/models") {
+      return llamacppReady
+        ? jsonResponse({
+            models: ["gemma-4-E4B-it-Q8_0"],
+            embeddingModels: [model],
+          })
+        : jsonResponse({ error: "llama.cpp is still starting" }, 503);
+    }
+    return baseFetch(url, options);
+  };
+  const { dom, errors } = createDom(fetchImpl);
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  const select = dom.window.document.getElementById(
+    "databaseEmbeddingModelSelect",
+  );
+  assert.strictEqual(select.value, "__custom__");
+  llamacppReady = true;
+  dom.window.switchSettingsTab("database");
+  await waitFor(
+    () =>
+      select.value === model &&
+      Array.from(select.options).some((option) => option.value === model),
+  );
+
+  const customOption = Array.from(
+    select.nextElementSibling.querySelectorAll(".custom-select-option"),
+  ).find((option) => option.textContent === "Custom model id");
+  customOption.click();
+  assert.strictEqual(select.value, "__custom__");
+  await dom.window.fetchLocalModelList("llamacpp");
+  assert.strictEqual(select.value, "__custom__");
+  assert.notStrictEqual(
+    dom.window.document.getElementById("databaseEmbeddingModelCustomInput")
+      .style.display,
+    "none",
+  );
+  assert.deepStrictEqual(errors, []);
 });
 
 test("palette change listener updates UI state", async () => {

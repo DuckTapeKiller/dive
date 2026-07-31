@@ -417,37 +417,34 @@
         };
       }
 
-      let embeddingModelFetchTried = false;
-      function renderEmbeddingModelSelect(currentModel) {
+      // A model-list request can race the llama.cpp manager while its embedding
+      // slot is starting. Keep the request shareable, but do not make the
+      // discovery permanently one-shot: opening the Database tab again should
+      // be able to recover from a failed first attempt.
+      let embeddingModelDiscoveryPromise = null;
+      // null means the value was populated by Dive, not deliberately chosen by
+      // the user. Once the user picks Custom, asynchronous discovery must never
+      // switch the form back to a discovered model.
+      let embeddingModelUserChoice = null;
+
+      function noteEmbeddingModelSelection(value) {
+        embeddingModelUserChoice =
+          value === "__custom__" ? "__custom__" : String(value || "");
+      }
+
+      function savedEmbeddingModel() {
+        return String(databaseConfig?.embedding?.model || "").trim();
+      }
+
+      function renderEmbeddingModelSelect(
+        currentModel,
+        { preserveCustom = false } = {},
+      ) {
         const select = document.getElementById("databaseEmbeddingModelSelect");
         const customInput = document.getElementById(
           "databaseEmbeddingModelCustomInput",
         );
         if (!select) return;
-        // Best-effort: discover local-server embedding models (LM Studio's
-        // bundled embedder) even if the user never opened the LM Studio tab.
-        if (
-          !embeddingModelFetchTried &&
-          !(localEmbeddingModelsCache.lmstudio || []).length
-        ) {
-          embeddingModelFetchTried = true;
-          fetchLocalModelList("lmstudio")
-            .then(() => {
-              const current = document.getElementById(
-                "databaseEmbeddingModelSelect",
-              );
-              // Re-render only if the user has not switched to Custom in the
-              // meantime; keep whatever value is currently selected.
-              if (
-                (localEmbeddingModelsCache.lmstudio || []).length &&
-                current &&
-                current.value !== "__custom__"
-              ) {
-                renderEmbeddingModelSelect(current.value || currentModel);
-              }
-            })
-            .catch(() => {});
-        }
         // Only models the servers actually report as installed: Ollama's
         // downloaded models plus LM Studio / llama.cpp embedding models. A
         // saved model that no server reports falls back to the Custom input
@@ -461,7 +458,7 @@
             ].filter(Boolean),
           ),
         ];
-        const currentKnown = models.includes(currentModel);
+        const currentKnown = !preserveCustom && models.includes(currentModel);
         select.innerHTML = "";
         models.forEach((modelName) => {
           const option = document.createElement("option");
@@ -475,24 +472,75 @@
         select.appendChild(customOption);
         // An unset model shows an explicit placeholder instead of being
         // dumped into the Custom input as if something were configured.
-        if (!currentModel) {
+        if (!currentModel && !preserveCustom) {
           const placeholder = document.createElement("option");
           placeholder.value = "";
           placeholder.textContent = "Select an embedding model";
           select.insertBefore(placeholder, select.firstChild);
         }
-        select.value = currentKnown
-          ? currentModel
-          : currentModel
-            ? "__custom__"
-            : "";
+        select.value = preserveCustom
+          ? "__custom__"
+          : currentKnown
+            ? currentModel
+            : currentModel
+              ? "__custom__"
+              : "";
         if (customInput) {
           customInput.style.display =
             select.value === "__custom__" ? "" : "none";
-          customInput.value = currentKnown || !currentModel ? "" : currentModel;
+          customInput.value = preserveCustom
+            ? currentModel
+            : currentKnown || !currentModel
+              ? ""
+              : currentModel;
         }
         refreshCustomSelectUi(select);
         if (currentKnown) syncEmbeddingBaseUrlToModel(currentModel);
+      }
+
+      // Rebuild the visible Database dropdown from the caches without issuing
+      // another network request. This is called by every local-model refresh,
+      // not only by the initial discovery Promise.
+      function refreshEmbeddingModelSelectFromCache() {
+        const select = document.getElementById("databaseEmbeddingModelSelect");
+        if (!select) return;
+        const customInput = document.getElementById(
+          "databaseEmbeddingModelCustomInput",
+        );
+        const preserveCustom =
+          select.value === "__custom__" &&
+          embeddingModelUserChoice === "__custom__";
+        const fallback = savedEmbeddingModel();
+        const currentModel = preserveCustom
+          ? String(customInput?.value || "").trim()
+          : select.value === "__custom__"
+            ? String(customInput?.value || fallback).trim()
+            : String(select.value || fallback).trim();
+        renderEmbeddingModelSelect(currentModel, { preserveCustom });
+      }
+
+      // Fetch both local servers. Concurrent callers share the same request;
+      // callers after it settles start a fresh request, which makes tab reopen
+      // and explicit model refreshes reliable after a server-start race.
+      function refreshEmbeddingModelOptions() {
+        if (embeddingModelDiscoveryPromise) {
+          return embeddingModelDiscoveryPromise;
+        }
+        let request;
+        request = Promise.allSettled([
+          fetchLocalModelList("lmstudio"),
+          fetchLocalModelList("llamacpp"),
+        ])
+          .then(() => {
+            refreshEmbeddingModelSelectFromCache();
+          })
+          .finally(() => {
+            if (embeddingModelDiscoveryPromise === request) {
+              embeddingModelDiscoveryPromise = null;
+            }
+          });
+        embeddingModelDiscoveryPromise = request;
+        return request;
       }
 
       // llama.cpp runs embedding models in their own llama-server on the chat
@@ -712,7 +760,21 @@
         if (keywordInput) {
           keywordInput.checked = databaseConfig.search.keywordEnabled;
         }
-        renderEmbeddingModelSelect(databaseConfig.embedding.model);
+        const embeddingModelSelect = document.getElementById(
+          "databaseEmbeddingModelSelect",
+        );
+        const embeddingCustomInput = document.getElementById(
+          "databaseEmbeddingModelCustomInput",
+        );
+        const preserveCustomEmbeddingModel =
+          embeddingModelSelect?.value === "__custom__" &&
+          embeddingModelUserChoice === "__custom__";
+        renderEmbeddingModelSelect(
+          preserveCustomEmbeddingModel
+            ? String(embeddingCustomInput?.value || "").trim()
+            : databaseConfig.embedding.model,
+          { preserveCustom: preserveCustomEmbeddingModel },
+        );
         if (baseUrlInput) {
           // Show what was saved. Only an untouched default gets replaced by the
           // URL of the server that reports the saved model, so a stale default
@@ -1102,6 +1164,9 @@
           librarySettings = getDatabaseModeSettings(mode);
         }
         renderDatabaseConfigForm();
+        // The local servers may already be running, or may still be starting;
+        // share this first discovery with any Database-tab refresh.
+        refreshEmbeddingModelOptions();
       }
 
       function describeDatabaseIndexSettingChanges(previous, next) {
@@ -3360,6 +3425,7 @@
               evt.type === "thinking_start" ||
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
+              evt.type === "gallery_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3527,6 +3593,7 @@
               evt.type === "thinking_start" ||
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
+              evt.type === "gallery_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3663,6 +3730,7 @@
               evt.type === "thinking_end" ||
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
+              evt.type === "gallery_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3810,6 +3878,7 @@
               evt.type === "thinking_end" ||
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
+              evt.type === "gallery_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||

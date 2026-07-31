@@ -340,6 +340,12 @@
           }
         }
         renderLocalModelOptions(modeId, localModelsCache[modeId]);
+        // The Database embedding dropdown shares these caches. Rebuild it
+        // whenever a local model list changes, including later manual refreshes
+        // after a server that was still starting becomes reachable.
+        if (typeof refreshEmbeddingModelSelectFromCache === "function") {
+          refreshEmbeddingModelSelectFromCache();
+        }
         if (mode === modeId) {
           populateTopbarModelSelect();
           // Surface the loaded context window as the token-counter limit even

@@ -156,6 +156,17 @@
         if (runMode === "pi") ensurePiEventChannel();
 
         let displayText = text;
+        if (/^\s*\/gallery-download\b/i.test(text)) {
+          try {
+            const selection = JSON.parse(text.replace(/^\s*\/gallery-download\b\s*/i, ""));
+            const count = Array.isArray(selection.selectedIndices)
+              ? selection.selectedIndices.length
+              : 0;
+            displayText = `Download ${count} selected image${count === 1 ? "" : "s"}`;
+          } catch (_error) {
+            displayText = "Download selected gallery images";
+          }
+        }
         let outgoingImages = null;
         // Storage form of the same attachments: URL refs, no base64, so the
         // conversation snapshot stays small while the images stay in history.
@@ -1783,6 +1794,13 @@
           panel.classList.toggle("active", isActive);
           panel.hidden = !isActive;
         });
+        if (nextTab === "database") {
+          // A local server may have finished starting since the last visit.
+          // Refresh the embedding list when the Database tab is opened, while
+          // sharing any discovery request already in flight.
+          refreshEmbeddingModelSelectFromCache();
+          refreshEmbeddingModelOptions();
+        }
       }
 
       function updateSettingsTabAvailability(state = {}) {
@@ -1992,6 +2010,11 @@
 
       // Auto-save notes on input
       document.addEventListener("input", (e) => {
+        if (e.target.id === "databaseEmbeddingModelCustomInput") {
+          // Typing into the Custom field is also an explicit choice, even if
+          // the select's change event was not delivered by a custom widget.
+          noteEmbeddingModelSelection("__custom__");
+        }
         if (e.target.matches('input[type="range"]')) {
           const display = e.target.nextElementSibling;
           if (display && display.classList.contains("setting-range-value")) {
@@ -2484,6 +2507,7 @@
           ) {
             saveOllamaOptionsFromForm();
           } else if (e.target.id === "databaseEmbeddingModelSelect") {
+            noteEmbeddingModelSelection(e.target.value);
             const customInput = document.getElementById(
               "databaseEmbeddingModelCustomInput",
             );

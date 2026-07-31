@@ -1255,8 +1255,13 @@
           return String(argsPreview);
         };
 
+        const galleryBox = document.createElement("div");
+        galleryBox.className = "gallery-preview-slot";
+        galleryBox.style.display = "none";
+
         wrap.appendChild(timeline);
         wrap.appendChild(widgetsBox);
+        wrap.appendChild(galleryBox);
         wrap.appendChild(plain);
         wrap.appendChild(details);
         wrap.appendChild(debugDetails);
@@ -1299,6 +1304,7 @@
           ? [...initialSnapshot.passages]
           : [];
         let hasReasoning = Boolean(reasoningText);
+        let hasGalleryPreview = false;
         let traceCount = traceLines.length;
         let hasFailure =
           initialSnapshot.status === "error" ||
@@ -1389,6 +1395,218 @@
 
               passagesBody.appendChild(entry);
             });
+            scrollChatToBottom();
+          },
+          setGalleryPreview(preview) {
+            if (!preview || !Array.isArray(preview.candidates)) return;
+            hasGalleryPreview = true;
+            if (!isActiveView()) return;
+
+            const candidates = preview.candidates;
+            const selected = new Set();
+            const cards = [];
+            const panel = document.createElement("section");
+            panel.className = "gallery-preview";
+            panel.setAttribute("aria-label", "Gallery preview");
+
+            const header = document.createElement("div");
+            header.className = "gallery-preview-header";
+            const heading = document.createElement("div");
+            heading.className = "gallery-preview-heading";
+            const title = document.createElement("div");
+            title.className = "gallery-preview-title";
+            title.textContent = "Gallery preview";
+            const subtitle = document.createElement("div");
+            subtitle.className = "gallery-preview-subtitle";
+            subtitle.textContent = `${candidates.length} image${candidates.length === 1 ? "" : "s"} found${preview.destinationPath ? ` · ${preview.destinationPath}` : ""}`;
+            heading.append(title, subtitle);
+            header.appendChild(heading);
+
+            const toolbar = document.createElement("div");
+            toolbar.className = "gallery-preview-toolbar";
+            const search = document.createElement("input");
+            search.type = "search";
+            search.className = "gallery-preview-search";
+            search.placeholder = "Filter filenames";
+            search.setAttribute("aria-label", "Filter gallery filenames");
+            const selectAll = document.createElement("button");
+            selectAll.type = "button";
+            selectAll.className = "gallery-preview-tool-button";
+            selectAll.textContent = "Select all";
+            const clear = document.createElement("button");
+            clear.type = "button";
+            clear.className = "gallery-preview-tool-button";
+            clear.textContent = "Clear";
+            toolbar.append(search, selectAll, clear);
+            header.appendChild(toolbar);
+            panel.appendChild(header);
+
+            const grid = document.createElement("div");
+            grid.className = "gallery-preview-grid";
+
+            const formatBytes = (value) => {
+              const bytes = Number(value);
+              if (!Number.isFinite(bytes) || bytes < 0) return "Size unavailable";
+              if (bytes < 1024) return `${bytes} B`;
+              const units = ["KB", "MB", "GB", "TB"];
+              let amount = bytes;
+              let unit = -1;
+              while (amount >= 1024 && unit < units.length - 1) {
+                amount /= 1024;
+                unit += 1;
+              }
+              return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+            };
+            const updateSelection = () => {
+              const count = selected.size;
+              selectionCount.textContent = `${count} selected`;
+              download.disabled = count === 0;
+              download.textContent = count ? `Download ${count} selected` : "Download selected";
+              for (const entry of cards) {
+                const active = selected.has(entry.item.index);
+                entry.card.classList.toggle("selected", active);
+                entry.checkbox.checked = active;
+              }
+            };
+            const toggle = (item) => {
+              if (selected.has(item.index)) selected.delete(item.index);
+              else selected.add(item.index);
+              updateSelection();
+            };
+
+            for (const item of candidates) {
+              const card = document.createElement("article");
+              card.className = "gallery-preview-card";
+              card.tabIndex = 0;
+              card.dataset.filename = String(item.displayName || "").toLowerCase();
+              const top = document.createElement("div");
+              top.className = "gallery-preview-card-top";
+              const number = document.createElement("span");
+              number.className = "gallery-preview-number";
+              number.textContent = String(item.index).padStart(2, "0");
+              const checkbox = document.createElement("input");
+              checkbox.type = "checkbox";
+              checkbox.className = "dive-check";
+              checkbox.checked = false;
+              checkbox.setAttribute("aria-label", `Select image ${item.index}`);
+              top.append(number, checkbox);
+              card.appendChild(top);
+
+              const imageFrame = document.createElement("div");
+              imageFrame.className = "gallery-preview-image-frame";
+              if (item.url) {
+                const image = document.createElement("img");
+                image.className = "gallery-preview-image";
+                image.src = item.url;
+                image.alt = item.displayName || `Image ${item.index}`;
+                image.loading = "lazy";
+                image.referrerPolicy = "no-referrer";
+                image.addEventListener("error", () => {
+                  image.remove();
+                  const unavailable = document.createElement("span");
+                  unavailable.className = "gallery-preview-unavailable";
+                  unavailable.textContent = "Preview unavailable";
+                  imageFrame.appendChild(unavailable);
+                }, { once: true });
+                imageFrame.appendChild(image);
+              } else {
+                const unavailable = document.createElement("span");
+                unavailable.className = "gallery-preview-unavailable";
+                unavailable.textContent = "Preview unavailable";
+                imageFrame.appendChild(unavailable);
+              }
+              card.appendChild(imageFrame);
+
+              const name = document.createElement("div");
+              name.className = "gallery-preview-filename";
+              name.textContent = item.displayName || `Image ${item.index}`;
+              name.title = name.textContent;
+              card.appendChild(name);
+
+              const metadata = item.metadata || {};
+              const dimensions = metadata.dimensions && metadata.dimensions.widthPx && metadata.dimensions.heightPx
+                ? `${metadata.dimensions.widthPx} × ${metadata.dimensions.heightPx}`
+                : "Dimensions unavailable";
+              const format = metadata.mimeType
+                ? String(metadata.mimeType).replace(/^image\//i, "").toUpperCase()
+                : "Format unavailable";
+              const meta = document.createElement("div");
+              meta.className = "gallery-preview-meta";
+              meta.textContent = `${dimensions} · ${formatBytes(metadata.sizeBytes)} · ${format}`;
+              card.appendChild(meta);
+
+              if (item.duplicateOf) {
+                const duplicate = document.createElement("div");
+                duplicate.className = "gallery-preview-badge";
+                duplicate.textContent = `Duplicate of #${item.duplicateOf}`;
+                card.appendChild(duplicate);
+              }
+              if (metadata.error) card.title = metadata.error;
+
+              checkbox.addEventListener("click", (event) => event.stopPropagation());
+              checkbox.addEventListener("change", () => toggle(item));
+              card.addEventListener("click", (event) => {
+                if (event.target === checkbox) return;
+                toggle(item);
+              });
+              card.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  toggle(item);
+                }
+              });
+              cards.push({ card, checkbox, item });
+              grid.appendChild(card);
+            }
+            panel.appendChild(grid);
+
+            if (Array.isArray(preview.warnings) && preview.warnings.length) {
+              const warning = document.createElement("div");
+              warning.className = "gallery-preview-warning";
+              warning.textContent = preview.warnings.map((item) => item.detail || item.url).join(" · ");
+              panel.appendChild(warning);
+            }
+
+            const footer = document.createElement("div");
+            footer.className = "gallery-preview-footer";
+            const selectionCount = document.createElement("span");
+            selectionCount.className = "gallery-preview-selection-count";
+            const download = document.createElement("button");
+            download.type = "button";
+            download.className = "gallery-preview-download";
+            download.disabled = true;
+            download.textContent = "Download selected";
+            footer.append(selectionCount, download);
+            panel.appendChild(footer);
+
+            search.addEventListener("input", () => {
+              const needle = search.value.trim().toLowerCase();
+              for (const entry of cards) {
+                entry.card.hidden = needle && !entry.card.dataset.filename.includes(needle);
+              }
+            });
+            selectAll.addEventListener("click", () => {
+              const allSelected = selected.size === candidates.length;
+              selected.clear();
+              if (!allSelected) candidates.forEach((item) => selected.add(item.index));
+              updateSelection();
+            });
+            clear.addEventListener("click", () => {
+              selected.clear();
+              updateSelection();
+            });
+            download.addEventListener("click", () => {
+              const indices = [...selected].sort((a, b) => a - b);
+              if (!indices.length) return;
+              download.disabled = true;
+              download.textContent = "Preparing download…";
+              if (typeof sendGallerySelection === "function") {
+                sendGallerySelection(preview, indices);
+              }
+            });
+            updateSelection();
+            galleryBox.replaceChildren(panel);
+            galleryBox.style.display = "block";
             scrollChatToBottom();
           },
           setPhase(label) {
@@ -1587,7 +1805,7 @@
             return hasReasoning;
           },
           get hadTrace() {
-            return traceLines.length > 0 || liveWidgets.size > 0;
+            return traceLines.length > 0 || liveWidgets.size > 0 || hasGalleryPreview;
           },
           get hadPassages() {
             return currentPassages.length > 0;
@@ -1626,6 +1844,8 @@
               controller.setLiveWidget(toolWidgetKey(evt), null);
             } else if (evt.type === "pi_widget" && Array.isArray(evt.lines)) {
               controller.setLiveWidget(evt.key || "widget", evt.lines);
+            } else if (evt.type === "gallery_preview") {
+              controller.setGalleryPreview(evt);
             }
           }
           controller.finalizeTimeline();
@@ -3413,6 +3633,13 @@
           return;
         }
 
+        if (evt.type === "gallery_preview") {
+          if (typeof thinking.setGalleryPreview === "function") {
+            thinking.setGalleryPreview(evt);
+          }
+          return;
+        }
+
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
           const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
@@ -3521,6 +3748,20 @@
           }
           if (typeof thinking.stopTimer === "function") thinking.stopTimer();
         }
+      }
+
+      function sendGallerySelection(preview, indices) {
+        const inputEl = document.getElementById("input");
+        if (!inputEl || !preview || !Array.isArray(indices) || !indices.length) return;
+        const payload = {
+          previewId: preview.previewId,
+          selectedIndices: indices,
+          urls: Array.isArray(preview.sourceUrls) ? preview.sourceUrls : [],
+          destinationPath: preview.destinationPath || undefined,
+        };
+        inputEl.value = `/gallery-download ${JSON.stringify(payload)}`;
+        if (typeof autoResizeInput === "function") autoResizeInput();
+        if (typeof sendMessage === "function") sendMessage();
       }
 
       function captureLibrarySources(evt, state, assistantDiv) {

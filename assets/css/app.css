@@ -3403,3 +3403,213 @@
         background-color: var(--text-inverse);
         color: var(--bg-inverse);
       }
+
+      /* Gallery preview panel: structured plugin output rendered outside the
+         model's chat prose so filenames and metadata stay exact. */
+      .gallery-preview-slot {
+        width: 100%;
+        max-width: none;
+        align-self: stretch;
+        margin: 10px 0 14px;
+      }
+      .gallery-preview {
+        width: 100%;
+        color: var(--text-normal);
+        background: color-mix(in srgb, var(--bg-primary) 94%, var(--accent));
+        border: none;
+        box-shadow: none;
+        padding: 16px;
+      }
+      .gallery-preview-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+      }
+      .gallery-preview-heading {
+        min-width: 220px;
+      }
+      .gallery-preview-title {
+        color: var(--text-normal);
+        font-size: calc(15px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 0.03em;
+      }
+      .gallery-preview-subtitle {
+        color: color-mix(in srgb, var(--text-normal) 70%, transparent);
+        font-size: calc(11px * var(--font-scale, 1));
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+      }
+      .gallery-preview-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .gallery-preview-search {
+        width: 170px;
+        min-height: 30px;
+        padding: 6px 8px;
+        color: var(--text-normal);
+        background: color-mix(in srgb, var(--text-normal) 8%, transparent);
+        border: none;
+        outline: none;
+      }
+      .gallery-preview-search:focus {
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
+      }
+      .gallery-preview-tool-button,
+      .gallery-preview-download {
+        min-height: 30px;
+        padding: 6px 9px;
+        color: var(--text-normal);
+        background: color-mix(in srgb, var(--text-normal) 10%, transparent);
+        cursor: pointer;
+        font-size: calc(10px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .gallery-preview-tool-button:hover,
+      .gallery-preview-download:not(:disabled):hover {
+        color: var(--bg-primary);
+        background: var(--accent);
+      }
+      .gallery-preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+        gap: 9px;
+        max-height: min(570px, 60vh);
+        overflow-y: auto;
+        padding: 2px;
+      }
+      .gallery-preview-card {
+        min-width: 0;
+        padding: 8px;
+        color: var(--text-normal);
+        background: color-mix(in srgb, var(--bg-secondary) 72%, var(--bg-primary));
+        border: none;
+        outline: none;
+        cursor: pointer;
+        transition: background 120ms ease, color 120ms ease;
+      }
+      .gallery-preview-card:hover,
+      .gallery-preview-card:focus-visible {
+        background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+      }
+      .gallery-preview-card.selected {
+        border: 2px solid var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary));
+      }
+      .gallery-preview-card[hidden] {
+        display: none;
+      }
+      .gallery-preview-card-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        min-height: 20px;
+        margin-bottom: 6px;
+      }
+      .gallery-preview-number {
+        color: var(--accent);
+        font-size: calc(10px * var(--font-scale, 1));
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      .gallery-preview-image-frame {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--text-normal) 9%, transparent);
+      }
+      .gallery-preview-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .gallery-preview-unavailable {
+        color: color-mix(in srgb, var(--text-normal) 55%, transparent);
+        font-size: calc(10px * var(--font-scale, 1));
+        text-align: center;
+        padding: 12px;
+      }
+      .gallery-preview-filename {
+        margin-top: 8px;
+        overflow: hidden;
+        color: var(--text-normal);
+        font-size: calc(10px * var(--font-scale, 1));
+        font-weight: 700;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .gallery-preview-meta {
+        margin-top: 4px;
+        color: color-mix(in srgb, var(--text-normal) 68%, transparent);
+        font-size: calc(9px * var(--font-scale, 1));
+        line-height: 1.35;
+      }
+      .gallery-preview-badge {
+        display: inline-block;
+        margin-top: 5px;
+        padding: 2px 4px;
+        color: color-mix(in srgb, var(--text-normal) 75%, transparent);
+        background: color-mix(in srgb, var(--text-normal) 9%, transparent);
+        font-size: calc(8px * var(--font-scale, 1));
+        letter-spacing: 0.02em;
+      }
+      .gallery-preview-warning {
+        margin-top: 10px;
+        padding: 7px 8px;
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
+        font-size: calc(9px * var(--font-scale, 1));
+        line-height: 1.4;
+      }
+      .gallery-preview-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 14px;
+        padding-top: 12px;
+      }
+      .gallery-preview-selection-count {
+        color: color-mix(in srgb, var(--text-normal) 75%, transparent);
+        font-size: calc(10px * var(--font-scale, 1));
+      }
+      .gallery-preview-download {
+        color: var(--bg-primary);
+        background: var(--accent);
+      }
+      .gallery-preview-download:disabled {
+        color: color-mix(in srgb, var(--text-normal) 45%, transparent);
+        background: color-mix(in srgb, var(--text-normal) 10%, transparent);
+        cursor: not-allowed;
+      }
+      @media (max-width: 600px) {
+        .gallery-preview-slot {
+          width: 100%;
+        }
+        .gallery-preview {
+          padding: 11px;
+        }
+        .gallery-preview-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          max-height: 55vh;
+        }
+        .gallery-preview-toolbar {
+          width: 100%;
+          justify-content: flex-start;
+        }
+        .gallery-preview-search {
+          flex: 1 1 150px;
+        }
+      }

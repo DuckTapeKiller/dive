@@ -732,6 +732,37 @@ module.exports = function createChatDomain(deps) {
     });
   }
 
+  function pluginUiPayload(result) {
+    if (typeof result !== "string") return null;
+    try {
+      const parsed = JSON.parse(result);
+      return parsed && parsed.__diveUi ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function presentPluginUiResult(result, emit) {
+    const payload = pluginUiPayload(result);
+    if (!payload) return result;
+    if (payload.__diveUi === "gallery_preview") {
+      emit({
+        type: "gallery_preview",
+        previewId: payload.previewId,
+        sourceUrls: Array.isArray(payload.sourceUrls) ? payload.sourceUrls : [],
+        destinationPath: payload.destinationPath || "",
+        strategy: payload.strategy || "auto",
+        candidates: Array.isArray(payload.candidates) ? payload.candidates : [],
+        warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+      });
+      return (
+        payload.modelText ||
+        "Gallery preview displayed in the Dive interface. Ask the user to select images in the preview panel."
+      );
+    }
+    return result;
+  }
+
   async function executeToolCallWithConfirmation(toolCall, emit, skillMode) {
     // A disabled skill must NOT crash the stream. Return an instructive result
     // so the model recovers by using one of its enabled skills instead.
@@ -744,10 +775,20 @@ module.exports = function createChatDomain(deps) {
         .join(", ");
       return `${error.message} Do NOT call it again. Use one of your ENABLED skills instead (${enabled}) to answer the question.`;
     }
-    const requiresShellConfirmation = skillRequiresShellConfirmation(
-      toolCall.function.name,
-      DATA_DIR,
-    );
+    let gallerySelection = null;
+    if (toolCall.function.name === "download_images_with_gallery_dl") {
+      try {
+        gallerySelection = JSON.parse(toolCall.function.arguments || "{}");
+      } catch (_error) {
+        gallerySelection = null;
+      }
+    }
+    const isGalleryPreview =
+      toolCall.function.name === "download_images_with_gallery_dl" &&
+      !Array.isArray(gallerySelection?.selectedIndices);
+    const requiresShellConfirmation = isGalleryPreview
+      ? false
+      : skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR);
     let decision = { allowed: true, reason: "not-required" };
     if (requiresShellConfirmation) {
       decision = await requestShellConfirmation({
@@ -783,12 +824,13 @@ module.exports = function createChatDomain(deps) {
         tool: toolCall.function.name,
       });
     }
-    return await executeSkill(toolCall, {
+    const result = await executeSkill(toolCall, {
       dataDir: DATA_DIR,
       mode: skillMode,
       allowShellCommand: requiresShellConfirmation,
       cloudKeys: getCloudSearchKeys(),
     });
+    return presentPluginUiResult(result, emit);
   }
 
   function confirmationTitleForTool(toolName) {
@@ -796,10 +838,31 @@ module.exports = function createChatDomain(deps) {
     if (toolName === "run_python") return "Python Execution Request";
     if (toolName === "macos_control") return "macOS Control Request";
     if (toolName === "shell_command") return "Shell Command Execution Request";
+    if (toolName === "download_images_with_gallery_dl") {
+      return "Confirm selected image download";
+    }
     return `Action Request (${toolName})`;
   }
 
   function confirmationMessageForTool(toolName, command) {
+    if (toolName === "download_images_with_gallery_dl") {
+      try {
+        const payload = JSON.parse(String(command || "{}"));
+        const selected = Array.isArray(payload.selectedIndices)
+          ? payload.selectedIndices
+              .map(Number)
+              .filter(Number.isInteger)
+              .sort((a, b) => a - b)
+          : [];
+        const destination = payload.destinationPath || "~/Downloads";
+        if (!selected.length) {
+          return "The gallery preview is ready. No files will be downloaded until images are selected.";
+        }
+        return `Download ${selected.length} selected image${selected.length === 1 ? "" : "s"} (candidate${selected.length === 1 ? "" : "s"} ${selected.join(", ")}) to ${destination}?`;
+      } catch (_error) {
+        return "Download the selected gallery images?";
+      }
+    }
     if (toolName === "run_code" || toolName === "shell_command") {
       const what =
         toolName === "run_code" ? "JavaScript code" : "shell command";
@@ -934,6 +997,40 @@ module.exports = function createChatDomain(deps) {
     }
   }
 
+  // The embedding models llama.cpp is actually serving, by the names that
+  // server answers to, or null when it cannot be reached.
+  //
+  // The embedding slot lives on the chat port + 1 (slotPort in
+  // routes/llamacpp.js). Names are taken as-is rather than filtered on /embed/:
+  // that server hosts nothing but embedding models, and a perfectly ordinary
+  // embedder whose name does not happen to contain "embed" would otherwise be
+  // dropped from the list.
+  async function fetchLlamaCppEmbeddingModelIds(chatBaseUrl) {
+    let url;
+    try {
+      url = new URL(chatBaseUrl.replace(/\/v\d+$/, ""));
+      const chatPort = Number(url.port);
+      if (!Number.isInteger(chatPort) || chatPort <= 0) return null;
+      url.port = String(chatPort + 1);
+    } catch {
+      return null;
+    }
+    try {
+      const res = await fetch(`${url.origin}/v1/models`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const list = Array.isArray(data?.data) ? data.data : [];
+      return list
+        .map((m) => String(m?.id || m?.name || m?.model || ""))
+        .filter((id) => id && !/mmproj/i.test(id));
+    } catch {
+      // Not running is the ordinary case, not an error worth surfacing.
+      return null;
+    }
+  }
+
   async function fetchLocalModels(modeId) {
     const settings = loadLocalModelSettings();
     const baseUrl = normalizeLocalBaseUrl(
@@ -982,7 +1079,23 @@ module.exports = function createChatDomain(deps) {
     // chat — keep them out of the chat dropdown and report them separately so
     // the Database settings can offer them as embedding backends.
     const models = chatableIds.filter((id) => !/embed/i.test(id));
-    const embeddingModels = chatableIds.filter((id) => /embed/i.test(id));
+    let embeddingModels = chatableIds.filter((id) => /embed/i.test(id));
+    // llama.cpp serves embedding models from a SECOND server, on the chat port
+    // + 1, and that is the one whose names matter: a preset section can be
+    // named anything, and the embedding one deliberately carries an alias the
+    // library's vector index is keyed to. The chat router advertises the same
+    // .gguf too — it scans the whole models folder — but under the filename
+    // stem, which is a name nothing will answer to. Offering those meant the
+    // Database dropdown listed an embedding model the user does not have,
+    // while the one actually in use was missing from the list.
+    if (modeId === "llamacpp") {
+      const fromEmbedServer = await fetchLlamaCppEmbeddingModelIds(baseUrl);
+      // The chat router's filename stems are not valid embedding IDs: the
+      // embedding slot is a separate server and may use an alias unrelated to
+      // the GGUF filename. If that server is unavailable, report no embedding
+      // models rather than offering a name that cannot answer embedding calls.
+      embeddingModels = Array.isArray(fromEmbedServer) ? fromEmbedServer : [];
+    }
     // The OpenAI-compat /v1/models list is used for model IDs, but we extract the
     // actual loaded context window from the v1 loaded_instances config (or
     // llama.cpp's /props), so the UI can show "used / context".

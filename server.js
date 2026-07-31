@@ -2085,6 +2085,21 @@ function sanitizeModelMessages(messages) {
     });
 }
 
+function storedConversationMessageText(message) {
+  const raw = String(message || "");
+  const match = raw.match(/^\s*\/gallery-download\b\s*([\s\S]*)$/i);
+  if (!match) return message;
+  try {
+    const payload = JSON.parse(match[1]);
+    const count = Array.isArray(payload?.selectedIndices)
+      ? payload.selectedIndices.length
+      : 0;
+    return `Download ${count} selected image${count === 1 ? "" : "s"}`;
+  } catch (_error) {
+    return "Download selected gallery images";
+  }
+}
+
 function normalizeStoredConversationMessages(history, message, images) {
   const stored = [];
   const sourceHistory = Array.isArray(history) ? history : [];
@@ -2126,7 +2141,10 @@ function normalizeStoredConversationMessages(history, message, images) {
     }
     stored.push(clean);
   }
-  const newUserMessage = { role: "user", content: message };
+  const newUserMessage = {
+    role: "user",
+    content: storedConversationMessageText(message),
+  };
   const newImageRefs = attachmentRefsForStorage(images);
   if (newImageRefs.length) newUserMessage.images = newImageRefs;
   stored.push(newUserMessage);
@@ -2204,6 +2222,58 @@ function sanitizeTraceEventForStorage(event) {
   ]) {
     if (typeof event[key] === "boolean" || typeof event[key] === "number") {
       clean[key] = event[key];
+    }
+  }
+  if (type === "gallery_preview") {
+    if (typeof event.previewId === "string")
+      clean.previewId = event.previewId.slice(0, 120);
+    if (typeof event.destinationPath === "string") {
+      clean.destinationPath = event.destinationPath.slice(0, 1000);
+    }
+    if (typeof event.strategy === "string")
+      clean.strategy = event.strategy.slice(0, 80);
+    if (Array.isArray(event.sourceUrls)) {
+      clean.sourceUrls = event.sourceUrls
+        .slice(0, 20)
+        .map((url) => String(url).slice(0, 4000));
+    }
+    if (Array.isArray(event.candidates)) {
+      clean.candidates = event.candidates.slice(0, 500).map((item) => {
+        const metadata =
+          item && item.metadata && typeof item.metadata === "object"
+            ? item.metadata
+            : null;
+        return {
+          index: Number.isInteger(item?.index) ? item.index : 0,
+          url: String(item?.url || "").slice(0, 4000),
+          displayName: String(item?.displayName || "image").slice(0, 500),
+          duplicateOf: Number.isInteger(item?.duplicateOf)
+            ? item.duplicateOf
+            : null,
+          metadata: metadata
+            ? {
+                dimensions:
+                  metadata.dimensions && typeof metadata.dimensions === "object"
+                    ? {
+                        widthPx: Number(metadata.dimensions.widthPx) || 0,
+                        heightPx: Number(metadata.dimensions.heightPx) || 0,
+                      }
+                    : null,
+                sizeBytes: Number.isSafeInteger(metadata.sizeBytes)
+                  ? metadata.sizeBytes
+                  : null,
+                mimeType: String(metadata.mimeType || "").slice(0, 100),
+                error: String(metadata.error || "").slice(0, 500),
+              }
+            : null,
+        };
+      });
+    }
+    if (Array.isArray(event.warnings)) {
+      clean.warnings = event.warnings.slice(0, 20).map((warning) => ({
+        url: String(warning?.url || "").slice(0, 4000),
+        detail: String(warning?.detail || "").slice(0, 1000),
+      }));
     }
   }
   if (Array.isArray(event.lines)) {
@@ -2940,10 +3010,9 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader(
     "Content-Security-Policy",
-    // img-src allows data: so attachment thumbnails (inline base64 previews of
-    // what the user sent) can render; without it they fall back to
-    // default-src 'self' and are blocked.
-    `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
+    // img-src allows data: for user attachments and https: for gallery preview
+    // thumbnails rendered by trusted plugin UI events.
+    `default-src 'self'; script-src 'self' 'nonce-${cspNonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:${PORT} http://localhost:${PORT};`,
   );
 
   console.log("Incoming request:", req.method, req.url);

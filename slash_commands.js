@@ -136,6 +136,16 @@ function buildForcedSkillToolCall(command) {
     case "shell_command":
       args = { command: requiredInput(input, command.name) };
       break;
+    case "download_images_with_gallery_dl":
+      try {
+        args = JSON.parse(requiredInput(input, command.name));
+      } catch (_error) {
+        throw new Error(`/${command.name} requires a JSON gallery selection.`);
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        throw new Error(`/${command.name} requires a JSON gallery selection.`);
+      }
+      break;
     default:
       throw new Error(`Unsupported slash command: /${command.name}`);
   }
