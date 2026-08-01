@@ -19,10 +19,18 @@ This checklist maps to the top 10 hardening goals and tells you what is implemen
 
 ## Must Be Applied In Real Pi Runtime
 
-1. Install `@gotgenes/pi-permission-system`.
-2. Copy `security/pi-permissions.strict.jsonc` to:
-   - `~/.pi/agent/pi-permissions.jsonc`
-3. Reload/restart Pi so policy is enforced.
+1. Install and enable `npm:pi-sandbox` in Pi's agent settings.
+2. Configure the active sandbox policy in:
+   - `~/.pi/agent/sandbox.json` for global rules
+   - `.pi/sandbox.json` for project-specific rules
+3. Keep `allowRead` and `allowWrite` narrow. `allowWrite` also grants read
+   access, and paths in `denyWrite` remain hard-blocked.
+4. Reload/restart Pi so the policy is enforced. When Dive launches Pi in RPC
+   mode, `routes/pi-rpc-ui-compat.js` bridges pi-sandbox's terminal-only
+   permission screen to Dive's existing RPC dialog.
+
+The older `security/pi-permissions.strict.jsonc` file targets a different
+permission extension and is not read by the active `pi-sandbox` runtime.
 
 ## Operational Rules
 

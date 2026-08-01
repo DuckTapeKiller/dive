@@ -393,7 +393,15 @@ module.exports = function createPiDomain(deps) {
         ? settings.commandPath.trim()
         : "";
     const cmd = configuredCommand || getPiCommand();
-    const proc = spawn(cmd, ["--mode", "rpc"], {
+    const piArgs = ["--mode", "rpc"];
+    const rpcUiCompat = path.join(__dirname, "pi-rpc-ui-compat.js");
+    if (fs.existsSync(rpcUiCompat)) {
+      // Keep the frequently updated pi-sandbox package untouched. This
+      // Dive-owned RPC adapter translates its custom terminal prompt into the
+      // select dialog already handled by the web UI.
+      piArgs.push("--extension", rpcUiCompat);
+    }
+    const proc = spawn(cmd, piArgs, {
       cwd: settings.workingDirectory || DATA_DIR,
       env: buildPiEnv(),
     });
