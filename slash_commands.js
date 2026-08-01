@@ -146,6 +146,16 @@ function buildForcedSkillToolCall(command) {
         throw new Error(`/${command.name} requires a JSON gallery selection.`);
       }
       break;
+    case "download_media_with_ytdlp":
+      try {
+        args = JSON.parse(requiredInput(input, command.name));
+      } catch (_error) {
+        throw new Error(`/${command.name} requires a JSON media selection.`);
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        throw new Error(`/${command.name} requires a JSON media selection.`);
+      }
+      break;
     default:
       throw new Error(`Unsupported slash command: /${command.name}`);
   }

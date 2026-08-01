@@ -912,7 +912,13 @@ function saveClientConversation(id, title, mode, rawMessages, originClientId) {
         typeof m.content === "string",
     )
     .map((m) => {
-      const item = { role: m.role, content: m.content };
+      const item = {
+        role: m.role,
+        content:
+          m.role === "user"
+            ? storedConversationMessageText(m.content)
+            : m.content,
+      };
       // Attachment refs (never base64) so the thumbnails come back with the
       // conversation.
       if (m.role === "user" && Array.isArray(m.images) && m.images.length) {
@@ -2087,16 +2093,24 @@ function sanitizeModelMessages(messages) {
 
 function storedConversationMessageText(message) {
   const raw = String(message || "");
-  const match = raw.match(/^\s*\/gallery-download\b\s*([\s\S]*)$/i);
+  const galleryMatch = raw.match(/^\s*\/gallery-download\b\s*([\s\S]*)$/i);
+  const mediaMatch = raw.match(/^\s*\/mediadownload\b\s*([\s\S]*)$/i);
+  const match = galleryMatch || mediaMatch;
   if (!match) return message;
   try {
     const payload = JSON.parse(match[1]);
     const count = Array.isArray(payload?.selectedIndices)
       ? payload.selectedIndices.length
       : 0;
+    if (mediaMatch) {
+      const mode = payload?.mode === "video" ? "video" : "audio";
+      return `Download ${count} selected ${mode} ${count === 1 ? "entry" : "entries"}`;
+    }
     return `Download ${count} selected image${count === 1 ? "" : "s"}`;
   } catch (_error) {
-    return "Download selected gallery images";
+    return mediaMatch
+      ? "Download selected media entries"
+      : "Download selected gallery images";
   }
 }
 
@@ -2204,6 +2218,8 @@ function sanitizeTraceEventForStorage(event) {
     "message",
     "noticeType",
     "model",
+    "jobId",
+    "status",
   ]) {
     if (typeof event[key] === "string") clean[key] = event[key].slice(0, 4000);
   }
@@ -2268,6 +2284,62 @@ function sanitizeTraceEventForStorage(event) {
             : null,
         };
       });
+    }
+    if (Array.isArray(event.warnings)) {
+      clean.warnings = event.warnings.slice(0, 20).map((warning) => ({
+        url: String(warning?.url || "").slice(0, 4000),
+        detail: String(warning?.detail || "").slice(0, 1000),
+      }));
+    }
+  }
+  if (type === "media_playlist_preview") {
+    if (typeof event.previewId === "string")
+      clean.previewId = event.previewId.slice(0, 120);
+    if (typeof event.destinationPath === "string") {
+      clean.destinationPath = event.destinationPath.slice(0, 1000);
+    }
+    for (const key of [
+      "mode",
+      "audioFormat",
+      "videoContainer",
+      "compatibilityProfile",
+    ]) {
+      if (typeof event[key] === "string") clean[key] = event[key].slice(0, 100);
+    }
+    if (Array.isArray(event.sourceUrls)) {
+      clean.sourceUrls = event.sourceUrls
+        .slice(0, 20)
+        .map((url) => String(url).slice(0, 4000));
+    }
+    if (Array.isArray(event.candidates)) {
+      clean.candidates = event.candidates.slice(0, 500).map((item) => ({
+        index: Number.isInteger(item?.index) ? item.index : 0,
+        url: String(item?.url || "").slice(0, 4000),
+        webpageUrl: String(item?.webpageUrl || "").slice(0, 4000),
+        mediaUrl: String(item?.mediaUrl || "").slice(0, 4000),
+        title: String(item?.title || "").slice(0, 1000),
+        displayName: String(
+          item?.displayName || item?.title || "media entry",
+        ).slice(0, 1000),
+        description: String(item?.description || "").slice(0, 1000),
+        availability: String(item?.availability || "").slice(0, 100),
+        date: String(item?.date || "").slice(0, 100),
+        durationSeconds: Number.isFinite(Number(item?.durationSeconds))
+          ? Number(item.durationSeconds)
+          : null,
+        duration: String(item?.duration || "").slice(0, 50),
+        thumbnail: String(item?.thumbnail || "").slice(0, 4000),
+        series: String(item?.series || "").slice(0, 500),
+        season: String(item?.season || "").slice(0, 100),
+        episode: String(item?.episode || "").slice(0, 500),
+        episodeNumber: Number.isFinite(Number(item?.episodeNumber))
+          ? Number(item.episodeNumber)
+          : null,
+        playlistIndex: Number.isInteger(item?.playlistIndex)
+          ? item.playlistIndex
+          : null,
+        extractor: String(item?.extractor || "").slice(0, 200),
+      }));
     }
     if (Array.isArray(event.warnings)) {
       clean.warnings = event.warnings.slice(0, 20).map((warning) => ({

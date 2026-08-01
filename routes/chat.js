@@ -78,6 +78,115 @@ module.exports = function createChatDomain(deps) {
     DB_ON_PROMPT,
   } = deps;
 
+  const backgroundMediaJobs = new Map();
+  const BACKGROUND_MEDIA_JOB_RETENTION_MS = 5 * 60 * 1000;
+
+  function selectedDownloadDetails(toolCall) {
+    const toolName = toolCall?.function?.name;
+    if (
+      toolName !== "download_media_with_ytdlp" &&
+      toolName !== "download_images_with_gallery_dl"
+    ) {
+      return null;
+    }
+    let args;
+    try {
+      args = JSON.parse(toolCall.function.arguments || "{}");
+    } catch (_error) {
+      return null;
+    }
+    const indices = Array.isArray(args?.selectedIndices)
+      ? args.selectedIndices
+          .map(Number)
+          .filter((index) => Number.isInteger(index) && index > 0)
+      : [];
+    if (indices.length === 0) return null;
+    const count = new Set(indices).size;
+    const mode = args?.mode === "video" ? "video" : "audio";
+    const kind =
+      toolName === "download_images_with_gallery_dl"
+        ? `image${count === 1 ? "" : "s"}`
+        : `${mode} entr${count === 1 ? "y" : "ies"}`;
+    const mediaType =
+      toolName === "download_images_with_gallery_dl" ? "image" : mode;
+    return { args, count, kind, mediaType, toolName };
+  }
+
+  function cleanupBackgroundMediaJobs() {
+    const cutoff = Date.now() - BACKGROUND_MEDIA_JOB_RETENTION_MS;
+    for (const [jobId, job] of backgroundMediaJobs.entries()) {
+      if (job.completedAt && job.completedAt < cutoff) {
+        backgroundMediaJobs.delete(jobId);
+      }
+    }
+  }
+
+  function backgroundMediaJobSnapshot(job) {
+    return {
+      id: job.id,
+      toolName: job.toolName,
+      label: job.label,
+      count: job.count,
+      mediaType: job.mediaType,
+      status: job.status,
+      startedAt: job.startedAt,
+      updatedAt: job.updatedAt,
+      completedAt: job.completedAt || null,
+      message: job.message || "",
+    };
+  }
+
+  function startBackgroundMediaJob(toolCall, skillMode, details) {
+    const job = {
+      id: randomUUID(),
+      toolName: details.toolName,
+      label: `Download ${details.count} selected ${details.kind}`,
+      count: details.count,
+      mediaType: details.mediaType,
+      status: "running",
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: null,
+      message: "",
+    };
+    backgroundMediaJobs.set(job.id, job);
+
+    Promise.resolve()
+      .then(() =>
+        executeSkill(toolCall, {
+          dataDir: DATA_DIR,
+          mode: skillMode,
+          allowShellCommand: true,
+          cloudKeys: getCloudSearchKeys(),
+        }),
+      )
+      .then((result) => {
+        const message = String(result ?? "");
+        const failedSummary = /Failed:\s*[1-9]\d*\//i.test(message);
+        const pluginError = /^Plugin Skill Error\b/i.test(message);
+        job.status =
+          /^Error:/i.test(message) || pluginError || failedSummary
+            ? "failed"
+            : "completed";
+        job.message = message.slice(0, 800);
+        job.completedAt = Date.now();
+        job.updatedAt = job.completedAt;
+      })
+      .catch((error) => {
+        job.status = "failed";
+        job.message = error instanceof Error ? error.message : String(error);
+        job.completedAt = Date.now();
+        job.updatedAt = job.completedAt;
+      });
+
+    return job;
+  }
+
+  function getBackgroundMediaJobs() {
+    cleanupBackgroundMediaJobs();
+    return [...backgroundMediaJobs.values()].map(backgroundMediaJobSnapshot);
+  }
+
   function getModels() {
     return new Promise((resolve, reject) => {
       const opts = {
@@ -742,6 +851,41 @@ module.exports = function createChatDomain(deps) {
     }
   }
 
+  function isMediaPreviewRequestArgs(args) {
+    if (!args || typeof args !== "object") return false;
+    if (
+      Array.isArray(args.selectedIndices) ||
+      typeof args.previewId === "string"
+    ) {
+      return false;
+    }
+    if (args.preview === true) return true;
+    const urls = Array.isArray(args.urls) ? args.urls : [];
+    return urls.some((rawUrl) => {
+      try {
+        const parsed = new URL(String(rawUrl));
+        const hostname = parsed.hostname.toLowerCase();
+        const pathname = parsed.pathname.toLowerCase();
+        return (
+          parsed.searchParams.has("list") ||
+          pathname.includes("/playlist") ||
+          pathname.includes("/sets/") ||
+          (hostname.endsWith("bbc.co.uk") && pathname.includes("/episodes/")) ||
+          (hostname.endsWith("rtve.es") &&
+            /^\/play\/audios\/[^/]+\/?$/i.test(pathname)) ||
+          parsed.searchParams.has("page") ||
+          parsed.searchParams.has("offset") ||
+          parsed.searchParams.has("start") ||
+          /\/(?:archive|archives|audios|collection|collections|episodes|feed|feeds|podcast|podcasts|programmes|series|sets|shows|videos)(?:\/[^/]+)?\/?$/i.test(
+            pathname,
+          )
+        );
+      } catch (_error) {
+        return false;
+      }
+    });
+  }
+
   function presentPluginUiResult(result, emit) {
     const payload = pluginUiPayload(result);
     if (!payload) return result;
@@ -760,6 +904,24 @@ module.exports = function createChatDomain(deps) {
         "Gallery preview displayed in the Dive interface. Ask the user to select images in the preview panel."
       );
     }
+    if (payload.__diveUi === "media_playlist_preview") {
+      emit({
+        type: "media_playlist_preview",
+        previewId: payload.previewId,
+        sourceUrls: Array.isArray(payload.sourceUrls) ? payload.sourceUrls : [],
+        destinationPath: payload.destinationPath || "",
+        mode: payload.mode || "audio",
+        audioFormat: payload.audioFormat || "",
+        videoContainer: payload.videoContainer || "",
+        compatibilityProfile: payload.compatibilityProfile || "",
+        candidates: Array.isArray(payload.candidates) ? payload.candidates : [],
+        warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+      });
+      return (
+        payload.modelText ||
+        "Media playlist preview displayed in the Dive interface. Ask the user to select entries in the preview panel."
+      );
+    }
     return result;
   }
 
@@ -776,19 +938,33 @@ module.exports = function createChatDomain(deps) {
       return `${error.message} Do NOT call it again. Use one of your ENABLED skills instead (${enabled}) to answer the question.`;
     }
     let gallerySelection = null;
-    if (toolCall.function.name === "download_images_with_gallery_dl") {
+    let mediaSelection = null;
+    if (
+      toolCall.function.name === "download_images_with_gallery_dl" ||
+      toolCall.function.name === "download_media_with_ytdlp"
+    ) {
       try {
-        gallerySelection = JSON.parse(toolCall.function.arguments || "{}");
+        const parsed = JSON.parse(toolCall.function.arguments || "{}");
+        if (toolCall.function.name === "download_images_with_gallery_dl") {
+          gallerySelection = parsed;
+        } else {
+          mediaSelection = parsed;
+        }
       } catch (_error) {
         gallerySelection = null;
+        mediaSelection = null;
       }
     }
     const isGalleryPreview =
       toolCall.function.name === "download_images_with_gallery_dl" &&
       !Array.isArray(gallerySelection?.selectedIndices);
-    const requiresShellConfirmation = isGalleryPreview
-      ? false
-      : skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR);
+    const isMediaPreview =
+      toolCall.function.name === "download_media_with_ytdlp" &&
+      isMediaPreviewRequestArgs(mediaSelection);
+    const requiresShellConfirmation =
+      isGalleryPreview || isMediaPreview
+        ? false
+        : skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR);
     let decision = { allowed: true, reason: "not-required" };
     if (requiresShellConfirmation) {
       decision = await requestShellConfirmation({
@@ -824,6 +1000,18 @@ module.exports = function createChatDomain(deps) {
         tool: toolCall.function.name,
       });
     }
+    const selectedDetails = selectedDownloadDetails(toolCall);
+    if (selectedDetails) {
+      const job = startBackgroundMediaJob(toolCall, skillMode, selectedDetails);
+      emit({
+        type: "download_started",
+        job: backgroundMediaJobSnapshot(job),
+        jobId: job.id,
+        label: job.label,
+        status: job.status,
+      });
+      return `${job.label} started in the background (job ${job.id}). The conversation is available while it runs.`;
+    }
     const result = await executeSkill(toolCall, {
       dataDir: DATA_DIR,
       mode: skillMode,
@@ -840,6 +1028,9 @@ module.exports = function createChatDomain(deps) {
     if (toolName === "shell_command") return "Shell Command Execution Request";
     if (toolName === "download_images_with_gallery_dl") {
       return "Confirm selected image download";
+    }
+    if (toolName === "download_media_with_ytdlp") {
+      return "Confirm selected media download";
     }
     return `Action Request (${toolName})`;
   }
@@ -861,6 +1052,26 @@ module.exports = function createChatDomain(deps) {
         return `Download ${selected.length} selected image${selected.length === 1 ? "" : "s"} (candidate${selected.length === 1 ? "" : "s"} ${selected.join(", ")}) to ${destination}?`;
       } catch (_error) {
         return "Download the selected gallery images?";
+      }
+    }
+    if (toolName === "download_media_with_ytdlp") {
+      try {
+        const payload = JSON.parse(String(command || "{}"));
+        const selected = Array.isArray(payload.selectedIndices)
+          ? [
+              ...new Set(
+                payload.selectedIndices.map(Number).filter(Number.isInteger),
+              ),
+            ].sort((a, b) => a - b)
+          : [];
+        const destination = payload.destinationPath || "~/Downloads";
+        const mode = payload.mode === "video" ? "video" : "audio";
+        if (!selected.length) {
+          return "The media preview is ready. No files will be downloaded until entries are selected.";
+        }
+        return `Download ${selected.length} selected ${mode} ${selected.length === 1 ? "entry" : "entries"} (${selected.length === 1 ? "entry" : "entries"} ${selected.join(", ")}) to ${destination}?`;
+      } catch (_error) {
+        return "Download the selected media entries?";
       }
     }
     if (toolName === "run_code" || toolName === "shell_command") {
@@ -1632,6 +1843,11 @@ module.exports = function createChatDomain(deps) {
   // the XML <call:...> path remains as fallback for servers that reject `tools`.
   async function dispatch(ctx) {
     const { req, res, urlPath, send } = ctx;
+
+    if (req.method === "GET" && urlPath === "/api/media/downloads") {
+      send(200, { jobs: getBackgroundMediaJobs() });
+      return;
+    }
 
     // The exact base system prompts sent to non-Pi models, now editable per
     // mode. Defaults are the hardcoded constants (for Ollama the client shows
@@ -2903,6 +3119,7 @@ module.exports = function createChatDomain(deps) {
     "/api/llamacpp/models",
     "/api/chat/stream",
     "/api/chat",
+    "/api/media/downloads",
   ]);
 
   async function handleRequest(ctx) {

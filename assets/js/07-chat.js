@@ -94,11 +94,42 @@
         }
       }
 
+      // Internal selection commands are transport details, not conversation
+      // prose. Keep the structured preview event in assistant metadata, but
+      // store a compact human-readable turn in history. This is especially
+      // important for client snapshots, which can race the server's final
+      // save when the user leaves a session while a download is running.
+      function historyTextForInternalCommand(content) {
+        const raw = String(content || "");
+        const galleryMatch = raw.match(/^\s*\/gallery-download\b\s*([\s\S]*)$/i);
+        const mediaMatch = raw.match(/^\s*\/mediadownload\b\s*([\s\S]*)$/i);
+        const match = galleryMatch || mediaMatch;
+        if (!match) return content;
+        try {
+          const payload = JSON.parse(match[1]);
+          const count = Array.isArray(payload?.selectedIndices)
+            ? payload.selectedIndices.length
+            : 0;
+          if (mediaMatch) {
+            const mode = payload?.mode === "video" ? "video" : "audio";
+            return `Download ${count} selected ${mode} ${count === 1 ? "entry" : "entries"}`;
+          }
+          return `Download ${count} selected image${count === 1 ? "" : "s"}`;
+        } catch (_error) {
+          return mediaMatch
+            ? "Download selected media entries"
+            : "Download selected gallery images";
+        }
+      }
+
       // The user entry for a finished turn. Image refs stay on it so the
       // post-run history rebuild — and everything downstream: the snapshot, the
       // re-render, the next turn's request — keeps the attachment.
       function buildTurnUserMessage(content, images) {
-        const entry = { role: "user", content };
+        const entry = {
+          role: "user",
+          content: historyTextForInternalCommand(content),
+        };
         if (Array.isArray(images) && images.length) entry.images = images;
         return entry;
       }
@@ -165,6 +196,17 @@
             displayText = `Download ${count} selected image${count === 1 ? "" : "s"}`;
           } catch (_error) {
             displayText = "Download selected gallery images";
+          }
+        } else if (/^\s*\/mediadownload\b/i.test(text)) {
+          try {
+            const selection = JSON.parse(text.replace(/^\s*\/mediadownload\b\s*/i, ""));
+            const count = Array.isArray(selection.selectedIndices)
+              ? selection.selectedIndices.length
+              : 0;
+            const modeLabel = selection.mode === "video" ? "video" : "audio";
+            displayText = `Download ${count} selected ${modeLabel} ${count === 1 ? "entry" : "entries"}`;
+          } catch (_error) {
+            displayText = "Download selected media entries";
           }
         }
         let outgoingImages = null;

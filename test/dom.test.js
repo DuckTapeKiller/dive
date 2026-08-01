@@ -248,6 +248,7 @@ function createFetchStub() {
       return jsonResponse({ models: [] });
     }
     if (path === "/api/version") return jsonResponse({ version: "1.0.5" });
+    if (path === "/api/media/downloads") return jsonResponse({ jobs: [] });
     if (
       path === "/api/security-event" ||
       path === "/api/mcp/config" ||
@@ -453,6 +454,45 @@ test("frontend boots without network fetch crashes", async () => {
     dom.window.document.getElementById("ollamaRepeatLastNInput").value,
     "256",
   );
+});
+
+test("side panel displays background download status", async () => {
+  const baseFetch = createFetchStub();
+  const fetchImpl = async (url, options) => {
+    const path = String(url).replace("http://localhost", "");
+    if (path === "/api/media/downloads") {
+      return jsonResponse({
+        jobs: [
+          {
+            id: "job-test",
+            label: "Download 2 selected audio entries",
+            count: 2,
+            mediaType: "audio",
+            status: "running",
+            startedAt: Date.now(),
+            updatedAt: Date.now(),
+            completedAt: null,
+          },
+        ],
+      });
+    }
+    return baseFetch(url, options);
+  };
+  const { dom, errors } = createDom(fetchImpl);
+  await waitFor(() =>
+    dom.window.document
+      .getElementById("sideDownloadList")
+      .textContent.includes("2 audio in progress"),
+  );
+  assert.equal(
+    dom.window.document.getElementById("sideDownloads").hidden,
+    false,
+  );
+  assert.ok(
+    dom.window.document.querySelector(".side-download-dot"),
+    "running downloads should show the accent status dot",
+  );
+  assert.equal(errors.length, 0);
 });
 
 test("embedding model discovery retries and preserves an explicit Custom choice", async () => {
@@ -678,6 +718,37 @@ test("passages bubble survives history render and mode switch", async () => {
   dom.window.document.getElementById("btnOllama").click();
 
   assert.match(findPassagesDetails()?.textContent || "", /Equidna/);
+  assert.deepStrictEqual(errors, []);
+});
+
+test("internal media selection commands stay compact when history is replayed", async () => {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const command = `/mediadownload ${JSON.stringify({
+    previewId: "813df490-74ed-41a3-8d6b-cc4a86af098c",
+    selectedIndices: [7, 8, 9],
+    mode: "audio",
+    entryUrls: ["https://example.test/one"],
+  })}`;
+  dom.window.loadConversation({
+    id: "conv_media_selection_history",
+    mode: "ollama",
+    title: "Media selection history",
+    history: [
+      { role: "user", content: command },
+      { role: "assistant", content: "Download completed." },
+    ],
+  });
+  const userBubble = dom.window.document.querySelector(".msg.user");
+  assert.equal(
+    userBubble?.textContent?.trim(),
+    "Download 3 selected audio entries",
+  );
+  assert.doesNotMatch(userBubble?.textContent || "", /813df490|entryUrls/);
   assert.deepStrictEqual(errors, []);
 });
 

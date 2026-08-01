@@ -160,6 +160,7 @@
 
       // ---- PERMANENT SIDE PANEL (collapsible) ----
       const SIDE_PANEL_COLLAPSED_KEY = "dive-side-panel-collapsed";
+      let sideDownloadsTimer = null;
 
       function sidePanelSetCollapsed(collapsed) {
         const panel = document.getElementById("sidePanel");
@@ -278,9 +279,85 @@
         }
       }
 
+      function compactDownloadStatus(job) {
+        const label = String(job?.label || "");
+        const labelMatch = label.match(
+          /Download\s+(\d+)\s+selected\s+([a-z]+)/i,
+        );
+        const count = Math.max(
+          1,
+          Number(job?.count) || Number(labelMatch?.[1]) || 1,
+        );
+        let mediaType = String(job?.mediaType || labelMatch?.[2] || "download")
+          .toLowerCase()
+          .replace(/s$/, "");
+        if (!/^(audio|image|video)$/.test(mediaType)) mediaType = "download";
+        const noun =
+          mediaType === "audio"
+            ? "audio"
+            : `${mediaType}${count === 1 ? "" : "s"}`;
+        const state =
+          job?.status === "failed"
+            ? "failed"
+            : job?.status === "completed"
+              ? "completed"
+              : "in progress";
+        return `${count} ${noun} ${state}`;
+      }
+
+      async function refreshSideDownloads() {
+        const section = document.getElementById("sideDownloads");
+        const list = document.getElementById("sideDownloadList");
+        if (!section || !list) return;
+        try {
+          const res = await fetch(apiUrl("/api/media/downloads"));
+          const payload = await readJsonResponse(res, "Load download status");
+          const now = Date.now();
+          const jobs = (Array.isArray(payload?.jobs) ? payload.jobs : []).filter(
+            (job) =>
+              job &&
+              (job.status === "running" ||
+                (job.completedAt &&
+                  now - Number(job.completedAt) <
+                    (job.status === "failed" ? 6000 : 4000))),
+          );
+          list.replaceChildren();
+          section.hidden = jobs.length === 0;
+          for (const job of jobs) {
+            const item = document.createElement("div");
+            item.className = `side-download-job ${job.status || "running"}`;
+            const status = document.createElement("div");
+            status.className = "side-download-status";
+            if (job.status === "running") {
+              const dot = document.createElement("span");
+              dot.className = "side-download-dot";
+              dot.setAttribute("aria-hidden", "true");
+              status.append(dot, document.createTextNode(compactDownloadStatus(job)));
+            } else {
+              status.textContent = compactDownloadStatus(job);
+            }
+            item.appendChild(status);
+            list.appendChild(item);
+          }
+          if (sideDownloadsTimer) {
+            clearTimeout(sideDownloadsTimer);
+            sideDownloadsTimer = null;
+          }
+          if (jobs.length) {
+            sideDownloadsTimer = setTimeout(() => {
+              sideDownloadsTimer = null;
+              refreshSideDownloads();
+            }, 1000);
+          }
+        } catch (_e) {
+          // The status endpoint is optional while the server is starting.
+        }
+      }
+
       function refreshSidePanel() {
         updateSidePanelDb();
         refreshSidePanelRecent();
+        refreshSideDownloads();
       }
 
       function wireSidePanel() {
@@ -1067,12 +1144,36 @@
         return true;
       }
 
+      function compactInternalSelectionText(text) {
+        const raw = String(text || "");
+        const galleryMatch = raw.match(/^\s*\/gallery-download\b\s*([\s\S]*)$/i);
+        const mediaMatch = raw.match(/^\s*\/mediadownload\b\s*([\s\S]*)$/i);
+        const match = galleryMatch || mediaMatch;
+        if (!match) return text;
+        try {
+          const payload = JSON.parse(match[1]);
+          const count = Array.isArray(payload?.selectedIndices)
+            ? payload.selectedIndices.length
+            : 0;
+          if (mediaMatch) {
+            const mode = payload?.mode === "video" ? "video" : "audio";
+            return `Download ${count} selected ${mode} ${count === 1 ? "entry" : "entries"}`;
+          }
+          return `Download ${count} selected image${count === 1 ? "" : "s"}`;
+        } catch (_error) {
+          return mediaMatch
+            ? "Download selected media entries"
+            : "Download selected gallery images";
+        }
+      }
+
       function addMessage(text, role, options = {}) {
+        const renderedText = role === "user" ? compactInternalSelectionText(text) : text;
         const wrap = document.createElement("div");
         wrap.className = "msg-wrap " + role;
         const div = document.createElement("div");
         div.className = "msg " + role;
-        div.dataset.rawText = text || "";
+        div.dataset.rawText = renderedText || "";
 
         if (role === "assistant") {
           renderAssistantMessage(div, text, options.librarySources);
@@ -1104,9 +1205,9 @@
           }
           // Keep the text in its own node so the images sit above it; .msg's
           // pre-wrap is inherited, so raw user text still keeps its newlines.
-          if (text) {
+          if (renderedText) {
             const textEl = document.createElement("div");
-            textEl.textContent = text;
+            textEl.textContent = renderedText;
             div.appendChild(textEl);
           }
         }
@@ -1120,7 +1221,7 @@
         const copyBtn = document.createElement("button");
         copyBtn.textContent = "COPY";
         copyBtn.onclick = () => {
-          navigator.clipboard.writeText(div.dataset.rawText || text || "");
+          navigator.clipboard.writeText(div.dataset.rawText || renderedText || "");
           copyBtn.textContent = "COPIED";
           setTimeout(() => (copyBtn.textContent = "COPY"), 1500);
         };
@@ -1304,7 +1405,7 @@
           ? [...initialSnapshot.passages]
           : [];
         let hasReasoning = Boolean(reasoningText);
-        let hasGalleryPreview = false;
+        let hasPluginPreview = false;
         let traceCount = traceLines.length;
         let hasFailure =
           initialSnapshot.status === "error" ||
@@ -1399,7 +1500,7 @@
           },
           setGalleryPreview(preview) {
             if (!preview || !Array.isArray(preview.candidates)) return;
-            hasGalleryPreview = true;
+            hasPluginPreview = true;
             if (!isActiveView()) return;
 
             const candidates = preview.candidates;
@@ -1609,6 +1710,253 @@
             galleryBox.style.display = "block";
             scrollChatToBottom();
           },
+          setMediaPlaylistPreview(preview) {
+            if (!preview || !Array.isArray(preview.candidates)) return;
+            hasPluginPreview = true;
+            if (!isActiveView()) return;
+
+            const candidates = preview.candidates;
+            const selected = new Set();
+            const cards = [];
+            const selectable = candidates.filter((item) => item && item.url);
+            const panel = document.createElement("section");
+            panel.className = "gallery-preview media-playlist-preview";
+            panel.setAttribute("aria-label", "Media playlist preview");
+
+            const header = document.createElement("div");
+            header.className = "gallery-preview-header";
+            const heading = document.createElement("div");
+            heading.className = "gallery-preview-heading";
+            const title = document.createElement("div");
+            title.className = "gallery-preview-title";
+            title.textContent = "Media playlist preview";
+            const subtitle = document.createElement("div");
+            subtitle.className = "gallery-preview-subtitle";
+            const modeLabel = preview.mode === "video" ? "video" : "audio";
+            subtitle.textContent = `${candidates.length} entr${candidates.length === 1 ? "y" : "ies"} found · ${modeLabel}${preview.destinationPath ? ` · ${preview.destinationPath}` : ""}`;
+            heading.append(title, subtitle);
+            header.appendChild(heading);
+
+            const toolbar = document.createElement("div");
+            toolbar.className = "gallery-preview-toolbar";
+            const search = document.createElement("input");
+            search.type = "search";
+            search.className = "gallery-preview-search";
+            search.placeholder = "Filter titles or URLs";
+            search.setAttribute("aria-label", "Filter media entries");
+            const selectAll = document.createElement("button");
+            selectAll.type = "button";
+            selectAll.className = "gallery-preview-tool-button";
+            selectAll.textContent = "Select all";
+            const clear = document.createElement("button");
+            clear.type = "button";
+            clear.className = "gallery-preview-tool-button";
+            clear.textContent = "Clear";
+            toolbar.append(search, selectAll, clear);
+            header.appendChild(toolbar);
+            panel.appendChild(header);
+
+            const grid = document.createElement("div");
+            grid.className = "gallery-preview-grid media-preview-grid";
+
+            const updateSelection = () => {
+              const count = selected.size;
+              selectionCount.textContent = `${count} selected`;
+              download.disabled = count === 0;
+              download.textContent = count ? `Download ${count} selected` : "Download selected";
+              for (const entry of cards) {
+                const active = selected.has(entry.item.index);
+                entry.card.classList.toggle("selected", active);
+                entry.checkbox.checked = active;
+              }
+            };
+            const toggle = (item) => {
+              if (!item || !item.url) return;
+              if (selected.has(item.index)) selected.delete(item.index);
+              else selected.add(item.index);
+              updateSelection();
+            };
+
+            const formatAvailability = (item) => {
+              const raw = String(item.availability || "").trim();
+              if (!raw) return "Availability unavailable";
+              return raw
+                .replace(/[_-]+/g, " ")
+                .replace(/\b\w/g, (letter) => letter.toUpperCase());
+            };
+            const formatDuration = (item) => {
+              if (item.duration) return String(item.duration);
+              const seconds = Number(item.durationSeconds);
+              if (!Number.isFinite(seconds) || seconds < 0) return "Duration unavailable";
+              const total = Math.round(seconds);
+              const hours = Math.floor(total / 3600);
+              const minutes = Math.floor((total % 3600) / 60);
+              const remaining = total % 60;
+              return hours > 0
+                ? `${hours}:${String(minutes).padStart(2, "0")}:${String(remaining).padStart(2, "0")}`
+                : `${minutes}:${String(remaining).padStart(2, "0")}`;
+            };
+
+            for (const item of candidates) {
+              const card = document.createElement("article");
+              card.className = "gallery-preview-card media-preview-card";
+              card.tabIndex = item.url ? 0 : -1;
+              const searchText = [
+                item.title,
+                item.displayName,
+                item.description,
+                item.availability,
+                item.date,
+                item.duration,
+                item.series,
+                item.episode,
+                item.url,
+                item.mediaUrl,
+              ].filter(Boolean).join(" ");
+              card.dataset.filename = searchText.toLowerCase();
+              const top = document.createElement("div");
+              top.className = "gallery-preview-card-top";
+              const number = document.createElement("span");
+              number.className = "gallery-preview-number";
+              number.textContent = String(item.index).padStart(2, "0");
+              const checkbox = document.createElement("input");
+              checkbox.type = "checkbox";
+              checkbox.className = "dive-check";
+              checkbox.checked = false;
+              checkbox.disabled = !item.url;
+              checkbox.setAttribute("aria-label", `Select media entry ${item.index}`);
+              top.append(number, checkbox);
+              card.appendChild(top);
+
+              const mediaFrame = document.createElement("div");
+              mediaFrame.className = "gallery-preview-image-frame media-preview-frame";
+              if (item.thumbnail) {
+                const image = document.createElement("img");
+                image.className = "gallery-preview-image";
+                image.src = item.thumbnail;
+                image.alt = item.title || `Media entry ${item.index}`;
+                image.loading = "lazy";
+                image.referrerPolicy = "no-referrer";
+                image.addEventListener("error", () => {
+                  image.remove();
+                  const unavailable = document.createElement("span");
+                  unavailable.className = "media-preview-icon";
+                  unavailable.textContent = modeLabel.toUpperCase();
+                  mediaFrame.appendChild(unavailable);
+                }, { once: true });
+                mediaFrame.appendChild(image);
+              } else {
+                const icon = document.createElement("span");
+                icon.className = "media-preview-icon";
+                icon.textContent = modeLabel.toUpperCase();
+                mediaFrame.appendChild(icon);
+              }
+              card.appendChild(mediaFrame);
+
+              const name = document.createElement("div");
+              name.className = "gallery-preview-filename media-preview-title";
+              name.textContent = item.title || item.displayName || `Media entry ${item.index}`;
+              name.title = name.textContent;
+              card.appendChild(name);
+
+              const metadata = document.createElement("div");
+              metadata.className = "gallery-preview-meta media-preview-meta";
+              const parts = [
+                item.date,
+                formatDuration(item),
+                formatAvailability(item),
+              ];
+              if (item.series) parts.push(item.series);
+              if (item.episode) parts.push(`Episode ${item.episode}`);
+              metadata.textContent = parts.filter(Boolean).join(" · ") || "Metadata unavailable";
+              card.appendChild(metadata);
+
+              const displayUrl = item.mediaUrl || item.url;
+              if (displayUrl) {
+                const url = document.createElement("div");
+                url.className = "media-preview-url";
+                url.textContent = displayUrl;
+                url.title = displayUrl;
+                card.appendChild(url);
+              }
+
+              if (item.description) {
+                const description = document.createElement("div");
+                description.className = "media-preview-description";
+                description.textContent = item.description;
+                card.appendChild(description);
+              }
+              if (!item.url) {
+                card.classList.add("unavailable");
+                card.title = "This entry has no direct webpage URL and cannot be downloaded from the preview.";
+              }
+
+              checkbox.addEventListener("click", (event) => event.stopPropagation());
+              checkbox.addEventListener("change", () => toggle(item));
+              card.addEventListener("click", (event) => {
+                if (event.target === checkbox) return;
+                toggle(item);
+              });
+              card.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  toggle(item);
+                }
+              });
+              cards.push({ card, checkbox, item });
+              grid.appendChild(card);
+            }
+            panel.appendChild(grid);
+
+            if (Array.isArray(preview.warnings) && preview.warnings.length) {
+              const warning = document.createElement("div");
+              warning.className = "gallery-preview-warning";
+              warning.textContent = preview.warnings.map((item) => item.detail || item.url).join(" · ");
+              panel.appendChild(warning);
+            }
+
+            const footer = document.createElement("div");
+            footer.className = "gallery-preview-footer";
+            const selectionCount = document.createElement("span");
+            selectionCount.className = "gallery-preview-selection-count";
+            const download = document.createElement("button");
+            download.type = "button";
+            download.className = "gallery-preview-download";
+            download.disabled = true;
+            download.textContent = "Download selected";
+            footer.append(selectionCount, download);
+            panel.appendChild(footer);
+
+            search.addEventListener("input", () => {
+              const needle = search.value.trim().toLowerCase();
+              for (const entry of cards) {
+                entry.card.hidden = needle && !entry.card.dataset.filename.includes(needle);
+              }
+            });
+            selectAll.addEventListener("click", () => {
+              const allSelected = selected.size === selectable.length;
+              selected.clear();
+              if (!allSelected) selectable.forEach((item) => selected.add(item.index));
+              updateSelection();
+            });
+            clear.addEventListener("click", () => {
+              selected.clear();
+              updateSelection();
+            });
+            download.addEventListener("click", () => {
+              const indices = [...selected].sort((a, b) => a - b);
+              if (!indices.length) return;
+              download.disabled = true;
+              download.textContent = "Preparing download…";
+              if (typeof sendMediaSelection === "function") {
+                sendMediaSelection(preview, indices, candidates);
+              }
+            });
+            updateSelection();
+            galleryBox.replaceChildren(panel);
+            galleryBox.style.display = "block";
+            scrollChatToBottom();
+          },
           setPhase(label) {
             if (!label) return;
             currentPhase = String(label);
@@ -1805,7 +2153,7 @@
             return hasReasoning;
           },
           get hadTrace() {
-            return traceLines.length > 0 || liveWidgets.size > 0 || hasGalleryPreview;
+            return traceLines.length > 0 || liveWidgets.size > 0 || hasPluginPreview;
           },
           get hadPassages() {
             return currentPassages.length > 0;
@@ -1846,6 +2194,8 @@
               controller.setLiveWidget(evt.key || "widget", evt.lines);
             } else if (evt.type === "gallery_preview") {
               controller.setGalleryPreview(evt);
+            } else if (evt.type === "media_playlist_preview") {
+              controller.setMediaPlaylistPreview(evt);
             }
           }
           controller.finalizeTimeline();
@@ -3351,6 +3701,10 @@
           return `Command: ${evt.label || evt.command || "slash"}`;
         }
 
+        if (evt.type === "download_started") {
+          return `${evt.label || evt.job?.label || "Download"} started in the background`;
+        }
+
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
           const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
@@ -3445,7 +3799,16 @@
       }
 
       function handleStreamEventTrace(evt, thinking) {
-        if (!evt || !thinking) return;
+        if (!evt) return;
+        if (evt.type === "download_started") {
+          refreshSideDownloads();
+          if (!thinking) return;
+          thinking.addTraceLine(
+            `${evt.label || evt.job?.label || "Download"} started in the background.`,
+          );
+          return;
+        }
+        if (!thinking) return;
         // Keep-alive frames are transport noise — never record or render them.
         if (evt.type === "heartbeat") return;
         // Granular phase telemetry on the working indicator (issue 1.7).
@@ -3640,6 +4003,13 @@
           return;
         }
 
+        if (evt.type === "media_playlist_preview") {
+          if (typeof thinking.setMediaPlaylistPreview === "function") {
+            thinking.setMediaPlaylistPreview(evt);
+          }
+          return;
+        }
+
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
           const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
@@ -3760,6 +4130,34 @@
           destinationPath: preview.destinationPath || undefined,
         };
         inputEl.value = `/gallery-download ${JSON.stringify(payload)}`;
+        if (typeof autoResizeInput === "function") autoResizeInput();
+        if (typeof sendMessage === "function") sendMessage();
+      }
+
+      function sendMediaSelection(preview, indices, candidates = []) {
+        const inputEl = document.getElementById("input");
+        if (!inputEl || !preview || !Array.isArray(indices) || !indices.length) return;
+        const byIndex = new Map(
+          (Array.isArray(candidates) ? candidates : []).map((item) => [Number(item.index), item]),
+        );
+        const entryUrls = (Array.isArray(candidates) ? candidates : []).map(
+          (item) => (typeof item?.url === "string" ? item.url.trim() : ""),
+        );
+        const selectedEntryUrls = indices
+          .map((index) => byIndex.get(Number(index))?.url)
+          .filter((url) => typeof url === "string" && url.trim());
+        const payload = {
+          previewId: preview.previewId,
+          selectedIndices: indices,
+          entryUrls,
+          urls: selectedEntryUrls,
+          destinationPath: preview.destinationPath || undefined,
+          mode: preview.mode || undefined,
+          audioFormat: preview.audioFormat || undefined,
+          videoContainer: preview.videoContainer || undefined,
+          compatibilityProfile: preview.compatibilityProfile || undefined,
+        };
+        inputEl.value = `/mediadownload ${JSON.stringify(payload)}`;
         if (typeof autoResizeInput === "function") autoResizeInput();
         if (typeof sendMessage === "function") sendMessage();
       }

@@ -3426,6 +3426,7 @@
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
               evt.type === "gallery_preview" ||
+              evt.type === "media_playlist_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3442,7 +3443,8 @@
               evt.type === "provider_retry_end" ||
               evt.type === "provider_error" ||
               evt.type === "compaction_start" ||
-              evt.type === "compaction_end"
+              evt.type === "compaction_end" ||
+              evt.type === "download_started"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -3594,6 +3596,7 @@
               evt.type === "thinking_delta" ||
               evt.type === "thinking_end" ||
               evt.type === "gallery_preview" ||
+              evt.type === "media_playlist_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3610,7 +3613,8 @@
               evt.type === "provider_retry_end" ||
               evt.type === "provider_error" ||
               evt.type === "compaction_start" ||
-              evt.type === "compaction_end"
+              evt.type === "compaction_end" ||
+              evt.type === "download_started"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -3731,6 +3735,7 @@
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
               evt.type === "gallery_preview" ||
+              evt.type === "media_playlist_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3747,7 +3752,8 @@
               evt.type === "provider_retry_end" ||
               evt.type === "provider_error" ||
               evt.type === "compaction_start" ||
-              evt.type === "compaction_end"
+              evt.type === "compaction_end" ||
+              evt.type === "download_started"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
@@ -3879,6 +3885,7 @@
               evt.type === "tool_start" ||
               evt.type === "tool_end" ||
               evt.type === "gallery_preview" ||
+              evt.type === "media_playlist_preview" ||
               evt.type === "skill_links" ||
               evt.type === "web_sources" ||
               evt.type === "library_results" ||
@@ -3895,7 +3902,8 @@
               evt.type === "provider_retry_end" ||
               evt.type === "provider_error" ||
               evt.type === "compaction_start" ||
-              evt.type === "compaction_end"
+              evt.type === "compaction_end" ||
+              evt.type === "download_started"
             ) {
               if (typeof onEvent === "function") onEvent(evt);
               continue;
