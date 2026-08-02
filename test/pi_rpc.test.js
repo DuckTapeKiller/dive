@@ -163,7 +163,9 @@ function handle(command) {
     promptNumber += 1;
     log({ promptNumber, message: command.message, images: command.images || [] });
     emit({ type: "agent_start" });
-    setTimeout(() => finishPrompt(command, promptNumber), 20);
+    // A "slow" prompt stays active long enough for the next one to queue
+    // behind it deterministically.
+    setTimeout(() => finishPrompt(command, promptNumber), /slow/.test(String(command.message || "")) ? 2500 : 20);
     return;
   }
   if (command.type === "abort") {
@@ -389,5 +391,77 @@ test("fake Pi RPC preserves lifecycle, unique turn IDs, native images, and struc
   assert.match(
     rejected.value.error,
     /shutdown|shutting down|closed|writable|exited/i,
+  );
+});
+
+test("a queued Pi turn is cancelled, not run, when the session is reset", async (t) => {
+  // advancePiQueue must drop a cancelled entry instead of dispatching it. The
+  // fake Pi logs every prompt it receives, so "was it dispatched?" is a fact on
+  // disk rather than an inference from the stream.
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "dive-pi-queue-"));
+  const fake = await makeFakePi(tempDir);
+  const deps = makeDeps({ tempDir, ...fake });
+  const domain = createPiDomain(deps);
+  const server = createHttpServer(domain);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    domain.api.shutdownAll();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  // The log file only appears once Pi has received a prompt.
+  const promptsLogged = () => {
+    if (!fs.existsSync(fake.logPath)) return [];
+    return fs
+      .readFileSync(fake.logPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).message);
+  };
+
+  const body = (message) => ({
+    saveConv: "queue-test",
+    convTitle: "Queue",
+    message,
+    history: [],
+    mode: "pi",
+  });
+
+  const running = post(baseUrl, "/api/pi/stream", body("slow first turn"));
+  // /api/pi/stream builds the library context before it queues, so wait on the
+  // observable fact that the first prompt reached Pi rather than a fixed delay.
+  const deadline = Date.now() + 5000;
+  while (promptsLogged().length < 1 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.strictEqual(promptsLogged().length, 1, "first turn never started");
+
+  const queued = post(baseUrl, "/api/pi/stream", body("second turn"));
+  await new Promise((r) => setTimeout(r, 600));
+  assert.strictEqual(
+    promptsLogged().length,
+    1,
+    "the second turn should be queued behind the slow one, not dispatched",
+  );
+
+  const reset = await post(baseUrl, "/api/pi/new-session", {
+    saveConv: "queue-test",
+  });
+  assert.strictEqual(reset.response.status, 200);
+
+  const queuedEvents = parseNdjson((await queued).value);
+  await running;
+
+  assert.deepStrictEqual(
+    promptsLogged(),
+    ["slow first turn"],
+    "a cancelled queue entry must never reach Pi",
+  );
+  const last = queuedEvents.at(-1);
+  assert.ok(
+    last && (last.type === "error" || last.type === "done"),
+    `the cancelled turn's stream should terminate, got ${JSON.stringify(last)}`,
   );
 });
