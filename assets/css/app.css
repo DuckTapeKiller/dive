@@ -2924,12 +2924,14 @@ a:hover {
   padding-left: 18px;
 }
 .research-candidate-button {
+  /* A source pill you can click: same flat treatment and accent glow, at the
+     composer's text size rather than the smaller settings size. No radius —
+     the rest of the interface is square. */
   display: inline-block;
-  margin: 2px 4px 2px 0;
-  padding: 2px 10px;
-  border: var(--border-width) solid var(--border-color);
-  border-radius: 999px;
-  background: var(--bg-inverse);
+  margin: 0 4px 0 0;
+  padding: 4px 8px;
+  border: 0;
+  background-color: var(--bg-secondary);
   color: var(--text-normal);
   font-family: inherit;
   font-size: calc(14px * var(--font-scale, 1));
@@ -2938,22 +2940,21 @@ a:hover {
   text-align: left;
   cursor: pointer;
   box-shadow: none;
-  transition:
-    color 0.12s,
-    background 0.12s,
-    box-shadow 0.12s,
-    border-color 0.12s;
+  transition: all 0.2s;
 }
 .research-candidate-button:hover,
 .research-candidate-button:focus-visible {
-  background: var(--flat-fill);
-  border-color: var(--text-normal);
-  box-shadow: 0 0 9px color-mix(in srgb, var(--text-normal) 45%, transparent);
+  /* Two layers, matching .source-pill: a tight halo plus a wide soft one, so
+     the glow reads clearly even with muted accent colors. */
+  box-shadow:
+    0 0 3px var(--accent),
+    0 0 10px var(--accent);
   outline: none;
 }
 .research-candidate-button:active {
-  background: var(--flat-fill-strong);
+  background-color: var(--flat-fill-strong);
 }
+
 .thinking-markdown blockquote {
   margin: 0 0 8px;
   padding-left: 10px;

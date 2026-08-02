@@ -1112,37 +1112,60 @@ function stripSourceCitations(text) {
     .replace(/\s+$/, "");
 }
 
-function researchAnswerSignalsAmbiguity(text) {
-  return /\b(?:several distinct individuals|multiple distinct (?:individuals|people|topics)|multiple individuals|possible matches|possible individuals|could refer to more than one|more than one (?:person|individual|topic)|ambiguous|various possible results)\b/i.test(
-    String(text || ""),
-  );
+// The disambiguation list deep_research asks the model to emit. Only a heading
+// whose entire text is one of these opens a candidate section — a passing
+// mention of "possible matches" in prose must not turn the rest of the answer
+// into buttons.
+const RESEARCH_CANDIDATE_HEADING_RE =
+  /^(?:possible matches|possible individuals|possible people|possible topics|candidate topics|candidates)$/i;
+
+// Only the candidate's own name becomes a button, so it has to be identifiable
+// structurally rather than by guessing which bold run in a paragraph looks like
+// a title. The name is the bolded run that OPENS the list item; everything
+// after it is the description and stays plain text.
+function researchCandidateNameNode(item) {
+  const first = item.firstElementChild;
+  if (!first || !/^(?:strong|b)$/i.test(first.tagName || "")) return null;
+  // Nothing but whitespace may precede the name, or this is prose that merely
+  // happens to contain bold text.
+  for (const node of [...item.childNodes]) {
+    if (node === first) break;
+    if (String(node.textContent || "").trim()) return null;
+  }
+  return first;
 }
 
-function candidateTitleFromNode(node, explicitCandidateSection) {
-  const strong = node.querySelector("strong, b");
-  if (!strong) return null;
-  const strongText = String(strong.textContent || "")
+function researchCandidateLabel(nameNode) {
+  const label = String(nameNode.textContent || "")
     .replace(/\s+/g, " ")
     .trim();
-  const numbered = strongText.match(/^\d+[.)]\s+(.+)$/);
-  const heading = /^h[2-4]$/i.test(node.tagName || "");
-  const listCandidate = node.tagName === "LI" && explicitCandidateSection;
-  if (!numbered && !heading && !listCandidate) return null;
-  const label = (numbered ? numbered[1] : strongText)
-    .replace(/^[-•]\s+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (
-    !label ||
-    label.length < 3 ||
-    label.length > 180 ||
-    /^(?:identity|career highlights|contributions|later life|legacy|background|summary|reasoning|trace)$/i.test(
-      label.replace(/:$/, ""),
-    )
-  ) {
-    return null;
+  if (!label || label.length < 3 || label.length > 180) return "";
+  // A name is a name. Anything that looks like a link or a command is not a
+  // candidate, and must never become something the user can click to run.
+  if (/^\//.test(label)) return "";
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(label)) return "";
+  if (/^(?:www\.|[^\s]+\.[a-z]{2,}\/)/i.test(label)) return "";
+  return label;
+}
+
+// Every list item directly under a candidate heading, and nothing else.
+function researchCandidateItems(div) {
+  const items = [];
+  for (const heading of div.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+    const text = String(heading.textContent || "")
+      .replace(/\s+/g, " ")
+      .replace(/[:：]\s*$/, "")
+      .trim();
+    if (!RESEARCH_CANDIDATE_HEADING_RE.test(text)) continue;
+    // The list must follow the heading directly. Stop there: a second list
+    // further down the answer belongs to the prose, not to the candidates.
+    const list = heading.nextElementSibling;
+    if (!list || !/^(?:ul|ol)$/i.test(list.tagName || "")) continue;
+    for (const item of list.children) {
+      if (/^li$/i.test(item.tagName || "")) items.push(item);
+    }
   }
-  return { buttonSource: strong, label };
+  return items;
 }
 
 function activateResearchCandidate(query) {
@@ -1173,33 +1196,38 @@ function renderResearchCandidateButtons(div) {
   ) {
     return 0;
   }
-  const rawText = div.dataset.rawText || div.textContent || "";
-  if (!researchAnswerSignalsAmbiguity(rawText)) return 0;
-  const explicitCandidateSection =
-    /\b(?:possible matches|possible individuals|candidate topics)\b/i.test(
-      rawText,
-    );
   let count = 0;
-  for (const node of [...div.querySelectorAll("p, h2, h3, h4, li")]) {
-    if (node.closest(".research-candidate-button")) continue;
-    const candidate = candidateTitleFromNode(node, explicitCandidateSection);
-    if (!candidate) continue;
+  for (const item of researchCandidateItems(div)) {
+    const nameNode = researchCandidateNameNode(item);
+    if (!nameNode) continue;
+    const label = researchCandidateLabel(nameNode);
+    if (!label) continue;
+
+    // Three separate things, kept separate: what the user sees on the button,
+    // the description that stays as text beside it, and the query a click runs.
+    const description = String(item.textContent || "")
+      .slice(String(nameNode.textContent || "").length)
+      .replace(/^[\s—–:,-]+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "research-candidate-button";
-    button.textContent = candidate.label;
-    button.title = `Research ${candidate.label}`;
-    button.setAttribute("aria-label", `Research ${candidate.label}`);
-    button.dataset.researchQuery = candidate.label;
+    button.textContent = label;
+    button.title = `Research ${label}`;
+    button.setAttribute("aria-label", `Research ${label}`);
+    button.dataset.candidateName = label;
+    if (description) button.dataset.candidateDescription = description;
+    button.dataset.researchQuery = label;
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       activateResearchCandidate(button.dataset.researchQuery);
     });
-    const onlyStrongText =
-      node.textContent.trim() === candidate.buttonSource.textContent.trim();
-    if (onlyStrongText) node.replaceChildren(button);
-    else candidate.buttonSource.replaceWith(button);
+    // Replace only the name. The description, and the rest of the item, stay
+    // exactly as the markdown renderer produced them.
+    nameNode.replaceWith(button);
     count += 1;
   }
   return count;

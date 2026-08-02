@@ -458,8 +458,25 @@ test("frontend boots without network fetch crashes", async () => {
   );
 });
 
-test("ambiguous research candidates become clickable focused-research buttons", async () => {
-  const { dom, errors } = createDom();
+// deep_research disambiguation: only the candidate's own name is clickable.
+//
+// The earlier implementation scanned every paragraph, heading and list item for
+// bold text and could swallow a whole bullet — description and all — into one
+// button. These pin the replacement: a candidate section is a recognised
+// heading followed directly by a list, and only the bolded name that opens each
+// item becomes a button.
+const CANDIDATE_ANSWER = [
+  "Several people share this name.",
+  "",
+  "## Possible matches",
+  "",
+  "- **Pepito Perez A** — historian from Madrid",
+  "- **Pepito Perez B** — musician active in the 1980s",
+  "- **Pepito Perez C** — university professor",
+].join("\n");
+
+async function renderInLlamaCpp(text, options = {}) {
+  const { dom, errors } = createDom(options.fetchImpl);
   await waitFor(
     () =>
       dom.window.document.getElementById("app-version-label").textContent ===
@@ -467,58 +484,235 @@ test("ambiguous research candidates become clickable focused-research buttons", 
   );
   dom.window.document.getElementById("btnLlamaCpp").click();
   const div = dom.window.document.createElement("div");
-  dom.window.renderAssistantMessage(
-    div,
-    [
-      "The name refers to several distinct individuals.",
-      "",
-      "**1. Dean Benedetti (Saxophonist)**",
-      "",
-      "* **Identity:** Jazz saxophonist.",
-      "",
-      "**2. Bob Benedetti (Academic Administrator)**",
-      "",
-      "* **Identity:** University dean.",
-    ].join("\n"),
-    [],
-  );
-  const buttons = [...div.querySelectorAll(".research-candidate-button")];
+  dom.window.renderAssistantMessage(div, text, []);
+  return { dom, errors, div };
+}
+
+const candidateButtons = (div) => [
+  ...div.querySelectorAll(".research-candidate-button"),
+];
+
+test("only the candidate name is inside the button, not the whole bullet", async () => {
+  const { div, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  const buttons = candidateButtons(div);
   assert.deepStrictEqual(
     buttons.map((button) => button.textContent),
-    ["Dean Benedetti (Saxophonist)", "Bob Benedetti (Academic Administrator)"],
+    ["Pepito Perez A", "Pepito Perez B", "Pepito Perez C"],
   );
+  // Nothing but the name: no descriptor, no dash, no bullet text.
+  for (const button of buttons) {
+    assert.doesNotMatch(button.textContent, /—|historian|musician|professor/);
+  }
+  assert.deepStrictEqual(errors, []);
+});
+
+test("the candidate description stays outside the button as ordinary text", async () => {
+  const { div, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  const items = [...div.querySelectorAll("li")];
+  assert.strictEqual(items.length, 3);
+  // The item still reads as a whole sentence, and the description is not part
+  // of any button.
+  assert.match(
+    items[0].textContent,
+    /Pepito Perez A\s*—\s*historian from Madrid/,
+  );
+  for (const item of items) {
+    const outside = [...item.childNodes]
+      .filter(
+        (node) =>
+          !(
+            node.classList &&
+            node.classList.contains("research-candidate-button")
+          ),
+      )
+      .map((node) => node.textContent)
+      .join("");
+    assert.match(outside, /historian|musician|professor/);
+  }
+  // The list item itself was never replaced by a button: text survives beside
+  // it. (":only-child" would not catch this — it ignores text nodes.)
+  for (const item of items) {
+    const button = item.querySelector(".research-candidate-button");
+    assert.ok(button, "no button in the item");
+    assert.notStrictEqual(
+      item.textContent.trim(),
+      button.textContent.trim(),
+      "the whole list item was swallowed into the button",
+    );
+  }
+  assert.deepStrictEqual(errors, []);
+});
+
+test("clicking a candidate sends exactly the focused research query", async () => {
+  const { dom, div, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  const buttons = candidateButtons(div);
   let sentValue = "";
   const originalSend = dom.window.sendMessage;
   dom.window.sendMessage = () => {
     sentValue = dom.window.document.getElementById("input").value;
   };
-  buttons[0].click();
+  buttons[1].click();
   dom.window.sendMessage = originalSend;
-  assert.strictEqual(sentValue, "/deep_research Dean Benedetti (Saxophonist)");
+  assert.strictEqual(sentValue, "/deep_research Pepito Perez B");
   assert.deepStrictEqual(errors, []);
 });
 
-test("a clear research answer keeps ordinary numbered detail as prose", async () => {
-  const { dom, errors } = createDom();
-  await waitFor(
-    () =>
-      dom.window.document.getElementById("app-version-label").textContent ===
-      "1.0.5",
-  );
-  dom.window.document.getElementById("btnLlamaCpp").click();
-  const div = dom.window.document.createElement("div");
-  dom.window.renderAssistantMessage(
-    div,
+test("a topic candidate behaves the same way as a person", async () => {
+  const { div, errors } = await renderInLlamaCpp(
     [
-      "Dean Benedetti was the American saxophonist associated with Charlie Parker.",
+      "This term is used in more than one field.",
       "",
-      "1. He transcribed Parker's solos.",
-      "2. He later stopped performing because of illness.",
+      "## Possible topics",
+      "",
+      "- **Entropy (thermodynamics)** — disorder in a physical system",
+      "- **Entropy (information theory)** — expected surprise of a message",
     ].join("\n"),
-    [],
   );
+  const buttons = candidateButtons(div);
+  assert.deepStrictEqual(
+    buttons.map((button) => button.textContent),
+    ["Entropy (thermodynamics)", "Entropy (information theory)"],
+  );
+  assert.match(
+    div.querySelector("li").textContent,
+    /disorder in a physical system/,
+  );
+  assert.deepStrictEqual(errors, []);
+});
+
+test("an ordinary answer with bullet points creates no candidate buttons", async () => {
+  // The old heuristic fired on bold text anywhere once the prose mentioned
+  // ambiguity. A comprehensive answer must be left completely alone.
+  const { div, errors } = await renderInLlamaCpp(
+    [
+      "Dean Benedetti was the saxophonist associated with Charlie Parker.",
+      "Sources disagree, and the name is ambiguous in some catalogues,",
+      "with several distinct individuals listed and possible matches noted.",
+      "",
+      "## Career",
+      "",
+      "- **Identity:** jazz saxophonist",
+      "- **Recordings:** transcribed Parker's solos",
+      "",
+      "1. He toured widely.",
+      "2. He later stopped performing.",
+    ].join("\n"),
+  );
+  assert.strictEqual(candidateButtons(div).length, 0);
+  assert.deepStrictEqual(errors, []);
+});
+
+test("candidate buttons render the same from history as they do live", async () => {
+  // History replay goes through renderAssistantHistoryMessage rather than a
+  // live stream; both must produce the same buttons.
+  const { dom, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  const session = dom.window.getActiveModeSession("llamacpp");
+  session.history = [
+    { role: "user", content: "Pepito Perez" },
+    { role: "assistant", content: CANDIDATE_ANSWER },
+  ];
+  dom.window.renderSessionTranscript(session);
+  const replayed = [
+    ...dom.window.document.querySelectorAll(".research-candidate-button"),
+  ];
+  assert.deepStrictEqual(
+    replayed.map((button) => button.textContent),
+    ["Pepito Perez A", "Pepito Perez B", "Pepito Perez C"],
+  );
+  assert.deepStrictEqual(errors, []);
+});
+
+test("candidate buttons are not created when deep_research is disabled", async () => {
+  // Per-mode skill configuration, set through the app's own setter rather than
+  // by faking the fetch: skills load lazily, so switching mode alone does not
+  // pull them.
+  const { dom, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  dom.window.setBuiltinSkillsConfigForMode("llamacpp", {
+    deep_research: false,
+  });
+  assert.strictEqual(dom.window.activeBuiltinSkills().deep_research, false);
+
+  const div = dom.window.document.createElement("div");
+  dom.window.renderAssistantMessage(div, CANDIDATE_ANSWER, []);
   assert.strictEqual(
-    div.querySelectorAll(".research-candidate-button").length,
+    candidateButtons(div).length,
+    0,
+    "a disabled skill still produced candidate buttons",
+  );
+
+  // The answer itself is untouched — disabling the skill hides the buttons, it
+  // does not damage the text.
+  assert.match(div.textContent, /Pepito Perez A\s*—\s*historian from Madrid/);
+  assert.deepStrictEqual(errors, []);
+});
+
+test("a candidate button cannot run a skill the mode disabled after it rendered", async () => {
+  // Buttons rendered while the skill was enabled must stop working if it is
+  // turned off afterwards: the click path re-checks rather than trusting that
+  // the button exists.
+  const { dom, div } = await renderInLlamaCpp(CANDIDATE_ANSWER);
+  const button = candidateButtons(div)[0];
+  assert.ok(button, "setup: no candidate button was rendered");
+
+  dom.window.setBuiltinSkillsConfigForMode("llamacpp", {
+    deep_research: false,
+  });
+
+  let sent = "";
+  const originalSend = dom.window.sendMessage;
+  dom.window.sendMessage = () => {
+    sent = dom.window.document.getElementById("input").value;
+  };
+  button.click();
+  dom.window.sendMessage = originalSend;
+  assert.strictEqual(sent, "", "a disabled skill was still runnable");
+});
+
+test("a list item that does not open with a bold name is not a candidate", async () => {
+  // The name has to BE the start of the item. Bold used mid-sentence for
+  // emphasis, or a note appended to the list, is not a candidate — otherwise
+  // the button lands on whatever happened to be emphasised.
+  const { div, errors } = await renderInLlamaCpp(
+    [
+      "## Possible matches",
+      "",
+      "- **Pepito Perez A** — historian from Madrid",
+      "- See also **the Madrid archives** for context",
+      "- Records held at **Biblioteca Nacional** are incomplete",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(
+    candidateButtons(div).map((button) => button.textContent),
+    ["Pepito Perez A"],
+  );
+  assert.deepStrictEqual(errors, []);
+});
+
+test("candidate buttons never expose a link or a command", async () => {
+  // The label comes from model output, so a name that looks like a URL or a
+  // slash command must not become something clickable.
+  const { div, errors } = await renderInLlamaCpp(
+    [
+      "## Possible matches",
+      "",
+      "- **https://evil.example/steal** — a link pretending to be a name",
+      "- **/shell rm -rf ~** — a command pretending to be a name",
+      "- **evil.example/path** — a bare domain",
+      "- **Genuine Person** — an actual candidate",
+    ].join("\n"),
+  );
+  const buttons = candidateButtons(div);
+  assert.deepStrictEqual(
+    buttons.map((button) => button.textContent),
+    ["Genuine Person"],
+  );
+  for (const button of buttons) {
+    assert.strictEqual(button.tagName, "BUTTON");
+    assert.strictEqual(button.getAttribute("href"), null);
+    assert.doesNotMatch(button.dataset.researchQuery, /^\/|:\/\//);
+  }
+  assert.strictEqual(
+    div.querySelectorAll(".research-candidate-button a").length,
     0,
   );
   assert.deepStrictEqual(errors, []);

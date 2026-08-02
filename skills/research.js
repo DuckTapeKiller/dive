@@ -2246,7 +2246,11 @@ function formatDeepResearchDossier({
     `- Prefer claims independently confirmed by genuinely different sources. Do not count syndicated copies or multiple search results that repeat the same origin as independent confirmation.\n` +
     `- Resolve contradictions explicitly. Never average incompatible dates, numbers, names, or life-status claims. State which source is stronger and why, or leave the matter unresolved.\n` +
     `- For people, verify identity, birth/death dates, major roles, and chronology before using present or past tense. Never imply that someone is alive from a present-tense source alone.\n` +
-    `- If the evidence identifies multiple distinct people or topics and the user did not disambiguate, do not write full profiles for all of them. Begin with a heading such as "## Possible matches" and list each candidate as "- **Exact candidate title** — short identifying descriptor". Keep this list concise so the application can make the candidate titles clickable.\n` +
+    `- If the evidence identifies multiple distinct people or topics and the user did not disambiguate, do not write full profiles for all of them. Emit the disambiguation list in exactly this form, because the application parses it:\n` +
+    `    ## Possible matches\n` +
+    `    - **Exact candidate name** — short identifying descriptor\n` +
+    `    - **Exact candidate name** — short identifying descriptor\n` +
+    `  The heading must be exactly "## Possible matches" (or "## Possible topics" for topics) on its own line, and the bullet list must follow it immediately. Each item must open with the candidate's exact name in bold, followed by an em dash and a short descriptor. Put nothing before the bold name, never bold the descriptor, and keep the list to the candidates alone — the application turns each bolded name into a clickable button and leaves the descriptor as text.\n` +
     `- If one identity or topic is sufficiently clear, do not reduce the answer to a candidate list: provide a comprehensive, well-structured answer with the relevant evidence and context.\n` +
     `- If evidence is thin, blocked, indirect, or single-source, say so plainly and reduce the scope of the answer. Accuracy outranks completeness.\n` +
     `- Attribute important or disputed single-source claims naturally by publisher, author, institution, or work when the evidence provides that information, without adding a references section or raw URLs.\n` +
