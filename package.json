@@ -29,7 +29,8 @@
     "format:check": "prettier --check .",
     "test": "node --test test/*.test.js",
     "prepare": "husky",
-    "lint:frontend": "node scripts/lint-frontend.js"
+    "lint:frontend": "node scripts/lint-frontend.js",
+    "bench": "node scripts/bench-frontend.js"
   },
   "devDependencies": {
     "electron": "^42.3.0",
