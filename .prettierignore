@@ -1,7 +1,10 @@
 node_modules
 dist
 release
-assets
+# assets/js and assets/css are first-party source and are formatted. Vendored
+# trees below keep their upstream formatting.
+assets/sqlite-tools
+assets/sqlite-vec
 package-lock.json
 *.min.js
 .husky/_
