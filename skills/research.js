@@ -1802,8 +1802,13 @@ async function fetchCNRTL(word) {
 }
 
 async function executeDeepEtymology({ word, language }) {
+  // `language` is schema-required, but models omit required fields routinely
+  // and an undefined here threw, which breaks the whole turn rather than
+  // returning a message the model can recover from.
+  const term = String(word ?? "").trim();
+  if (!term) return "Deep Etymology Error: no word provided.";
   let results = [];
-  const lang = language.toLowerCase();
+  const lang = String(language ?? "en").toLowerCase();
 
   if (lang === "en" || lang.startsWith("en-")) {
     const [etym, wikt] = await Promise.all([
@@ -1837,8 +1842,7 @@ async function executeDeepEtymology({ word, language }) {
   }
 
   return (
-    `### Etymology & Meaning for "${word}" (${language})\n\n` +
-    results.join("\n\n")
+    `### Etymology & Meaning for "${term}" (${lang})\n\n` + results.join("\n\n")
   );
 }
 
