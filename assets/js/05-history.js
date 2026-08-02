@@ -134,7 +134,7 @@ function loadConversation(conv) {
     }).catch(console.error);
   }
   if (mode === "pi") {
-    refreshPiStatus().catch(() => {});
+    refreshPiStatus().catch(uiRefreshFailed("Pi status"));
   } else {
     updateModeStatus();
   }
@@ -170,7 +170,9 @@ function sidePanelSetCollapsed(collapsed) {
   if (resizerEl) resizerEl.style.display = collapsed ? "none" : "";
   try {
     localStorage.setItem(SIDE_PANEL_COLLAPSED_KEY, String(collapsed));
-  } catch (_e) {}
+  } catch (_e) {
+    // localStorage unavailable; the panel state just is not remembered.
+  }
 }
 
 function updateSidePanelDb() {
@@ -196,7 +198,11 @@ async function sideDbSetEnabled(enabled) {
   if (typeof saveLibrarySettingsFromForm === "function") {
     try {
       await saveLibrarySettingsFromForm();
-    } catch (_e) {}
+    } catch (error) {
+      // The user toggled a database setting and it was not persisted. Silence
+      // here means it reverts on reload with no explanation.
+      console.error("[library] failed to save settings:", error);
+    }
   }
   updateSidePanelDb();
 }
@@ -211,11 +217,11 @@ function sideRefreshModels() {
       .then(() => {
         if (mode === "cloud") populateTopbarModelSelect();
       })
-      .catch(() => {});
+      .catch(uiRefreshFailed("cloud settings"));
   } else if (mode === "pi") {
     piAvailableModels = [];
     loadPiTopbarModels();
-    refreshPiStatus().catch(() => {});
+    refreshPiStatus().catch(uiRefreshFailed("Pi status"));
   }
 }
 
@@ -376,8 +382,8 @@ function wireSidePanel() {
     const sel = document.getElementById("sidePiThinkSelect");
     if (!sel || !sel.value) return;
     callPiCommand({ type: "set_thinking_level", level: sel.value })
-      .then(() => refreshPiStatus().catch(() => {}))
-      .catch(() => {});
+      .then(() => refreshPiStatus().catch(uiRefreshFailed("Pi status")))
+      .catch(uiRefreshFailed("Pi thinking level"));
   });
   if (typeof syncCustomSelect === "function") {
     syncCustomSelect(document.getElementById("sidePiThinkSelect"));
@@ -2523,7 +2529,9 @@ function beginIsolatedTurn(session, modeName) {
   if (typeof finalizePiChannelRun === "function") {
     try {
       finalizePiChannelRun();
-    } catch (_e) {}
+    } catch (error) {
+      console.error("[pi] failed to finalize the background run:", error);
+    }
   }
   if (session.draftAssistant || session.streamingAssistantDiv) {
     const leftoverText = session.draftAssistant?.content || "";
@@ -2985,10 +2993,10 @@ async function loadModeSkillsState(modeId) {
 // cost eight requests at startup for state three modes may never need.
 async function loadOllamaSkillsConfig() {
   renderBuiltinSkillsList();
-  await loadModeSkillsState(mode).catch(() => {});
+  await loadModeSkillsState(mode).catch(uiRefreshFailed("skills state"));
   renderBuiltinSkillsList();
   renderCustomSkillsList();
-  loadPluginsUi().catch(() => {});
+  loadPluginsUi().catch(uiRefreshFailed("plugins"));
 }
 
 // ---- PLUGINS (skills / slash commands loaded from ~/dive/plugins) ----
@@ -3055,7 +3063,7 @@ async function loadPluginsUi() {
   if (reloadBtn && !reloadBtn.dataset.wired) {
     reloadBtn.dataset.wired = "1";
     reloadBtn.addEventListener("click", () => {
-      reloadPlugins().catch(() => {});
+      reloadPlugins().catch(uiRefreshFailed("plugin reload"));
     });
   }
   try {
@@ -3066,9 +3074,9 @@ async function loadPluginsUi() {
     loadedPluginsPayload = null;
   }
   renderPluginsList();
-  loadLessonsUi().catch(() => {});
-  loadPluginDraftsUi().catch(() => {});
-  loadSystemPromptsUi().catch(() => {});
+  loadLessonsUi().catch(uiRefreshFailed("lessons"));
+  loadPluginDraftsUi().catch(uiRefreshFailed("plugin drafts"));
+  loadSystemPromptsUi().catch(uiRefreshFailed("system prompts"));
 }
 
 // ---- EDITABLE SYSTEM PROMPTS (Settings > Prompt) ----
@@ -4476,7 +4484,7 @@ function persistConversationSnapshot(convId, modeName, historyArr, title) {
       messages: historyArr,
       clientId: typeof APP_CLIENT_ID !== "undefined" ? APP_CLIENT_ID : "",
     }),
-  }).catch(() => {});
+  }).catch(uiRefreshFailed("conversation snapshot"));
 }
 
 // ---- BOOK SEARCH CONFIG ----

@@ -293,10 +293,14 @@ async function initialiseMcpServers(mode, configJson) {
         statuses.push({ name: serverName, ok: false, error: error.message });
         try {
           await client?.close();
-        } catch (_closeError) {}
+        } catch (_closeError) {
+          // The connection already failed; closing is best effort.
+        }
         try {
           await transport?.close?.();
-        } catch (_transportCloseError) {}
+        } catch (_transportCloseError) {
+          // Same: the transport may never have opened.
+        }
       }
     }
   }
@@ -314,6 +318,8 @@ function enqueueMcpOperation(mode, operation) {
     return Promise.reject(error);
   }
   const previous = mcpInitQueues.get(mode) || Promise.resolve();
+  // A failed earlier operation must not block the queue; its caller already
+  // received the rejection.
   const operationPromise = previous.catch(() => {}).then(operation);
   const trackedPromise = operationPromise.finally(() => {
     if (mcpInitQueues.get(mode) === trackedPromise) {

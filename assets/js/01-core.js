@@ -129,6 +129,14 @@ function createModeSession() {
 }
 
 // Stores the active session state per mode so switching modes preserves progress
+// A background UI refresh: it repaints a panel the user may not be looking at,
+// and a failure must never interrupt whatever triggered it. Reported at debug
+// level so a systematic failure is still discoverable in the console instead of
+// vanishing into `.catch(() => {})`.
+function uiRefreshFailed(what) {
+  return (error) => console.debug(`[ui] ${what} refresh failed:`, error);
+}
+
 const modeSession = {
   ollama: createModeSession(),
   pi: createModeSession(),
@@ -645,7 +653,7 @@ function wireOllamaAgentSettings() {
           baseUrlInput.value = d.baseUrl;
         }
       })
-      .catch(() => {});
+      .catch(uiRefreshFailed("Ollama base URL"));
     baseUrlInput.addEventListener("change", async () => {
       try {
         const res = await fetch(apiUrl("/api/ollama/settings"), {
@@ -657,7 +665,9 @@ function wireOllamaAgentSettings() {
         if (d && typeof d.baseUrl === "string") {
           baseUrlInput.value = d.baseUrl;
         }
-      } catch (_e) {}
+      } catch (_e) {
+        // The field keeps whatever the user typed if the server cannot be read.
+      }
       // Re-list models from the (possibly new) server.
       if (typeof loadModels === "function") loadModels();
     });

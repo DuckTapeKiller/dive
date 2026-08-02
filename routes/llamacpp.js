@@ -748,6 +748,8 @@ module.exports = function createLlamaCppDomain(deps) {
   // managed server would be wrong rather than merely unlucky.
   async function waitForRouterPort(port) {
     const inFlight = routerRestartsInFlight.get(port);
+    // Whether that restart succeeded or failed, the health check below is the
+    // authority on whether a router is actually there.
     if (inFlight) await inFlight.catch(() => {});
     if (!knownRouterPorts.has(port)) return true;
     if (await checkHealth(port)) return true;

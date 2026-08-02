@@ -413,7 +413,14 @@ module.exports = function createLibraryDomain(deps) {
         if (configuredSources.length) {
           try {
             fileCount = collectSourceFiles(config).length;
-          } catch (_e) {}
+          } catch (error) {
+            // The estimate is shown to the user as 0 files, which looks like
+            // an empty library rather than an unreadable source path.
+            console.warn(
+              "[library] could not scan sources for the estimate:",
+              error.message,
+            );
+          }
         }
         const embeddingEnabled = config.embedding?.enabled === true;
         const embeddingModel = String(config.embedding?.model || "");
@@ -436,7 +443,10 @@ module.exports = function createLibraryDomain(deps) {
         try {
           const status = await getLibraryStatus();
           indexedFiles = Number(status.files || 0);
-        } catch (_e) {}
+        } catch (error) {
+          // Same: reporting 0 indexed files hides a database problem.
+          console.warn("[library] could not read index status:", error.message);
+        }
         send(200, {
           sourcesConfigured: configuredSources.length,
           missingPaths,

@@ -117,9 +117,13 @@ function sweepPiAttachments(dir) {
         if (now - fs.statSync(entry).mtimeMs > PI_ATTACHMENT_TTL_MS) {
           fs.rmSync(entry, { recursive: true, force: true });
         }
-      } catch (_e) {}
+      } catch (_e) {
+        // Expected: another sweep or the OS removed this entry first.
+      }
     }
-  } catch (_e) {}
+  } catch (_e) {
+    // Expected: the staging directory is already gone.
+  }
 }
 
 function sweepPiAttachmentRoots() {
@@ -144,7 +148,9 @@ function sweepPiAttachmentRoots() {
           fs.rmdirSync(dir);
         }
       }
-    } catch (_e) {}
+    } catch (_e) {
+      // Expected: the root is unreadable or an entry raced with the sweep.
+    }
   }
 }
 
@@ -160,8 +166,14 @@ function piAttachmentStageDir() {
         continue;
       piOwnedAttachmentDirs.add(dir);
       return dir;
-    } catch (_e) {}
+    } catch (_e) {
+      // Expected per root: try the next candidate. Exhausting them all is
+      // reported by the caller, because it silently costs the user an image.
+    }
   }
+  console.warn(
+    `[pi] could not create an attachment staging directory in any of: ${piAttachmentRoots().join(", ")}. Images cannot be handed to Pi.`,
+  );
   return null;
 }
 
@@ -169,7 +181,9 @@ function removeOwnedPiAttachmentDirs() {
   for (const dir of piOwnedAttachmentDirs) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
-    } catch (_e) {}
+    } catch (_e) {
+      // Expected at shutdown: the directory may already be gone.
+    }
     piOwnedAttachmentDirs.delete(dir);
   }
 }
@@ -228,7 +242,9 @@ function createPiDomain(deps) {
     } catch (_error) {
       try {
         proc.kill(signal);
-      } catch (_ignored) {}
+      } catch (_ignored) {
+        // Expected: the process had already exited.
+      }
     }
   }
 
@@ -260,7 +276,9 @@ function createPiDomain(deps) {
         const found = (lookup.stdout || "").split(/\r?\n/)[0].trim();
         if (found) return found;
       }
-    } catch (_error) {}
+    } catch (_error) {
+      // Expected when `which`/`where` is unavailable; fall back to PATH.
+    }
     return "pi"; // Fallback to PATH
   }
 
@@ -493,7 +511,9 @@ function createPiDomain(deps) {
       if (!res.writableEnded) {
         try {
           res.write(payload);
-        } catch (_e) {}
+        } catch (_e) {
+          // Expected: the subscriber disconnected between the check and write.
+        }
       }
     }
     return publicEvent;
@@ -542,7 +562,11 @@ function createPiDomain(deps) {
     for (const listener of session.streamListeners) {
       try {
         listener(publicEvent);
-      } catch (e) {}
+      } catch (error) {
+        // A listener bug must not break the fan-out to the others, but it is a
+        // bug and was previously invisible.
+        console.error("[pi] stream listener threw:", error);
+      }
     }
   }
 
@@ -832,8 +856,12 @@ function createPiDomain(deps) {
       return;
     }
     try {
+      // Each abort is best-effort: "no bash running" and "no retry pending"
+      // are normal outcomes, and the process may exit as we write.
       stopPiGeneration(convProc).catch(() => {});
-    } catch (_error) {}
+    } catch (_error) {
+      // stdin already closed; the process is going away regardless.
+    }
   }
 
   function finishPiSession(session) {
@@ -1845,7 +1873,10 @@ function createPiDomain(deps) {
         ),
       );
       version = typeof pkg.version === "string" ? pkg.version : "";
-    } catch (_e) {}
+    } catch (_e) {
+      // Expected: Pi installed somewhere without a readable package.json. The
+      // banner degrades to "pi" with no version.
+    }
     piVersionCache.set(cacheKey, version);
     return version;
   }
@@ -2145,9 +2176,18 @@ function createPiDomain(deps) {
         setTimeout(() => {
           try {
             fs.unlinkSync(tmp);
-          } catch (_e) {}
+          } catch (_e) {
+            // Expected: already swept, or the directory was removed.
+          }
         }, PI_ATTACHMENT_TTL_MS).unref();
-      } catch (_e) {}
+      } catch (error) {
+        // Not expected. The image is dropped from the prompt entirely and Pi
+        // is never told it existed, so this must not be silent.
+        console.error(
+          `[pi] failed to stage an attachment for Pi (${image.mimeType}):`,
+          error,
+        );
+      }
     }
     if (!refs.length) return { message: promptMessage, images: [] };
     return {
@@ -2505,7 +2545,9 @@ function createPiDomain(deps) {
           if (active) {
             try {
               await waitForPiSessionStep(active, 5000);
-            } catch (_error) {}
+            } catch (_error) {
+              // Expected: the abort may time out; cleanup happens either way.
+            }
             cleanupPiSession(active.id, "command_abort");
           }
           send(200, {
@@ -2840,11 +2882,19 @@ function createPiDomain(deps) {
                 status: "streaming",
               },
             );
-          } catch (_e) {}
+          } catch (error) {
+            // The streaming checkpoint is what protects an in-flight turn from
+            // a crash or a Stop. Losing it silently loses the answer.
+            console.error(
+              "[pi] failed to checkpoint the in-flight turn:",
+              error,
+            );
+          }
         };
         writeStreamEvent({ type: "session_start", sessionId: session.id });
         if (!convProc.bannerEmitted) {
           convProc.bannerEmitted = true;
+          // Cosmetic banner only; a failure costs nothing visible.
           emitPiEnvironmentBanner(convProc, session).catch(() => {});
         }
 
@@ -3007,7 +3057,15 @@ function createPiDomain(deps) {
               ),
             );
           }
-        } catch (_e) {}
+        } catch (error) {
+          // The streaming route reports this to the client as library_error.
+          // This route has no event channel, so at least record it: the answer
+          // is produced without the database grounding the user asked for.
+          console.warn(
+            "[pi] library context unavailable for this turn:",
+            error,
+          );
+        }
         const piSettings = loadPiSettings();
         const convId = requirePiConversationId(body.saveConv);
         const convProc = getOrCreatePiConvProcess(convId, piSettings);
@@ -3132,7 +3190,9 @@ function createPiDomain(deps) {
           for (const subscriber of channel.subscribers) {
             try {
               subscriber.end();
-            } catch (_error) {}
+            } catch (_error) {
+              // Expected at shutdown: the socket may already be closed.
+            }
           }
           channel.subscribers.clear();
         }

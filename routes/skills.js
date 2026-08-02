@@ -69,11 +69,15 @@ module.exports = function createSkillsDomain(deps) {
             manifest = JSON.parse(
               fs.readFileSync(path.join(dir, "plugin.json"), "utf8"),
             );
-          } catch (_e) {}
+          } catch (_e) {
+            // A draft without a manifest still lists, with empty metadata.
+          }
           let code = "";
           try {
             code = fs.readFileSync(path.join(dir, "index.js"), "utf8");
-          } catch (_e) {}
+          } catch (_e) {
+            // Listed with no code rather than hidden, so the user can delete it.
+          }
           drafts.push({
             name: entry.name,
             description: manifest.description || "",
@@ -81,7 +85,9 @@ module.exports = function createSkillsDomain(deps) {
             code,
           });
         }
-      } catch (_e) {}
+      } catch (_e) {
+        // No drafts directory yet, or it is unreadable: report an empty list.
+      }
       send(200, { drafts });
       return true;
     }

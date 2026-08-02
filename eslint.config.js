@@ -36,6 +36,13 @@ module.exports = [
       ],
       "no-undef": "error",
       "no-constant-condition": ["error", { checkLoops: false }],
+      // A catch block that discards the error must say why. Swallowing errors
+      // silently was this codebase's largest bug-concealment surface: 109
+      // sites, several of which hid real failures (a dropped attachment, an
+      // unsaved setting, a Pi stream error thrown into its own catch).
+      // `allowEmptyCatch: false` plus this rule means an empty catch has to
+      // carry a comment explaining that the failure is genuinely expected.
+      "no-empty": ["error", { allowEmptyCatch: false }],
     },
   },
   {
@@ -55,6 +62,7 @@ module.exports = [
       "no-undef": "off",
       "no-unused-vars": "off",
       "no-constant-condition": ["error", { checkLoops: false }],
+      "no-empty": ["error", { allowEmptyCatch: false }],
     },
   },
 ];

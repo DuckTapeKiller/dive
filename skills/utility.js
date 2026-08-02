@@ -80,7 +80,11 @@ async function executeLocalNotes({ action, content }, DATA_DIR) {
         currentText = raw.text || "";
       }
     }
-  } catch (e) {}
+  } catch (error) {
+    // A missing note file is normal. A malformed one is not, and silently
+    // reporting "your notes are empty" would look like data loss.
+    console.warn("[notes] could not read the active note:", error.message);
+  }
 
   if (action === "read") {
     return currentText

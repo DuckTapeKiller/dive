@@ -81,7 +81,9 @@ function resolveNodeBinary() {
       const found = (lookup.stdout || "").split(/\r?\n/)[0].trim();
       if (found && fs.existsSync(found)) return found;
     }
-  } catch (_error) {}
+  } catch (_error) {
+    // `which`/`where` unavailable; fall through to the bundled executable.
+  }
   if (process.execPath && fs.existsSync(process.execPath)) {
     const basename = path.basename(process.execPath).toLowerCase();
     if (basename.includes("node")) return process.execPath;
@@ -97,7 +99,9 @@ function readConfiguredServerPort() {
     if (Number.isFinite(value) && value >= 1024 && value <= 65535) {
       return value;
     }
-  } catch (_error) {}
+  } catch (_error) {
+    // Expected on first run, or an unreadable settings file: use the default.
+  }
   return 8080;
 }
 
@@ -139,7 +143,9 @@ function syncRuntimeFiles(runtimeDir) {
     if (fs.existsSync(runtimeDir) && !fs.statSync(runtimeDir).isDirectory()) {
       fs.rmSync(runtimeDir, { force: true });
     }
-  } catch (_error) {}
+  } catch (_error) {
+    // mkdirSync below reports the real problem if the path is unusable.
+  }
   fs.mkdirSync(runtimeDir, { recursive: true });
   copyIfExists(
     path.join(appRoot, "server.js"),
@@ -330,7 +336,9 @@ function installOrRefreshLaunchAgent(serverPort) {
     runLaunchctl(["bootout", `gui/${USER_ID}/${legacyLabel}`], false);
     try {
       fs.rmSync(legacyPlistPath, { force: true });
-    } catch (_error) {}
+    } catch (_error) {
+      // The legacy agent may already be gone; the bootout above is what matters.
+    }
   }
   runLaunchctl(["bootout", `gui/${USER_ID}`, LAUNCH_PLIST_PATH], false);
   runLaunchctl(["bootstrap", `gui/${USER_ID}`, LAUNCH_PLIST_PATH], false);
@@ -342,7 +350,9 @@ function stopLocalServerProcess() {
   if (!localServerProcess || localServerProcess.killed) return;
   try {
     localServerProcess.kill();
-  } catch (_error) {}
+  } catch (_error) {
+    // Already exited.
+  }
   localServerProcess = null;
 }
 
@@ -386,7 +396,15 @@ async function bootLocalServer() {
     );
     localPort = configuredPort;
     return;
-  } catch (_error) {}
+  } catch (error) {
+    // The server did not answer in time. The retry below may recover, but a
+    // silent failure here is what the user experiences as an app that opens
+    // to a blank window.
+    console.error(
+      `[dive] local server did not respond on port ${configuredPort}:`,
+      error.message,
+    );
+  }
 
   stopLocalServerProcess();
   localPort = configuredPort;

@@ -15,7 +15,9 @@ async function loadBookSearchConfigUi() {
       const el = document.getElementById(id);
       if (el) el.value = cfg[key] || "";
     }
-  } catch (_e) {}
+  } catch (_e) {
+    // Optional provider keys; the form stays blank if they cannot be read.
+  }
 }
 
 async function saveBookSearchConfigUi() {
@@ -88,9 +90,13 @@ async function loadPiTopbarModels() {
       // Initialise the thinking dropdown from Pi's real state on entry,
       // before any conversation exists.
       syncPiThinkingSelect(st?.result?.data?.thinkingLevel);
-    } catch (_e) {}
+    } catch (_e) {
+      // Pi has no process yet; the dropdowns fill in on the first turn.
+    }
     if (mode === "pi") populateTopbarModelSelect();
-  } catch (_e) {}
+  } catch (_e) {
+    // Entering Pi mode must never fail because its status could not be read.
+  }
 }
 
 // Handle Dive-level Pi slash commands. Returns true when handled here;
@@ -401,7 +407,9 @@ function closePiEventChannel() {
   if (piEventSource) {
     try {
       piEventSource.close();
-    } catch (_e) {}
+    } catch (_e) {
+      // Already closed by the browser.
+    }
   }
   piEventSource = null;
   piEventConvId = null;
@@ -499,7 +507,7 @@ function handlePiChannelEvent(evt) {
             renderSessionTranscript(session);
           }
         })
-        .catch(() => {})
+        .catch(uiRefreshFailed("Pi history reconcile"))
         .finally(() => {
           session.piReplayReconcile = false;
         });

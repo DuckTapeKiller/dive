@@ -1627,9 +1627,12 @@ function renderLibraryIndexJob(payload) {
         .then((pause) => {
           if (pause) cancelLibraryIndex();
         })
-        .catch(() => {});
+        .catch(uiRefreshFailed("library index status"));
     }
-  } catch (_e) {}
+  } catch (_e) {
+    // The index panel is optional chrome; a failure must not stop the rest of
+    // the side panel from rendering.
+  }
   // Side panel activity light: glowing while the index job runs.
   const dbDot = document.getElementById("sideDbDot");
   if (dbDot) {
@@ -2090,7 +2093,9 @@ function saveBookFilterSelections() {
       BOOK_FILTER_STORAGE_KEY,
       JSON.stringify(bookFilterSelections),
     );
-  } catch (_e) {}
+  } catch (_e) {
+    // localStorage unavailable or full; the selection stays for this session.
+  }
 }
 
 function getBookFilterFileIds(modeKey) {
@@ -2580,8 +2585,12 @@ async function onTopbarModelChange() {
       piCurrentModelValue = val;
       try {
         await callPiCommand({ type: "set_model", provider, modelId });
-        refreshPiStatus().catch(() => {});
-      } catch (_e) {}
+        refreshPiStatus().catch(uiRefreshFailed("Pi status"));
+      } catch (error) {
+        // The dropdown already shows the new model optimistically, so a silent
+        // failure here leaves the UI claiming a model Pi is not using.
+        console.error("[pi] failed to switch model:", error);
+      }
     }
   }
   updateModeStatus();
@@ -2795,10 +2804,10 @@ function renderMode(m) {
   populateTopbarModelSelect();
   if (isPiMode && !piAvailableModels.length) loadPiTopbarModels();
   if (isLocalMode && (localModelsCache[m] || []).length === 0) {
-    fetchLocalModelList(m).catch(() => {});
+    fetchLocalModelList(m).catch(uiRefreshFailed("local model list"));
   }
   if (m === "llamacpp" && typeof refreshLlamaCppManager === "function") {
-    refreshLlamaCppManager().catch(() => {});
+    refreshLlamaCppManager().catch(uiRefreshFailed("llama.cpp manager"));
   }
 
   updateSettingsTabAvailability({
@@ -2823,7 +2832,7 @@ function renderMode(m) {
   // from this mode's bucket, then repaint if its state still has to load.
   if (hasDiveSkills) {
     if (typeof ensureMcpModeInitialised === "function") {
-      ensureMcpModeInitialised(m).catch(() => {});
+      ensureMcpModeInitialised(m).catch(uiRefreshFailed("MCP init"));
     }
     renderBuiltinSkillsList();
     renderCustomSkillsList();
@@ -2842,7 +2851,7 @@ function renderMode(m) {
             renderPluginsList();
           }
         })
-        .catch(() => {});
+        .catch(uiRefreshFailed("mode skills state"));
     }
   }
 
@@ -2861,9 +2870,10 @@ function renderMode(m) {
   document.getElementById("uploadBtn").style.display = "";
   if (!isOllamaMode) closePromptEditor();
   if (historyOpen) loadHistoryPanel();
-  if (isOllamaMode) refreshOllamaModelContext().catch(() => {});
+  if (isOllamaMode)
+    refreshOllamaModelContext().catch(uiRefreshFailed("Ollama model context"));
   if (isPiMode) {
-    refreshPiStatus().catch(() => {});
+    refreshPiStatus().catch(uiRefreshFailed("Pi status"));
   } else {
     updateModeStatus();
   }
@@ -2877,9 +2887,10 @@ function renderMode(m) {
   updateSendButtonState();
   // Lessons and editable system prompts are per-mode: rebind their editors to
   // THIS mode's files, covering a mode switch while Settings is open.
-  if (typeof loadLessonsUi === "function") loadLessonsUi().catch(() => {});
+  if (typeof loadLessonsUi === "function")
+    loadLessonsUi().catch(uiRefreshFailed("lessons"));
   if (typeof loadSystemPromptsUi === "function") {
-    loadSystemPromptsUi().catch(() => {});
+    loadSystemPromptsUi().catch(uiRefreshFailed("system prompts"));
   }
 }
 
@@ -3186,8 +3197,10 @@ async function runPiRpcConversation(
               saveConv: saveConv || currentConvId,
               command: { type: "abort" },
             }),
-          }).catch(() => {});
-        } catch (_e) {}
+          }).catch(uiRefreshFailed("Pi abort"));
+        } catch (_e) {
+          // No Pi process for this conversation; nothing to abort.
+        }
       },
       { once: true },
     );
@@ -3351,18 +3364,24 @@ async function runPiRpcConversation(
   throwIfAborted();
 
   if (buffer.trim()) {
+    // Parse inside the guard, act outside it. The error branch below used to
+    // sit inside this try, so its throw was caught by its own catch and a Pi
+    // streaming error in the trailing buffer was discarded entirely.
+    let evt = null;
     try {
-      const evt = JSON.parse(buffer.trim());
-      if (evt.type === "done") {
-        finalResponse =
-          typeof evt.response === "string" ? evt.response : finalResponse;
-        if (typeof onDelta === "function") onDelta(finalResponse, "");
-        return finalResponse;
-      }
-      if (evt.type === "error") {
-        throw new Error(evt.error || "Pi streaming error.");
-      }
-    } catch (_e) {}
+      evt = JSON.parse(buffer.trim());
+    } catch (_e) {
+      // A partial trailing record is not an error; the response so far stands.
+    }
+    if (evt?.type === "done") {
+      finalResponse =
+        typeof evt.response === "string" ? evt.response : finalResponse;
+      if (typeof onDelta === "function") onDelta(finalResponse, "");
+      return finalResponse;
+    }
+    if (evt?.type === "error") {
+      throw new Error(evt.error || "Pi streaming error.");
+    }
   }
 
   return finalResponse;
@@ -3781,7 +3800,9 @@ async function runLocalModeConversation(
           // Context was unknown at start — fetch it now so the
           // token counter replaces '?' with the real limit.
           if (!localContextCache[modeId]) {
-            fetchLocalModelList(modeId).catch(() => {});
+            fetchLocalModelList(modeId).catch(
+              uiRefreshFailed("local model list"),
+            );
           }
         }
         if (typeof onDelta === "function") onDelta(finalResponse, "");

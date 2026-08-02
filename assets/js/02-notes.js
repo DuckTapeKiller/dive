@@ -494,6 +494,7 @@ function logSecurityEvent(event, details = {}) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, details }),
     keepalive: true,
+    // Fire-and-forget audit beacon: it must never block or surface to the user.
   }).catch(() => {});
 }
 

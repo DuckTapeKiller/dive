@@ -195,7 +195,14 @@ module.exports = function createCloudTransport(deps) {
     });
     try {
       fs.chmodSync(CLOUD_SETTINGS_FILE, 0o600);
-    } catch (e) {}
+    } catch (error) {
+      // This file holds API keys. If it cannot be made owner-only the user
+      // should know rather than assume it is protected.
+      console.warn(
+        `[cloud] could not restrict permissions on ${CLOUD_SETTINGS_FILE}:`,
+        error.message,
+      );
+    }
     return sanitized;
   }
 

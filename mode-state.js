@@ -67,7 +67,9 @@ function writeJsonAtomically(filePath, value) {
   } catch (error) {
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch (_cleanupError) {}
+    } catch (_cleanupError) {
+      // Cleanup only; the original write error is rethrown below.
+    }
     throw error;
   }
 }

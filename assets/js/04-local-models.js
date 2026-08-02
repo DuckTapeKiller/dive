@@ -356,7 +356,9 @@ async function refreshLocalModels(modeId) {
     try {
       const status = await llamaCppManagerFetchStatus();
       if (status.chat?.state !== "running") {
-        await refreshLlamaCppManager().catch(() => {});
+        await refreshLlamaCppManager().catch(
+          uiRefreshFailed("llama.cpp manager"),
+        );
         await appAlert(
           "No model is loaded yet. Click LOAD next to a model in the MODEL LIBRARY section to start the llama.cpp server, then the model list will fill in automatically.",
           "llama.cpp",
@@ -550,7 +552,8 @@ function llamaCppManagerSchedulePoll(status) {
   clearTimeout(llamaCppManagerPollTimer);
   if (transitional || external) {
     llamaCppManagerPollTimer = setTimeout(
-      () => refreshLlamaCppManager().catch(() => {}),
+      () =>
+        refreshLlamaCppManager().catch(uiRefreshFailed("llama.cpp manager")),
       transitional ? 1200 : 8000,
     );
   }
@@ -888,7 +891,7 @@ async function llamaCppLoadModel(m) {
     llamaCppLoadingLabel = "";
     llamaCppLoadingModel = "";
     llamaCppLoadStartMs = 0;
-    await refreshLlamaCppManager().catch(() => {});
+    await refreshLlamaCppManager().catch(uiRefreshFailed("llama.cpp manager"));
     // A chat load makes the managed server this mode's backend: pick up
     // the selection it just moved, then refresh the chat model list +
     // context-length token counter.
@@ -897,8 +900,12 @@ async function llamaCppLoadModel(m) {
     // repainting it from the stale one is what left the panel naming the
     // model this load replaced.
     if (!m.embedding) {
-      await refreshLocalModelSelection().catch(() => {});
-      await fetchLocalModelList("llamacpp").catch(() => {});
+      await refreshLocalModelSelection().catch(
+        uiRefreshFailed("local model selection"),
+      );
+      await fetchLocalModelList("llamacpp").catch(
+        uiRefreshFailed("local model list"),
+      );
     }
   }
   // After the refresh, so the list already shows the model as loaded when
@@ -1274,7 +1281,9 @@ function renderLlamaCppModelList(status, wrapId, full) {
         } finally {
           // Always re-render: without this a failed stop leaves the
           // button permanently disabled.
-          await refreshLlamaCppManager().catch(() => {});
+          await refreshLlamaCppManager().catch(
+            uiRefreshFailed("llama.cpp manager"),
+          );
         }
         return;
       }
@@ -1362,7 +1371,7 @@ function renderLlamaCppDownload(status) {
         "Cancel download",
       )
         .then(() => refreshLlamaCppManager())
-        .catch(() => {}),
+        .catch(uiRefreshFailed("llama.cpp manager")),
     );
     row.appendChild(label);
     row.appendChild(barOuter);
@@ -1391,7 +1400,7 @@ async function refreshLlamaCppManager() {
     "";
   if (loadedNow !== llamaCppLastLoadedChatModel) {
     llamaCppLastLoadedChatModel = loadedNow;
-    fetchLocalModelList("llamacpp").catch(() => {});
+    fetchLocalModelList("llamacpp").catch(uiRefreshFailed("local model list"));
   } else if (mode === "llamacpp") {
     // Same model still loaded (or still none), but its configured context
     // may have just changed on the CONTEXT slider — the counter tracks
@@ -1756,7 +1765,7 @@ function wireLlamaCppManager() {
       if (wrap) wrap.textContent = "";
     });
   }
-  refreshLlamaCppManager().catch(() => {});
+  refreshLlamaCppManager().catch(uiRefreshFailed("llama.cpp manager"));
 }
 
 // HISTORY

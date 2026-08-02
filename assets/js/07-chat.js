@@ -33,7 +33,7 @@ function subscribeToGlobalAppEvents() {
         evt.type === "llamacpp_models_changed" &&
         typeof refreshLlamaCppManager === "function"
       ) {
-        refreshLlamaCppManager().catch(() => {});
+        refreshLlamaCppManager().catch(uiRefreshFailed("llama.cpp manager"));
       }
       // Which model is selected moved on the server — a load, or a delete
       // that cleared it. Every window shows that name in two dropdowns and
@@ -42,7 +42,9 @@ function subscribeToGlobalAppEvents() {
         evt.type === "llamacpp_selection_changed" &&
         typeof refreshLocalModelSelection === "function"
       ) {
-        refreshLocalModelSelection().catch(() => {});
+        refreshLocalModelSelection().catch(
+          uiRefreshFailed("local model selection"),
+        );
       }
     };
   } catch (_e) {
@@ -498,7 +500,7 @@ async function sendMessage() {
             if (mode === runMode) updateModeStatus();
           }
           if (evt.type === "done") {
-            refreshPiStatus().catch(() => {});
+            refreshPiStatus().catch(uiRefreshFailed("Pi status"));
           }
           recordRunTrace(evt);
         },
@@ -888,7 +890,7 @@ async function regenerate(wrapEl) {
       if (mode === runMode) updateModeStatus();
     }
     if (evt.type === "done" && runMode === "pi") {
-      refreshPiStatus().catch(() => {});
+      refreshPiStatus().catch(uiRefreshFailed("Pi status"));
     }
     if (evt.type === "done" && runMode === "cloud") {
       cloudStreamState = "IDLE";
@@ -1252,7 +1254,9 @@ async function updateTokenCounter(
         counterEl.textContent = `Tokens: ${piTokenState.used} / ${t}`;
         return;
       }
-    } catch (e) {}
+    } catch (_e) {
+      // Pi status unavailable; fall through to the generic counter below.
+    }
   }
 
   if (state.used == null) {
@@ -1461,11 +1465,13 @@ function abortActiveGeneration() {
         saveConv: currentConvId,
         command: { type: "abort" },
       }),
-    }).catch(() => {});
+    }).catch(uiRefreshFailed("Pi abort"));
     if (typeof finalizePiChannelRun === "function") {
       try {
         finalizePiChannelRun();
-      } catch (_e) {}
+      } catch (error) {
+        console.error("[pi] failed to finalize the background run:", error);
+      }
     }
     updateSendButtonState();
     return true;
@@ -1695,7 +1701,7 @@ function toggleSettings() {
     // to the CURRENT mode and load that mode's file (boot-time loading
     // alone left it stale).
     if (typeof loadLessonsUi === "function") {
-      loadLessonsUi().catch(() => {});
+      loadLessonsUi().catch(uiRefreshFailed("lessons"));
     }
   } else {
     panel.classList.remove("open");
@@ -1848,7 +1854,9 @@ function loadMcpConfigStorage() {
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       stored = parsed;
     }
-  } catch (_error) {}
+  } catch (_error) {
+    // Corrupt or absent stored config; fall back to the legacy key below.
+  }
   const legacy = localStorage.getItem("mcpConfig");
   let migrated = false;
   for (const modeId of MCP_MODE_IDS) {
@@ -1868,7 +1876,9 @@ function persistMcpConfigStorage() {
       MCP_CONFIG_STORAGE_KEY,
       JSON.stringify(mcpConfigByMode),
     );
-  } catch (_error) {}
+  } catch (_error) {
+    // localStorage unavailable or full; the config stays for this session.
+  }
 }
 
 function activeMcpMode() {

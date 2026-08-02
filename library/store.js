@@ -389,7 +389,9 @@ function readEmbeddedAsset(assetName) {
   try {
     const sea = require("node:sea");
     if (sea.isSea()) return sea.getAsset(assetName, "utf8");
-  } catch (_error) {}
+  } catch (_error) {
+    // Expected outside a single-executable build: node:sea is unavailable.
+  }
   return null;
 }
 
@@ -426,7 +428,9 @@ function resolveVecExtensionPath(configured) {
   try {
     if (explicit && fs.existsSync(explicit)) return explicit;
     if (fs.existsSync(BUNDLED_VEC_EXTENSION)) return BUNDLED_VEC_EXTENSION;
-  } catch (_e) {}
+  } catch (_e) {
+    // Unreadable path; fall back to whatever the user configured.
+  }
   return explicit;
 }
 
@@ -1166,7 +1170,10 @@ DROP TABLE IF EXISTS library_chunks_fts;`,
       !/contentless_delete\s*=\s*1/i.test(ftsSql) ||
       /columnsize\s*=\s*0/i.test(ftsSql) ||
       !/detail\s*=\s*none/i.test(ftsSql);
-  } catch (_error) {}
+  } catch (_error) {
+    // No existing FTS table to inspect (first index, or a fresh database):
+    // shouldCreate keeps its default and the table is built below.
+  }
 
   const resetSql = shouldCreate
     ? "DROP TABLE IF EXISTS library_chunks_fts;"
@@ -1363,7 +1370,14 @@ async function pruneVectorTable(config) {
       "DELETE FROM library_chunks_vec WHERE chunk_id NOT IN (SELECT id FROM library_chunks);",
       { loadExtensionPath: config.embedding.sqliteVecExtensionPath },
     );
-  } catch (_error) {}
+  } catch (error) {
+    // Orphaned vector rows are not fatal, but they waste space and skew
+    // results, so a repeated failure here should be visible.
+    console.warn(
+      "[library] could not prune orphaned vector rows:",
+      error.message,
+    );
+  }
 }
 
 function hashFile(filePath) {
@@ -2000,12 +2014,16 @@ async function readOllamaError(response) {
   let body = "";
   try {
     body = await response.text();
-  } catch (_error) {}
+  } catch (_error) {
+    // The body is unreadable; the caller reports the status code alone.
+  }
   if (!body) return "";
   try {
     const parsed = JSON.parse(body);
     if (typeof parsed?.error === "string") return parsed.error;
-  } catch (_error) {}
+  } catch (_error) {
+    // Not JSON; fall through to the raw text below.
+  }
   return body.slice(0, 500);
 }
 

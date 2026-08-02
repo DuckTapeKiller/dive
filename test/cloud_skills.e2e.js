@@ -52,7 +52,9 @@ function startMockProvider() {
         let parsed = {};
         try {
           parsed = JSON.parse(body);
-        } catch (_e) {}
+        } catch (_e) {
+          // The assertions below report an unparseable body far more clearly.
+        }
         seenProviderRequests.push(parsed);
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         const flat = JSON.stringify(parsed.messages || []);
@@ -148,7 +150,9 @@ async function main() {
     if (!line.trim()) continue;
     try {
       events.push(JSON.parse(line));
-    } catch (_e) {}
+    } catch (_e) {
+      // A partial trailing NDJSON line is expected when a stream is cut short.
+    }
   }
 
   const toolStart = events.find(

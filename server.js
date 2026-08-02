@@ -92,7 +92,9 @@ try {
     ]) {
       try {
         EMBEDDED_ASSETS.set(assetName, sea.getAsset(assetName, "utf8"));
-      } catch (_assetError) {}
+      } catch (_assetError) {
+        // Expected outside a single-executable build: the asset is not bundled.
+      }
     }
   }
 } catch (e) {
@@ -496,7 +498,9 @@ function appendFileWithRotation(filePath, content) {
         try {
           if (fs.existsSync(filePath)) fs.chmodSync(filePath, 0o600);
           else fs.closeSync(fs.openSync(filePath, "a", 0o600));
-        } catch (_error) {}
+        } catch (_error) {
+          // Best effort: the append below still works if the mode cannot be set.
+        }
         fs.appendFile(filePath, content, (err) => {
           if (err) console.error("Async append error:", err);
           resolve();
@@ -2242,7 +2246,10 @@ function loadOllamaBaseUrl() {
         return raw.baseUrl.trim();
       }
     }
-  } catch (_e) {}
+  } catch (_e) {
+    // Expected on first run, or if the settings file is unreadable; the
+    // default URL below is a safe fallback.
+  }
   return DEFAULT_OLLAMA_BASE_URL;
 }
 let ollamaBaseUrl = loadOllamaBaseUrl();
@@ -2256,7 +2263,11 @@ function saveOllamaBaseUrl(url) {
       OLLAMA_SETTINGS_FILE,
       JSON.stringify({ baseUrl: ollamaBaseUrl }, null, 2),
     );
-  } catch (_e) {}
+  } catch (error) {
+    // The user changed the Ollama URL and it was not persisted. Silence here
+    // means it reverts on restart with no explanation.
+    console.error("[ollama] failed to save the base URL:", error);
+  }
   return ollamaBaseUrl;
 }
 function ollamaConn() {
@@ -2918,7 +2929,9 @@ const server = http.createServer(async (req, res) => {
         } catch (writeErr) {
           try {
             if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-          } catch (e) {}
+          } catch (_cleanupError) {
+            // Cleanup only; the original write error is rethrown below.
+          }
           throw writeErr;
         }
       } else {

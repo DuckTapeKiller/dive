@@ -985,7 +985,15 @@ async function executeSkill(toolCall, context = {}) {
   let args = {};
   try {
     args = JSON.parse(toolCall.function.arguments);
-  } catch (e) {}
+  } catch (error) {
+    // The model emitted arguments that are not valid JSON. Running the skill
+    // with {} makes it fail further down with an unrelated-looking message, so
+    // say plainly what happened.
+    console.warn(
+      `[skills] ${name}: could not parse tool arguments, running with none:`,
+      error.message,
+    );
+  }
 
   switch (name) {
     case "wikipedia":
