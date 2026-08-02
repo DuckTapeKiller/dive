@@ -142,6 +142,7 @@ function finishPrompt(command, number) {
   emit({ type: "agent_settled" });
 }
 function handle(command) {
+  try { fs.appendFileSync(logPath + ".commands", JSON.stringify({ type: command.type }) + "\n"); } catch (e) {}
   if (command.type === "get_state") {
     state(command.id);
     return;
@@ -463,5 +464,66 @@ test("a queued Pi turn is cancelled, not run, when the session is reset", async 
   assert.ok(
     last && (last.type === "error" || last.type === "done"),
     `the cancelled turn's stream should terminate, got ${JSON.stringify(last)}`,
+  );
+});
+
+test("Stop aborts the agent, an in-flight retry, and a running bash command", async (t) => {
+  // Pi's terminal Esc ends all three; over RPC they are three separate
+  // commands. Sending only {type:"abort"} leaves a retry counting down and a
+  // bash child still running, so the turn looks alive after Stop.
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "dive-pi-stop-"));
+  const fake = await makeFakePi(tempDir);
+  const deps = makeDeps({ tempDir, ...fake });
+  const domain = createPiDomain(deps);
+  const server = createHttpServer(domain);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    domain.api.shutdownAll();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const commandsSeen = () => {
+    const file = fake.logPath + ".commands";
+    if (!fs.existsSync(file)) return [];
+    return fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).type);
+  };
+
+  const running = post(baseUrl, "/api/pi/stream", {
+    saveConv: "stop-test",
+    convTitle: "Stop",
+    message: "slow turn to interrupt",
+    history: [],
+    mode: "pi",
+  });
+  const deadline = Date.now() + 5000;
+  while (!commandsSeen().includes("prompt") && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  assert.ok(commandsSeen().includes("prompt"), "the turn never started");
+
+  const stop = await post(baseUrl, "/api/pi/command", {
+    saveConv: "stop-test",
+    command: { type: "abort" },
+  });
+  assert.strictEqual(stop.response.status, 200);
+  await running;
+
+  const seen = commandsSeen();
+  for (const expected of ["abort", "abort_retry", "abort_bash"]) {
+    assert.ok(
+      seen.includes(expected),
+      `Stop must send ${expected}; Pi only saw: ${seen.join(", ")}`,
+    );
+  }
+  // The sub-activities are stopped before the agent settles.
+  assert.ok(
+    seen.indexOf("abort_bash") < seen.indexOf("abort"),
+    "abort_bash should precede abort so the agent cannot settle first",
   );
 });

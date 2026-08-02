@@ -795,6 +795,28 @@ function createPiDomain(deps) {
     }
   }
 
+  // Stop means stop. Pi exposes three independent aborts over RPC and the
+  // terminal's Esc (app.interrupt) ends all of them; sending only `abort`
+  // leaves an in-flight auto-retry counting down and a running bash command
+  // still executing, so the turn appears to keep going after Stop.
+  //
+  // Order matters: kill the sub-activities first, then the agent itself, so
+  // the agent cannot settle while its bash child is still running. Pi reads
+  // stdin line by line, so writing them in sequence is enough. Failures are
+  // ignored — "no bash running" is a normal outcome, not an error.
+  function stopPiGeneration(convProc, timeoutMs = 5000) {
+    if (!convProc || convProc.closed) return Promise.resolve(null);
+    const send = (type) =>
+      sendPiCommand(convProc, { type }, timeoutMs).catch(() => null);
+    const bash = send("abort_bash");
+    const retry = send("abort_retry");
+    const abort = send("abort");
+    return Promise.allSettled([bash, retry, abort]).then(
+      () => abort.catch(() => null),
+      () => null,
+    );
+  }
+
   function abortPiSession(session, reason = "client_disconnected") {
     if (!session) return;
     session.detached = true;
@@ -810,7 +832,7 @@ function createPiDomain(deps) {
       return;
     }
     try {
-      sendPiCommand(convProc, { type: "abort" }, 5000).catch(() => {});
+      stopPiGeneration(convProc).catch(() => {});
     } catch (_error) {}
   }
 
@@ -2478,7 +2500,7 @@ function createPiDomain(deps) {
           }
           cancelQueuedPiSessions(existing, "command_abort");
           const activeId = existing.activeRequestId;
-          const result = await sendPiCommand(existing, command, 5000);
+          const result = await stopPiGeneration(existing);
           const active = activeId ? piRpcSessions.get(activeId) : null;
           if (active) {
             try {
@@ -2532,7 +2554,7 @@ function createPiDomain(deps) {
           cancelQueuedPiSessions(convProc, "new_session_abort");
           if (convProc.activeRequestId) {
             const activeId = convProc.activeRequestId;
-            await sendPiCommand(convProc, { type: "abort" }, 5000);
+            await stopPiGeneration(convProc);
             const active = piRpcSessions.get(activeId);
             if (active) {
               try {
