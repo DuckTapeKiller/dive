@@ -162,6 +162,10 @@ function syncRuntimeFiles(runtimeDir) {
       required: true,
     },
   );
+  copyIfExists(path.join(appRoot, "skills"), path.join(runtimeDir, "skills"), {
+    recursive: true,
+    required: true,
+  });
   copyIfExists(path.join(appRoot, "mcp.js"), path.join(runtimeDir, "mcp.js"), {
     required: true,
   });

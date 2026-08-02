@@ -54,6 +54,7 @@
     "asarUnpack": [
       "server.js",
       "skills.js",
+      "skills/**/*",
       "slash_commands.js",
       "mcp.js",
       "mode-state.js",
@@ -79,6 +80,7 @@
       "index.html",
       "server.js",
       "skills.js",
+      "skills/**/*",
       "slash_commands.js",
       "mcp.js",
       "mode-state.js",
