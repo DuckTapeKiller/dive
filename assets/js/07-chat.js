@@ -141,6 +141,28 @@
         if (runSession.activeAbortController) return;
         let text = input.value.trim();
         if (!text) return;
+        if (
+          SKILL_MODE_IDS.includes(runMode) &&
+          typeof ensureMcpModeInitialised === "function"
+        ) {
+          try {
+            await ensureMcpModeInitialised(runMode);
+          } catch (_error) {
+            // MCP is optional; a failed server must not block ordinary chat.
+          }
+        }
+        if (
+          SKILL_MODE_IDS.includes(runMode) &&
+          typeof loadModeSkillsState === "function"
+        ) {
+          try {
+            await loadModeSkillsState(runMode);
+            if (mode === runMode) syncActiveSkillModeState(runMode);
+          } catch (_error) {
+            // The server still enforces the mode-scoped state. Keep the send
+            // path usable with the local defaults if the settings request fails.
+          }
+        }
         if (runMode === "pi" && text.startsWith("/")) {
           input.value = "";
           resetInputSize();
@@ -1879,12 +1901,130 @@
         }
       }
 
-      // Real connection results from the server (set after each config POST),
-      // so the panel shows what actually connected instead of just the names
-      // present in the JSON.
+      // MCP configuration text and connection statuses are mode-local in the
+      // UI as well as on the server. The old single-key value is migrated to
+      // every non-Pi mode once, preserving the previous behaviour without
+      // making future edits global again.
+      const MCP_MODE_IDS = ["ollama", "cloud", "lmstudio", "llamacpp"];
+      const MCP_CONFIG_STORAGE_KEY = "mcpConfigByMode";
+      const mcpConfigByMode = Object.fromEntries(
+        MCP_MODE_IDS.map((modeId) => [modeId, ""]),
+      );
+      const mcpStatusesByMode = Object.fromEntries(
+        MCP_MODE_IDS.map((modeId) => [modeId, null]),
+      );
+      const mcpInitialisedByMode = Object.fromEntries(
+        MCP_MODE_IDS.map((modeId) => [modeId, false]),
+      );
+      const mcpInitPromises = new Map();
       let lastMcpStatuses = null;
 
-      function renderMcpList(jsonString, statuses = lastMcpStatuses) {
+      // Read localStorage once. mcpConfigByMode is the in-memory source of
+      // truth afterwards; persistMcpConfigStorage writes it back on edit.
+      let mcpConfigStorageLoaded = false;
+
+      function loadMcpConfigStorage() {
+        if (mcpConfigStorageLoaded) return;
+        mcpConfigStorageLoaded = true;
+        let stored = {};
+        try {
+          const parsed = JSON.parse(
+            localStorage.getItem(MCP_CONFIG_STORAGE_KEY) || "{}",
+          );
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            stored = parsed;
+          }
+        } catch (_error) {}
+        const legacy = localStorage.getItem("mcpConfig");
+        let migrated = false;
+        for (const modeId of MCP_MODE_IDS) {
+          if (typeof stored[modeId] === "string") {
+            mcpConfigByMode[modeId] = stored[modeId];
+          } else if (typeof legacy === "string") {
+            mcpConfigByMode[modeId] = legacy;
+            migrated = true;
+          }
+        }
+        if (migrated) persistMcpConfigStorage();
+      }
+
+      function persistMcpConfigStorage() {
+        try {
+          localStorage.setItem(
+            MCP_CONFIG_STORAGE_KEY,
+            JSON.stringify(mcpConfigByMode),
+          );
+        } catch (_error) {}
+      }
+
+      function activeMcpMode() {
+        return MCP_MODE_IDS.includes(mode) ? mode : "ollama";
+      }
+
+      function activeMcpConfig() {
+        return activeMcpConfigForMode(activeMcpMode());
+      }
+
+      async function ensureMcpModeInitialised(activeMode = mode) {
+        if (!MCP_MODE_IDS.includes(activeMode)) return false;
+        if (mcpInitialisedByMode[activeMode]) return true;
+        if (mcpInitPromises.has(activeMode)) {
+          return mcpInitPromises.get(activeMode);
+        }
+        const promise = (async () => {
+          const raw = activeMcpConfigForMode(activeMode);
+          const response = await fetch(apiUrl("/api/mcp/config"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: activeMode, config: raw }),
+          });
+          if (!response.ok && response.status === 404) {
+            // An older embedded/test server without MCP support is harmless;
+            // keep chat usable and retry if a newer server becomes available.
+            return false;
+          }
+          const payload = await readJsonResponse(
+            response,
+            `Initialise ${activeMode} MCP servers`,
+          );
+          mcpStatusesByMode[activeMode] = Array.isArray(payload?.servers)
+            ? payload.servers
+            : null;
+          mcpInitialisedByMode[activeMode] = true;
+          if (mode === activeMode) {
+            lastMcpStatuses = mcpStatusesByMode[activeMode];
+          }
+          return true;
+        })().finally(() => mcpInitPromises.delete(activeMode));
+        mcpInitPromises.set(activeMode, promise);
+        return promise;
+      }
+
+      function activeMcpConfigForMode(modeId) {
+        loadMcpConfigStorage();
+        return mcpConfigByMode[modeId] || "";
+      }
+
+      function setMcpConfigForMode(modeId, raw) {
+        loadMcpConfigStorage();
+        mcpConfigByMode[modeId] = raw;
+        persistMcpConfigStorage();
+      }
+
+      function refreshMcpPanelForMode() {
+        if (!mcpOpen || mode === "pi") return;
+        const configArea = document.getElementById("mcpConfigArea");
+        if (!configArea) return;
+        const raw = activeMcpConfig();
+        configArea.value = raw;
+        lastMcpStatuses = mcpStatusesByMode[activeMcpMode()];
+        renderMcpList(raw, lastMcpStatuses);
+      }
+
+      function renderMcpList(
+        jsonString,
+        statuses = mcpStatusesByMode[activeMcpMode()],
+      ) {
         const listDiv = document.getElementById("mcpActiveList");
         if (!listDiv) return;
         listDiv.innerHTML = "";
@@ -1934,6 +2074,7 @@
       }
 
       function toggleMcp() {
+        if (mode === "pi") return;
         mcpOpen = !mcpOpen;
         const panel = document.getElementById("mcpPanel");
         const resizerEl = document.getElementById("mcpResizer");
@@ -1944,13 +2085,10 @@
           panel.classList.add("open");
           resizerEl.style.display = "block";
           const configArea = document.getElementById("mcpConfigArea");
-          const saved = localStorage.getItem("mcpConfig");
-          if (saved) {
-            configArea.value = saved;
-            renderMcpList(saved);
-          } else {
-            renderMcpList("");
-          }
+          const saved = activeMcpConfig();
+          configArea.value = saved;
+          lastMcpStatuses = mcpStatusesByMode[activeMcpMode()];
+          renderMcpList(saved, lastMcpStatuses);
         } else {
           panel.classList.remove("open");
           resizerEl.style.display = "none";
@@ -1965,21 +2103,24 @@
           if (raw) {
             JSON.parse(raw); // validate
           }
-          localStorage.setItem("mcpConfig", raw);
-          renderMcpList(raw);
+          const modeId = activeMcpMode();
+          setMcpConfigForMode(modeId, raw);
+          renderMcpList(raw, mcpStatusesByMode[modeId]);
           status.textContent = "CONNECTING...";
           status.style.color = "var(--accent)";
 
-          const res = await fetch("/api/mcp/config", {
+          const res = await fetch(apiUrl("/api/mcp/config"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: raw }),
+            body: JSON.stringify({ mode: modeId, config: raw }),
           });
           const payload = await res.json().catch(() => null);
           lastMcpStatuses = Array.isArray(payload?.servers)
             ? payload.servers
             : null;
-          renderMcpList(raw);
+          mcpStatusesByMode[modeId] = lastMcpStatuses;
+          mcpInitialisedByMode[modeId] = true;
+          renderMcpList(raw, lastMcpStatuses);
 
           const okCount = (lastMcpStatuses || []).filter((s) => s.ok).length;
           const failCount = (lastMcpStatuses || []).filter((s) => !s.ok).length;
@@ -2009,7 +2150,7 @@
         const status = document.getElementById("mcpStatus");
         const raw =
           document.getElementById("mcpConfigArea")?.value.trim() ||
-          localStorage.getItem("mcpConfig") ||
+          activeMcpConfig() ||
           "";
         if (
           !(await appConfirm(
@@ -2023,11 +2164,13 @@
           const res = await fetch(apiUrl("/api/mcp/purge"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: raw }),
+            body: JSON.stringify({ mode: activeMcpMode(), config: raw }),
           });
           const payload = await readJsonResponse(res, "Delete MCP downloads");
           lastMcpStatuses = null;
-          renderMcpList(localStorage.getItem("mcpConfig") || "");
+          mcpStatusesByMode[activeMcpMode()] = null;
+          mcpInitialisedByMode[activeMcpMode()] = true;
+          renderMcpList(activeMcpConfig(), null);
           const count = Array.isArray(payload?.removed)
             ? payload.removed.length
             : 0;
@@ -2326,24 +2469,13 @@
           })
           .catch((err) => console.error("Could not fetch version:", err));
 
-        // 5. Initialize MCP Servers if configured
-        const savedMcpConfig = localStorage.getItem("mcpConfig");
-        if (savedMcpConfig) {
-          fetch("/api/mcp/config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ config: savedMcpConfig }),
-          })
-            .then((res) => res.json())
-            .then((payload) => {
-              // Keep the real connection results so opening the MCP panel
-              // shows which servers are up and why any failed.
-              if (Array.isArray(payload?.servers)) {
-                lastMcpStatuses = payload.servers;
-              }
-            })
-            .catch((err) => console.error("Could not init MCP:", err));
-        }
+        // 5. Initialise only the active mode's MCP generation at boot. Other
+        // modes initialise their own clients when first entered or used; this
+        // avoids turning one migrated legacy config into four live processes.
+        loadMcpConfigStorage();
+        ensureMcpModeInitialised(mode).catch((err) =>
+          console.error("Could not initialise MCP:", err),
+        );
       });
       function syncCustomSelect(selectEl) {
         if (!selectEl) return;

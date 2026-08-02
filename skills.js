@@ -2999,7 +2999,13 @@ async function executeFileOperations(
   }
 }
 
-function findCustomSkill(name, dataDir) {
+function findCustomSkill(name, dataDir, customSkills = null) {
+  // An explicitly supplied array is a request snapshot. An empty array means
+  // that this mode has no custom skills; do not fall back to the legacy global
+  // file and accidentally re-enable another mode's definitions.
+  if (Array.isArray(customSkills)) {
+    return customSkills.find((skill) => skill && skill.name === name) || null;
+  }
   if (!dataDir) return null;
   const customSkillsFile = path.join(dataDir, "custom_skills.json");
   if (!fs.existsSync(customSkillsFile)) return null;
@@ -3015,11 +3021,14 @@ const GATED_BUILTIN_SKILLS = new Set([
   "macos_control",
 ]);
 
-function skillRequiresShellConfirmation(name, dataDir) {
+function skillRequiresShellConfirmation(name, dataDir, context = {}) {
   if (GATED_BUILTIN_SKILLS.has(name)) return true;
   try {
-    if (pluginSkillRequiresConfirmation(name)) return true;
-    return findCustomSkill(name, dataDir)?.type === "shell";
+    if (pluginSkillRequiresConfirmation(name, context.pluginSkills))
+      return true;
+    return (
+      findCustomSkill(name, dataDir, context.customSkills)?.type === "shell"
+    );
   } catch (_error) {
     return false;
   }
@@ -4535,6 +4544,16 @@ async function executeProposePlugin(args, dataDir) {
 
 async function executeSkill(toolCall, context = {}) {
   const name = toolCall.function.name;
+  const builtinName = ALL_SKILLS.some(
+    (skill) => skill.function && skill.function.name === name,
+  );
+  if (
+    builtinName &&
+    context.skillsConfig &&
+    context.skillsConfig[name] === false
+  ) {
+    return `Error: skill "${name}" is disabled for ${context.mode || "this"} mode.`;
+  }
   let args = {};
   try {
     args = JSON.parse(toolCall.function.arguments);
@@ -4610,7 +4629,11 @@ async function executeSkill(toolCall, context = {}) {
       const pluginResult = await executePluginSkill(name, args, context);
       if (pluginResult !== null) return pluginResult;
       try {
-        const skill = findCustomSkill(name, context.dataDir);
+        const skill = findCustomSkill(
+          name,
+          context.dataDir,
+          context.customSkills,
+        );
         if (skill) {
           if (skill.type === "shell") {
             if (!context.allowShellCommand) {

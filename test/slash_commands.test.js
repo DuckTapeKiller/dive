@@ -17,6 +17,16 @@ test("parses global database slash command", () => {
 
 test("unknown slash command falls through to normal chat", () => {
   assert.strictEqual(parseSlashCommand("/unknown hello"), null);
+  assert.strictEqual(parseSlashCommand("/snapshot hello", null), null);
+});
+
+test("uses the supplied mode plugin command snapshot", () => {
+  assert.strictEqual(parseSlashCommand("/snapshot hello", {}), null);
+  const command = parseSlashCommand("/snapshot hello", {
+    snapshot: "calculator",
+  });
+  assert.strictEqual(command.skillName, "calculator");
+  assert.strictEqual(command.input, "hello");
 });
 
 test("builds forced Wikipedia skill call with language prefix", () => {

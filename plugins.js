@@ -201,19 +201,57 @@ function listPlugins() {
   return state.plugins.map((p) => ({ ...p }));
 }
 
-function getPluginToolDefs() {
-  ensureLoaded();
-  return [...state.skills.values()].map((s) => s.def);
+function clonePluginDefinition(def) {
+  try {
+    return JSON.parse(JSON.stringify(def));
+  } catch (_error) {
+    // Plugin definitions are expected to be JSON-shaped. If a malformed plugin
+    // supplied a non-serialisable parameter object, omit that definition rather
+    // than exposing mutable global state to a request.
+    return null;
+  }
 }
 
-function getPluginSkill(name) {
+// A request receives a read-only snapshot of the globally installed plugin
+// definitions. The execute function remains available to the server, but the
+// activation decision is made against this snapshot and the request's
+// mode-scoped skills configuration.
+function getPluginSkillSnapshot() {
+  ensureLoaded();
+  return [...state.skills.entries()]
+    .map(([name, skill]) => {
+      const def = clonePluginDefinition(skill.def);
+      if (!def) return null;
+      return {
+        name,
+        pluginName: skill.pluginName,
+        execute: skill.execute,
+        requiresConfirmation: skill.requiresConfirmation === true,
+        timeoutMs: skill.timeoutMs,
+        def,
+      };
+    })
+    .filter(Boolean);
+}
+
+function snapshotSkill(snapshot, name) {
+  if (!Array.isArray(snapshot)) return null;
+  return snapshot.find((skill) => skill && skill.name === name) || null;
+}
+
+function getPluginToolDefs(snapshot = null) {
+  const skills = Array.isArray(snapshot) ? snapshot : getPluginSkillSnapshot();
+  return skills.map((skill) => skill.def).filter(Boolean);
+}
+
+function getPluginSkill(name, snapshot = null) {
+  if (Array.isArray(snapshot)) return snapshotSkill(snapshot, name);
   ensureLoaded();
   return state.skills.get(name) || null;
 }
 
-function pluginSkillRequiresConfirmation(name) {
-  ensureLoaded();
-  return state.skills.get(name)?.requiresConfirmation === true;
+function pluginSkillRequiresConfirmation(name, snapshot = null) {
+  return getPluginSkill(name, snapshot)?.requiresConfirmation === true;
 }
 
 function getPluginCommands() {
@@ -221,13 +259,35 @@ function getPluginCommands() {
   return Object.fromEntries(state.commands);
 }
 
+// Immutable command-to-skill mapping for a request. Chat mode contexts filter
+// this global definition against their own activation settings before parsing
+// slash commands.
+function getPluginCommandSnapshot() {
+  return { ...getPluginCommands() };
+}
+
+// The only context fields a plugin's execute() receives. An allowlist, not a
+// denylist: internal request state (the mode's skill snapshots, the MCP
+// session, the lease release hook) must stay server-side, and a field added to
+// the skill context later must not start leaking to plugins by default.
+const PLUGIN_CONTEXT_KEYS = ["dataDir", "mode", "allowShellCommand"];
+
 async function executePluginSkill(name, args, context = {}) {
-  const skill = getPluginSkill(name);
+  // When a request supplies a snapshot, a plugin that was installed globally
+  // but not activated for this mode is intentionally invisible here.
+  const snapshot = Array.isArray(context.pluginSkills)
+    ? context.pluginSkills
+    : null;
+  const skill = getPluginSkill(name, snapshot);
   if (!skill) return null;
   const timeoutMs = skill.timeoutMs || EXECUTE_TIMEOUT_MS;
+  const pluginContext = {};
+  for (const key of PLUGIN_CONTEXT_KEYS) {
+    if (context[key] !== undefined) pluginContext[key] = context[key];
+  }
   try {
     const result = await Promise.race([
-      Promise.resolve(skill.execute(args || {}, context)),
+      Promise.resolve(skill.execute(args || {}, pluginContext)),
       new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error(`timed out after ${timeoutMs / 1000}s`)),
@@ -251,6 +311,8 @@ module.exports = {
   getPluginToolDefs,
   getPluginSkill,
   getPluginCommands,
+  getPluginCommandSnapshot,
   pluginSkillRequiresConfirmation,
+  getPluginSkillSnapshot,
   executePluginSkill,
 };

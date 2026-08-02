@@ -166,6 +166,21 @@ function syncRuntimeFiles(runtimeDir) {
     required: true,
   });
   copyIfExists(
+    path.join(appRoot, "mode-state.js"),
+    path.join(runtimeDir, "mode-state.js"),
+    { required: true },
+  );
+  copyIfExists(
+    path.join(appRoot, "redact.js"),
+    path.join(runtimeDir, "redact.js"),
+    { required: true },
+  );
+  copyIfExists(
+    path.join(appRoot, "pi-paths.js"),
+    path.join(runtimeDir, "pi-paths.js"),
+    { required: true },
+  );
+  copyIfExists(
     path.join(appRoot, "plugins.js"),
     path.join(runtimeDir, "plugins.js"),
     { required: true },

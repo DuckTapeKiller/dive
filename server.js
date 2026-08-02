@@ -5,8 +5,29 @@ const { execFile } = require("child_process");
 const os = require("os");
 const { randomBytes, createHash } = require("crypto");
 const { ALL_SKILLS } = require("./skills");
-const { initMcpServers, getMcpOllamaTools } = require("./mcp");
+const {
+  initMcpServers,
+  getMcpOllamaTools,
+  stopMcpServers,
+  shutdownMcpServers,
+} = require("./mcp");
+const {
+  requireNonPiMode,
+  loadSkillsConfig: loadModeSkillsConfig,
+  saveSkillsConfig: saveModeSkillsConfig,
+  loadCustomSkills: loadModeCustomSkills,
+  saveCustomSkills: saveModeCustomSkills,
+} = require("./mode-state.js");
 const { isDatabaseSlashCommand } = require("./slash_commands");
+const {
+  redactText: redactTraceText,
+  redactValue: redactTraceValue,
+  boundedValue: boundedTraceValue,
+} = require("./redact.js");
+const {
+  sanitizePiCommandPath,
+  sanitizePiWorkingDirectory,
+} = require("./pi-paths.js");
 const libraryStore = require("./library/store");
 
 const DEFAULT_PORT = 8080;
@@ -470,6 +491,10 @@ function appendFileWithRotation(filePath, content) {
     return new Promise((resolve) => {
       try {
         rotateFileIfNeeded(filePath);
+        try {
+          if (fs.existsSync(filePath)) fs.chmodSync(filePath, 0o600);
+          else fs.closeSync(fs.openSync(filePath, "a", 0o600));
+        } catch (_error) {}
         fs.appendFile(filePath, content, (err) => {
           if (err) console.error("Async append error:", err);
           resolve();
@@ -744,10 +769,41 @@ function migrateLegacyConversations() {
 }
 
 function persistAsyncWakeTurn(convId, response, metadata = {}) {
+  // Cheap guards before any redaction work: a tombstoned or deleted
+  // conversation has nothing to attach this turn to.
   if (!convId || !response) return;
   if (isConversationTombstoned(convId)) return;
   const existing = getConversationById(convId);
-  if (!existing) return; // nothing to attach this turn to
+  if (!existing) return;
+  const safeResponse = redactTraceText(response);
+  const safeThinking =
+    typeof metadata.thinking === "string"
+      ? redactTraceText(metadata.thinking)
+      : "";
+  const safeTraceEvents = Array.isArray(metadata.traceEvents)
+    ? metadata.traceEvents
+        .map((evt) => sanitizeTraceEventForStorage(evt))
+        .filter(Boolean)
+    : [];
+  const safeSources = [];
+  const sourceCandidates = [
+    ...(Array.isArray(metadata.librarySources) ? metadata.librarySources : []),
+    ...safeTraceEvents.flatMap((evt) =>
+      evt.type === "web_sources" && Array.isArray(evt.sources)
+        ? evt.sources
+        : [],
+    ),
+  ];
+  const seenSourceUrls = new Set();
+  for (const source of sourceCandidates) {
+    const url = String(source?.url || "").trim();
+    if (!/^https?:\/\//i.test(url) || seenSourceUrls.has(url)) continue;
+    seenSourceUrls.add(url);
+    safeSources.push({
+      title: String(source?.title || "source").slice(0, 140),
+      url: url.slice(0, 4000),
+    });
+  }
   const mode = convModeKey(existing.mode || "pi");
   withModeConversations(mode, (convs) => {
     const idx = convs.findIndex((c) => c.id === convId);
@@ -759,28 +815,57 @@ function persistAsyncWakeTurn(convId, response, metadata = {}) {
     const lastIdx = history.length - 1;
     const lastMsg = lastIdx >= 0 ? history[lastIdx] : null;
 
-    // Merge if the last message is an empty assistant response (likely a failed attempt)
-    if (
-      lastMsg &&
-      lastMsg.role === "assistant" &&
-      (!lastMsg.content || !lastMsg.content.trim())
-    ) {
-      lastMsg.content = response;
-      if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
-        lastMsg.thinking = metadata.thinking;
+    const mergeSources = (message) => {
+      if (!safeSources.length) return;
+      const existingSources = Array.isArray(message.librarySources)
+        ? message.librarySources
+        : [];
+      const merged = [...existingSources];
+      const seen = new Set(
+        existingSources
+          .map((source) => String(source?.url || ""))
+          .filter(Boolean),
+      );
+      for (const source of safeSources) {
+        if (seen.has(source.url)) continue;
+        seen.add(source.url);
+        merged.push(source);
       }
-      if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
-        lastMsg.traceEvents = metadata.traceEvents;
+      message.librarySources = merged.slice(0, 50);
+    };
+
+    // A background wake continues the original assistant turn. Merge it into
+    // the last assistant message instead of creating a second bubble below it.
+    if (lastMsg && lastMsg.role === "assistant") {
+      const existingText = String(lastMsg.content || "").trim();
+      // The existing assistant response is canonical. A background wake may
+      // return process-summary prose, but it must not create a second answer or
+      // append internal narration to the user's chat history.
+      if (!existingText) lastMsg.content = safeResponse;
+      mergeSources(lastMsg);
+      if (safeThinking.trim()) {
+        const previousThinking = String(lastMsg.thinking || "").trim();
+        lastMsg.thinking =
+          previousThinking && !previousThinking.endsWith(safeThinking.trim())
+            ? `${previousThinking}\n\n${safeThinking}`
+            : previousThinking || safeThinking;
+      }
+      if (safeTraceEvents.length) {
+        lastMsg.traceEvents = [
+          ...(Array.isArray(lastMsg.traceEvents) ? lastMsg.traceEvents : []),
+          ...safeTraceEvents,
+        ].slice(-512);
       }
       lastMsg.status = "async_wake";
     } else {
-      const assistantMessage = { role: "assistant", content: response };
-      if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
-        assistantMessage.thinking = metadata.thinking;
-      }
-      if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
-        assistantMessage.traceEvents = metadata.traceEvents;
-      }
+      const assistantMessage = {
+        role: "assistant",
+        content: safeResponse,
+      };
+      mergeSources(assistantMessage);
+      if (safeThinking.trim()) assistantMessage.thinking = safeThinking;
+      if (safeTraceEvents.length)
+        assistantMessage.traceEvents = safeTraceEvents;
       assistantMessage.status = "async_wake";
       history.push(assistantMessage);
     }
@@ -827,16 +912,20 @@ function upsertConversation(
     assistantMessage.passages = metadata.passages;
   }
   if (typeof metadata.thinking === "string" && metadata.thinking.trim()) {
-    assistantMessage.thinking = metadata.thinking;
+    assistantMessage.thinking = redactTraceText(metadata.thinking);
   }
   if (Array.isArray(metadata.traceEvents) && metadata.traceEvents.length) {
-    assistantMessage.traceEvents = metadata.traceEvents;
+    assistantMessage.traceEvents = metadata.traceEvents
+      .map((evt) => sanitizeTraceEventForStorage(evt))
+      .filter(Boolean);
   }
   if (Array.isArray(metadata.traceLines) && metadata.traceLines.length) {
-    assistantMessage.traceLines = metadata.traceLines;
+    assistantMessage.traceLines = sanitizeStoredTraceLines(metadata.traceLines);
   }
   if (typeof metadata.status === "string" && metadata.status.trim()) {
-    assistantMessage.status = metadata.status.trim().slice(0, 80);
+    assistantMessage.status = redactTraceText(metadata.status)
+      .trim()
+      .slice(0, 80);
   }
   // Client-supplied history can carry raw stream events on earlier assistant
   // turns (full thinking accumulations, session ids). Sanitize at the write
@@ -930,7 +1019,7 @@ function saveClientConversation(id, title, mode, rawMessages, originClientId) {
       if (Array.isArray(m.passages) && m.passages.length)
         item.passages = m.passages;
       if (typeof m.thinking === "string" && m.thinking.trim())
-        item.thinking = m.thinking;
+        item.thinking = redactTraceText(m.thinking);
       if (Array.isArray(m.traceEvents) && m.traceEvents.length) {
         // Client snapshots carry raw stream events — sanitize each one so
         // accumulated thinking strings / session ids never reach disk.
@@ -940,9 +1029,9 @@ function saveClientConversation(id, title, mode, rawMessages, originClientId) {
         if (cleanEvents.length) item.traceEvents = cleanEvents;
       }
       if (Array.isArray(m.traceLines) && m.traceLines.length)
-        item.traceLines = m.traceLines;
+        item.traceLines = sanitizeStoredTraceLines(m.traceLines);
       if (typeof m.status === "string" && m.status.trim())
-        item.status = m.status.trim().slice(0, 80);
+        item.status = redactTraceText(m.status).trim().slice(0, 80);
       return item;
     });
   if (!history.length) return Promise.resolve();
@@ -983,15 +1072,15 @@ function saveClientConversation(id, title, mode, rawMessages, originClientId) {
   });
 }
 
-function loadCustomSkills() {
-  try {
-    if (fs.existsSync(CUSTOM_SKILLS_FILE)) {
-      return JSON.parse(fs.readFileSync(CUSTOM_SKILLS_FILE, "utf8"));
-    }
-  } catch (e) {
-    console.warn("Failed to load custom skills:", e.message || e);
-  }
-  return [];
+function loadCustomSkills(mode = "ollama") {
+  const normalizedMode = requireNonPiMode(mode);
+  return loadModeCustomSkills({
+    dataDir: DATA_DIR,
+    mode: normalizedMode,
+    legacyPath: CUSTOM_SKILLS_FILE,
+    onError: (error) =>
+      console.warn("Failed to load custom skills:", error.message || error),
+  });
 }
 
 function defaultSkillsConfig() {
@@ -1024,32 +1113,39 @@ function defaultSkillsConfig() {
   };
 }
 
-function loadSkillsConfig() {
-  try {
-    if (fs.existsSync(SKILLS_CONFIG_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(SKILLS_CONFIG_FILE, "utf8"));
-      return { ...defaultSkillsConfig(), ...raw };
-    }
-  } catch (e) {
-    console.warn("Failed to load skills config:", e.message || e);
-  }
-  return defaultSkillsConfig();
+function loadSkillsConfig(mode = "ollama") {
+  const normalizedMode = requireNonPiMode(mode);
+  return loadModeSkillsConfig({
+    dataDir: DATA_DIR,
+    mode: normalizedMode,
+    legacyPath: SKILLS_CONFIG_FILE,
+    defaults: defaultSkillsConfig,
+    onError: (error) =>
+      console.warn("Failed to load skills config:", error.message || error),
+  });
 }
 
-function saveSkillsConfig(cfg) {
-  try {
-    fs.writeFileSync(SKILLS_CONFIG_FILE, JSON.stringify(cfg, null, 2));
-  } catch (e) {
-    console.error("Failed to save skills config:", e.message || e);
-  }
+function saveSkillsConfig(cfg, mode = "ollama") {
+  const normalizedMode = requireNonPiMode(mode);
+  const saved = saveModeSkillsConfig({
+    dataDir: DATA_DIR,
+    mode: normalizedMode,
+    config: cfg,
+    defaults: defaultSkillsConfig,
+    onError: (error) =>
+      console.error("Failed to save skills config:", error.message || error),
+  });
+  return saved;
 }
 
-function saveCustomSkills(skills) {
-  try {
-    fs.writeFileSync(CUSTOM_SKILLS_FILE, JSON.stringify(skills, null, 2));
-  } catch (e) {
-    console.error("Failed to save custom skills:", e);
-  }
+function saveCustomSkills(skills, mode = "ollama") {
+  const normalizedMode = requireNonPiMode(mode);
+  return saveModeCustomSkills({
+    dataDir: DATA_DIR,
+    mode: normalizedMode,
+    skills,
+    onError: (error) => console.error("Failed to save custom skills:", error),
+  });
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -1076,7 +1172,10 @@ function defaultPiSettings() {
   };
 }
 
-function sanitizePiSettings(rawInput) {
+// `strict` is used by the settings API so a rejected path is reported to the
+// user instead of silently reverting the field to blank. Loading already-stored
+// settings stays lenient: a path that became invalid must not break startup.
+function sanitizePiSettings(rawInput, { strict = false } = {}) {
   const defaults = defaultPiSettings();
   const raw =
     rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
@@ -1088,20 +1187,22 @@ function sanitizePiSettings(rawInput) {
     permissionUx: { ...defaults.permissionUx },
   };
 
+  const reject = (field, supplied, reason) => {
+    if (!strict || !supplied.trim() || !reason) return;
+    throw createHttpError(400, `Pi ${field} "${supplied.trim()}" ${reason}.`);
+  };
+
   if (typeof raw.commandPath === "string") {
-    next.commandPath = raw.commandPath.trim().slice(0, 500);
+    const supplied = raw.commandPath.slice(0, 500);
+    const resolved = sanitizePiCommandPath(supplied);
+    reject("command path", supplied, resolved.reason);
+    next.commandPath = resolved.path;
   }
 
   if (typeof raw.workingDirectory === "string") {
-    const trimmed = raw.workingDirectory.trim();
-    if (trimmed) {
-      const resolved = path.resolve(trimmed);
-      try {
-        if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-          next.workingDirectory = resolved;
-        }
-      } catch (e) {}
-    }
+    const resolved = sanitizePiWorkingDirectory(raw.workingDirectory, DATA_DIR);
+    reject("working directory", raw.workingDirectory, resolved.reason);
+    if (resolved.path) next.workingDirectory = resolved.path;
   }
 
   next.serverPort = clampNumber(
@@ -2141,16 +2242,18 @@ function normalizeStoredConversationMessages(history, message, images) {
         clean.passages = item.passages;
       }
       if (typeof item.thinking === "string") {
-        clean.thinking = item.thinking;
+        clean.thinking = redactTraceText(item.thinking);
       }
       if (Array.isArray(item.traceEvents)) {
-        clean.traceEvents = item.traceEvents;
+        clean.traceEvents = item.traceEvents
+          .map((evt) => sanitizeTraceEventForStorage(evt))
+          .filter(Boolean);
       }
       if (Array.isArray(item.traceLines)) {
-        clean.traceLines = item.traceLines;
+        clean.traceLines = sanitizeStoredTraceLines(item.traceLines);
       }
       if (typeof item.status === "string") {
-        clean.status = item.status;
+        clean.status = redactTraceText(item.status).slice(0, 4000);
       }
     }
     stored.push(clean);
@@ -2182,6 +2285,14 @@ function serializeLibraryResults(results, options = {}) {
   }));
 }
 
+function sanitizeStoredTraceLines(lines) {
+  if (!Array.isArray(lines)) return [];
+  return lines
+    .slice(0, 400)
+    .map((line) => redactTraceText(line).slice(0, 4000))
+    .filter((line) => line.length > 0);
+}
+
 function sanitizeTraceEventForStorage(event) {
   if (!event || typeof event !== "object") return null;
   const type = typeof event.type === "string" ? event.type : "";
@@ -2196,7 +2307,8 @@ function sanitizeTraceEventForStorage(event) {
     type === "thinking_start" ||
     type === "thinking_delta" ||
     type === "thinking_end" ||
-    type === "session_start"
+    type === "session_start" ||
+    type === "pi_raw_event"
   ) {
     return null;
   }
@@ -2209,8 +2321,11 @@ function sanitizeTraceEventForStorage(event) {
     "name",
     "skillName",
     "toolName",
+    "toolCallId",
     "argsPreview",
     "outputPreview",
+    "eventType",
+    "phase",
     "chunk",
     "delta",
     "key",
@@ -2235,6 +2350,11 @@ function sanitizeTraceEventForStorage(event) {
     "output",
     "cost",
     "tokensBefore",
+    "attempt",
+    "maxAttempts",
+    "delayMs",
+    "contentIndex",
+    "sequence",
   ]) {
     if (typeof event[key] === "boolean" || typeof event[key] === "number") {
       clean[key] = event[key];
@@ -2348,6 +2468,12 @@ function sanitizeTraceEventForStorage(event) {
       }));
     }
   }
+  if (event.result && typeof event.result === "object") {
+    clean.result = boundedTraceValue(redactTraceValue(event.result));
+  }
+  if (event.payload && typeof event.payload === "object") {
+    clean.payload = boundedTraceValue(redactTraceValue(event.payload));
+  }
   if (Array.isArray(event.lines)) {
     clean.lines = event.lines
       .slice(0, 80)
@@ -2357,6 +2483,15 @@ function sanitizeTraceEventForStorage(event) {
   }
   if (Array.isArray(event.results)) {
     clean.results = serializeLibraryResults(event.results).slice(0, 50);
+  }
+  if (Array.isArray(event.sources)) {
+    clean.sources = event.sources
+      .slice(0, 50)
+      .map((source) => ({
+        title: String(source?.title || "source").slice(0, 140),
+        url: String(source?.url || "").slice(0, 4000),
+      }))
+      .filter((source) => /^https?:\/\//i.test(source.url));
   }
   if (
     event.meta &&
@@ -2375,7 +2510,15 @@ function sanitizeTraceEventForStorage(event) {
       }
     }
   }
-  return clean;
+  // Most fields above are copied verbatim, so the whole event still needs a
+  // redaction pass. `result`/`payload` were already redacted before bounding
+  // (bounding an unredacted value could split a secret across the truncation
+  // point), so they are held out rather than walked a second time.
+  const { result, payload, ...rest } = clean;
+  const redacted = redactTraceValue(rest);
+  if (result !== undefined) redacted.result = result;
+  if (payload !== undefined) redacted.payload = payload;
+  return redacted;
 }
 
 function getLibraryContextSourceResults(libraryContext) {
@@ -2801,7 +2944,7 @@ function ollamaConn() {
   }
 }
 
-function ollamaChat(model, messages, options, tools = null) {
+function ollamaChat(model, messages, options, tools = null, mcpContext = null) {
   let clientReq = null;
   const promise = new Promise((resolve, reject) => {
     const payloadObject = {
@@ -2813,7 +2956,10 @@ function ollamaChat(model, messages, options, tools = null) {
       payloadObject.options = options;
     }
 
-    const mcpTools = getMcpOllamaTools();
+    const mcpTools = getMcpOllamaTools(
+      mcpContext?.mode || "ollama",
+      mcpContext?.mcpSession,
+    );
     let finalTools = tools ? [...tools] : [];
     if (mcpTools.length > 0) {
       finalTools = [...finalTools, ...mcpTools];
@@ -3035,6 +3181,7 @@ const skillsDomain = require("./routes/skills")({
   saveSkillsConfig,
   defaultSkillsConfig,
   initMcpServers,
+  stopMcpServers,
 });
 const libraryDomain = require("./routes/library")({
   DATA_DIR,
@@ -3321,7 +3468,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (await skillsDomain.handleRequest({ req, urlPath, send })) {
+  if (await skillsDomain.handleRequest({ req, urlPath, requestUrl, send })) {
     return;
   }
 
@@ -3511,20 +3658,26 @@ server.listen(PORT, "127.0.0.1", () => {
 });
 
 // SV-18: Graceful shutdown handler
+let shuttingDown = false;
 function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`Received ${signal}. Shutting down gracefully...`);
 
   // Clean up all Pi processes
   piDomain.api.shutdownAll();
 
-  // Shut down server
-  server.close(() => {
-    console.log("Server stopped.");
-    process.exit(0);
-  });
-
-  // Force exit after 5 seconds
+  // Force exit after 5 seconds, including if an MCP transport is stuck while
+  // closing. Normal shutdown waits for every mode-local MCP generation first.
   setTimeout(() => process.exit(1), 5000).unref();
+  shutdownMcpServers()
+    .catch((error) => console.error("Failed to shut down MCP clients:", error))
+    .finally(() => {
+      server.close(() => {
+        console.log("Server stopped.");
+        process.exit(0);
+      });
+    });
 }
 
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));

@@ -143,6 +143,7 @@
           draftAssistant: null,
           streamingAssistantDiv: null,
           thinkingController: null,
+          lastThinkingController: null,
           thinkingStartedAt: null,
           drumPending: false,
         };
@@ -764,7 +765,49 @@
         macos_control: false,
         task_plan: true,
       });
-      let builtinSkillsConfig = { ...DEFAULT_BUILTIN_SKILLS_CONFIG };
+      const SKILL_MODE_IDS = ["ollama", "cloud", "lmstudio", "llamacpp"];
+      const builtinSkillsConfigByMode = Object.fromEntries(
+        SKILL_MODE_IDS.map((modeId) => [
+          modeId,
+          { ...DEFAULT_BUILTIN_SKILLS_CONFIG },
+        ]),
+      );
+      const customSkillsByMode = Object.fromEntries(
+        SKILL_MODE_IDS.map((modeId) => [modeId, []]),
+      );
+      let builtinSkillsConfig = builtinSkillsConfigByMode.ollama;
+      let customSkills = customSkillsByMode.ollama;
+      const skillStateLoadedByMode = Object.fromEntries(
+        SKILL_MODE_IDS.map((modeId) => [modeId, false]),
+      );
+      const skillStateLoadPromises = new Map();
+
+      function skillModeId(modeId = mode) {
+        return SKILL_MODE_IDS.includes(modeId) ? modeId : "ollama";
+      }
+
+      function syncActiveSkillModeState(modeId = mode) {
+        const activeMode = skillModeId(modeId);
+        builtinSkillsConfig = builtinSkillsConfigByMode[activeMode];
+        customSkills = customSkillsByMode[activeMode];
+        return activeMode;
+      }
+
+      function setBuiltinSkillsConfigForMode(modeId, settings) {
+        const activeMode = skillModeId(modeId);
+        builtinSkillsConfigByMode[activeMode] = {
+          ...DEFAULT_BUILTIN_SKILLS_CONFIG,
+          ...(settings && typeof settings === "object" ? settings : {}),
+        };
+        if (mode === activeMode) syncActiveSkillModeState(activeMode);
+      }
+
+      function setCustomSkillsForMode(modeId, skills) {
+        const activeMode = skillModeId(modeId);
+        customSkillsByMode[activeMode] = Array.isArray(skills) ? skills : [];
+        if (mode === activeMode) syncActiveSkillModeState(activeMode);
+      }
+
       const ALL_BUILTIN_SKILLS_INFO = {
         remember_lesson: {
           desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply only to future chats of the CURRENT mode (each mode keeps its own) and are editable under Lessons below.",

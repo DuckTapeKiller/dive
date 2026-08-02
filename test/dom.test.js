@@ -73,7 +73,8 @@ function createFetchStub() {
       });
     }
     if (path === "/api/prompts") return jsonResponse([]);
-    if (path === "/api/custom-skills") return jsonResponse([]);
+    if (path === "/api/custom-skills")
+      return jsonResponse({ mode: "ollama", skills: [] });
     if (path === "/api/plugins") {
       return jsonResponse({ directory: "/tmp/plugins", plugins: [] });
     }
@@ -235,7 +236,8 @@ function createFetchStub() {
         },
       });
     }
-    if (path === "/api/ollama/skills/settings") return jsonResponse({});
+    if (path === "/api/ollama/skills/settings")
+      return jsonResponse({ mode: "ollama", settings: {} });
     if (path === "/api/local-models/settings") {
       return jsonResponse({
         settings: {
@@ -456,6 +458,125 @@ test("frontend boots without network fetch crashes", async () => {
   );
 });
 
+test("Pi web sources render as pills inside the assistant bubble", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const wrap = dom.window.document.createElement("div");
+  wrap.className = "msg-wrap assistant";
+  const bubble = dom.window.document.createElement("div");
+  bubble.className = "msg assistant";
+  wrap.appendChild(bubble);
+  dom.window.document.getElementById("chat").appendChild(wrap);
+
+  dom.window.renderAssistantMessage(
+    bubble,
+    "Answer text.\n\n### Fuentes principales\n- Old hyperlink list\nhttps://example.com/old\n\nFinal paragraph.",
+    [{ title: "Example source", url: "https://example.com/source" }],
+  );
+
+  const sources = bubble.querySelector(".library-sources-container");
+  assert.ok(sources);
+  assert.strictEqual(sources.parentElement, bubble);
+  assert.strictEqual(
+    sources.querySelector(".source-pill.web-source-pill")?.textContent.trim(),
+    "1. Example source · example.com",
+  );
+  assert.doesNotMatch(
+    bubble.textContent,
+    /Old hyperlink list|Fuentes principales/,
+  );
+  assert.match(bubble.textContent, /Final paragraph/);
+});
+
+test("markdown export carries reasoning, trace, and untouched user text", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  const markdown = dom.window.eval(`
+    history = [
+      { role: "user", content: "Sources:\\n- https://user-typed.example" },
+      {
+        role: "assistant",
+        content: "The answer.\\n\\n**Sources**\\n- https://cited.example",
+        thinking: "first I considered X\\nthen Y",
+        traceLines: ["Tool start: web_search"],
+        librarySources: [{ title: "Cited", url: "https://cited.example" }],
+      },
+    ];
+    buildSessionMarkdown();
+  `);
+
+  // Reasoning must survive the export.
+  assert.match(markdown, /\*\*Reasoning\*\*/);
+  assert.match(markdown, /first I considered X/);
+  assert.match(markdown, /then Y/);
+  assert.match(markdown, /\*\*Trace\*\*/);
+  assert.match(markdown, /Tool start: web_search/);
+  // A user turn is never rewritten, even when it looks like a source list.
+  assert.match(markdown, /- https:\/\/user-typed\.example/);
+  // The assistant's prose list is replaced by the structured Sources section.
+  assert.doesNotMatch(markdown, /- https:\/\/cited\.example/);
+  assert.match(markdown, /URL: https:\/\/cited\.example/);
+});
+
+test("export keeps an assistant source list that has no pills to replace it", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  // No librarySources: nothing would carry these links, so the prose stays.
+  const markdown = dom.window.eval(`
+    history = [
+      { role: "user", content: "Q" },
+      {
+        role: "assistant",
+        content: "The answer.\\n\\n**Sources**\\n- https://only-in-prose.example",
+      },
+    ];
+    buildSessionMarkdown();
+  `);
+
+  assert.match(markdown, /https:\/\/only-in-prose\.example/);
+});
+
+test("a linkless References section is prose, not a source list", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const wrap = dom.window.document.createElement("div");
+  wrap.className = "msg-wrap assistant";
+  const bubble = dom.window.document.createElement("div");
+  bubble.className = "msg assistant";
+  wrap.appendChild(bubble);
+  dom.window.document.getElementById("chat").appendChild(wrap);
+
+  // The section heading matches the source-list vocabulary, but it holds no
+  // links — it is part of the answer and must survive intact.
+  dom.window.renderAssistantMessage(
+    bubble,
+    "C++ notes.\n\n## References\nA reference is an alias for an existing object.\n- cannot be reseated\n- must be initialised\n",
+    [],
+  );
+
+  assert.match(bubble.textContent, /References/);
+  assert.match(bubble.textContent, /alias for an existing object/);
+  assert.match(bubble.textContent, /cannot be reseated/);
+});
+
 test("side panel displays background download status", async () => {
   const baseFetch = createFetchStub();
   const fetchImpl = async (url, options) => {
@@ -614,7 +735,7 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
   );
   assert.strictEqual(
     dom.window.document.getElementById("customSkillsGroup").style.display,
-    "none",
+    "",
   );
   assert.strictEqual(
     dom.window.document.querySelector('[data-settings-tab="skills"]').style
@@ -637,6 +758,56 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
     "none",
   );
 
+  assert.deepStrictEqual(errors, []);
+});
+
+test("skill toggles render the selected mode's saved bucket", async () => {
+  const baseFetch = createFetchStub();
+  const fetchImpl = async (url, options = {}) => {
+    const rawPath = String(url).replace("http://localhost", "");
+    const parsed = new URL(`http://localhost${rawPath}`);
+    const activeMode = parsed.searchParams.get("mode") || "ollama";
+    if (parsed.pathname === "/api/ollama/skills/settings") {
+      return jsonResponse({
+        mode: activeMode,
+        settings: {
+          calculator: activeMode !== "llamacpp",
+          shell_command: false,
+        },
+      });
+    }
+    if (parsed.pathname === "/api/custom-skills")
+      return jsonResponse({ mode: activeMode, skills: [] });
+    return baseFetch(url, options);
+  };
+  const { dom, errors } = createDom(fetchImpl);
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  dom.window.document.getElementById("btnOllama").click();
+  await waitFor(
+    () =>
+      dom.window.document.querySelector(
+        '#builtinSkillsList .builtin-skill-toggle[data-skill="calculator"]',
+      )?.checked === true,
+  );
+
+  dom.window.document.getElementById("btnLlamaCpp").click();
+  await waitFor(
+    () =>
+      dom.window.document.querySelector(
+        '#builtinSkillsList .builtin-skill-toggle[data-skill="calculator"]',
+      )?.checked === false,
+  );
+  dom.window.document.getElementById("btnOllama").click();
+  assert.strictEqual(
+    dom.window.document.querySelector(
+      '#builtinSkillsList .builtin-skill-toggle[data-skill="calculator"]',
+    ).checked,
+    true,
+  );
   assert.deepStrictEqual(errors, []);
 });
 

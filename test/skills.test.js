@@ -108,6 +108,80 @@ test("Local Notes Skill - Read and Append", async () => {
   }
 });
 
+test("Mode snapshots isolate built-in and custom skill availability", async () => {
+  const customSkill = {
+    name: "mode_only_skill",
+    description: "Only available in one mode snapshot.",
+    type: "javascript",
+    code: "return 'mode-specific';",
+  };
+  const call = (context) =>
+    executeSkill(
+      {
+        function: {
+          name: "mode_only_skill",
+          arguments: "{}",
+        },
+      },
+      context,
+    );
+
+  assert.equal(
+    await call({ mode: "ollama", customSkills: [], skillsConfig: {} }),
+    "Unknown skill: mode_only_skill",
+  );
+  assert.equal(
+    await call({
+      mode: "cloud",
+      customSkills: [customSkill],
+      skillsConfig: {},
+    }),
+    "mode-specific",
+  );
+  assert.match(
+    await executeSkill(
+      {
+        function: {
+          name: "calculator",
+          arguments: JSON.stringify({ expression: "2 + 2" }),
+        },
+      },
+      { mode: "cloud", skillsConfig: { calculator: false } },
+    ),
+    /disabled for cloud mode/,
+  );
+});
+
+test("Mode snapshots isolate installed plugin activation", async () => {
+  const pluginSkill = {
+    name: "snapshot_plugin_skill",
+    pluginName: "snapshot-plugin",
+    execute: async () => "plugin result",
+    requiresConfirmation: false,
+    timeoutMs: 1000,
+    def: {
+      type: "function",
+      function: {
+        name: "snapshot_plugin_skill",
+        description: "Snapshot test plugin skill",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+  };
+  const call = (pluginSkills) =>
+    executeSkill(
+      {
+        function: {
+          name: "snapshot_plugin_skill",
+          arguments: "{}",
+        },
+      },
+      { mode: "cloud", pluginSkills, skillsConfig: {} },
+    );
+  assert.equal(await call([]), "Unknown skill: snapshot_plugin_skill");
+  assert.equal(await call([pluginSkill]), "plugin result");
+});
+
 test("Custom JS Skill Worker", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chat-test-"));
   try {

@@ -6,6 +6,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { PLUGINS_DIR, listPlugins, loadPlugins } = require("../plugins.js");
+const { requireNonPiMode } = require("../mode-state.js");
 
 module.exports = function createSkillsDomain(deps) {
   const {
@@ -17,22 +18,36 @@ module.exports = function createSkillsDomain(deps) {
     saveSkillsConfig,
     defaultSkillsConfig,
     initMcpServers,
+    stopMcpServers,
   } = deps;
+
+  function requestMode(ctx, body = null) {
+    const fromBody = body && typeof body.mode === "string" ? body.mode : null;
+    const fromQuery = ctx.requestUrl?.searchParams?.get("mode") || null;
+    return requireNonPiMode(fromBody || fromQuery || undefined);
+  }
 
   async function handleRequest(ctx) {
     const { req, urlPath, send } = ctx;
 
     if (req.method === "GET" && urlPath === "/api/plugins") {
-      send(200, { directory: PLUGINS_DIR, plugins: listPlugins() });
+      try {
+        const mode = requestMode(ctx);
+        send(200, { mode, directory: PLUGINS_DIR, plugins: listPlugins() });
+      } catch (e) {
+        send(e.statusCode || 400, { error: e.message });
+      }
       return true;
     }
 
     if (req.method === "POST" && urlPath === "/api/plugins/reload") {
       try {
+        const body = await parseJsonBody(req);
+        const mode = requestMode(ctx, body);
         const plugins = loadPlugins();
-        send(200, { ok: true, directory: PLUGINS_DIR, plugins });
+        send(200, { ok: true, mode, directory: PLUGINS_DIR, plugins });
       } catch (e) {
-        send(500, { error: e.message });
+        send(e.statusCode || 500, { error: e.message });
       }
       return true;
     }
@@ -109,17 +124,23 @@ module.exports = function createSkillsDomain(deps) {
     }
 
     if (req.method === "GET" && urlPath === "/api/custom-skills") {
-      send(200, loadCustomSkills());
+      try {
+        const mode = requestMode(ctx);
+        send(200, { mode, skills: loadCustomSkills(mode) });
+      } catch (e) {
+        send(e.statusCode || 400, { error: e.message });
+      }
       return true;
     }
 
     if (req.method === "POST" && urlPath === "/api/mcp/config") {
       try {
         const body = await parseJsonBody(req);
-        const servers = await initMcpServers(body.config);
-        send(200, { success: true, servers: servers || [] });
+        const mode = requestMode(ctx, body);
+        const servers = await initMcpServers(mode, body.config ?? "");
+        send(200, { success: true, mode, servers: servers || [] });
       } catch (e) {
-        send(500, { error: e.message });
+        send(e.statusCode || 500, { error: e.message });
       }
       return true;
     }
@@ -132,7 +153,8 @@ module.exports = function createSkillsDomain(deps) {
     if (req.method === "POST" && urlPath === "/api/mcp/purge") {
       try {
         const body = await parseJsonBody(req);
-        await initMcpServers("");
+        const mode = requestMode(ctx, body);
+        await stopMcpServers(mode);
         const removed = [];
         let config = null;
         try {
@@ -179,11 +201,13 @@ module.exports = function createSkillsDomain(deps) {
     if (req.method === "POST" && urlPath === "/api/custom-skills") {
       try {
         const body = await parseJsonBody(req);
-        if (!Array.isArray(body)) {
+        const mode = requestMode(ctx, body);
+        const skills = body?.skills;
+        if (!Array.isArray(skills)) {
           send(400, { error: "Custom skills must be an array" });
           return true;
         }
-        const valid = body.every(
+        const valid = skills.every(
           (s) =>
             s &&
             typeof s.name === "string" &&
@@ -195,8 +219,8 @@ module.exports = function createSkillsDomain(deps) {
           send(400, { error: "Invalid custom skill structure" });
           return true;
         }
-        saveCustomSkills(body);
-        send(200, { ok: true });
+        saveCustomSkills(skills, mode);
+        send(200, { ok: true, mode, skills });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }
@@ -248,7 +272,12 @@ module.exports = function createSkillsDomain(deps) {
     }
 
     if (req.method === "GET" && urlPath === "/api/ollama/skills/settings") {
-      send(200, loadSkillsConfig());
+      try {
+        const mode = requestMode(ctx);
+        send(200, { mode, settings: loadSkillsConfig(mode) });
+      } catch (e) {
+        send(e.statusCode || 400, { error: e.message });
+      }
       return true;
     }
 
@@ -259,6 +288,16 @@ module.exports = function createSkillsDomain(deps) {
           send(400, { error: "Settings object is required" });
           return true;
         }
+        const mode = requestMode(ctx, body);
+        const submittedSettings = body.settings;
+        if (
+          !submittedSettings ||
+          typeof submittedSettings !== "object" ||
+          Array.isArray(submittedSettings)
+        ) {
+          send(400, { error: "settings object is required" });
+          return true;
+        }
 
         const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
         for (const plugin of listPlugins()) {
@@ -266,12 +305,14 @@ module.exports = function createSkillsDomain(deps) {
             VALID_SKILL_KEYS.add(skillName);
         }
         const filtered = Object.fromEntries(
-          Object.entries(body).filter(([k]) => VALID_SKILL_KEYS.has(k)),
+          Object.entries(submittedSettings).filter(([k]) =>
+            VALID_SKILL_KEYS.has(k),
+          ),
         );
-        const nextSettings = { ...loadSkillsConfig(), ...filtered };
+        const nextSettings = { ...loadSkillsConfig(mode), ...filtered };
 
-        saveSkillsConfig(nextSettings);
-        send(200, { ok: true, settings: nextSettings });
+        saveSkillsConfig(nextSettings, mode);
+        send(200, { ok: true, mode, settings: nextSettings });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }

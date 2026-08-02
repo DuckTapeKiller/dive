@@ -2877,6 +2877,39 @@
         // bleed across modes, but leaving and returning to a mode keeps them.
         pendingFilesByMode[mode] = pendingFiles;
         mode = m;
+        if (typeof syncActiveSkillModeState === "function") {
+          syncActiveSkillModeState(m);
+        }
+        if (
+          typeof ensureMcpModeInitialised === "function" &&
+          SKILL_MODE_IDS.includes(m)
+        ) {
+          ensureMcpModeInitialised(m).catch(() => {});
+        }
+        if (SKILL_MODE_IDS.includes(m)) {
+          // The settings DOM is shared by all non-Pi modes. Always repaint it
+          // from the target mode's bucket; otherwise a loaded llama.cpp list
+          // remains visible when switching to a mode that was already loaded.
+          if (typeof renderBuiltinSkillsList === "function") {
+            renderBuiltinSkillsList();
+            renderCustomSkillsList();
+            renderPluginsList();
+          }
+          if (
+            typeof loadModeSkillsState === "function" &&
+            !skillStateLoadedByMode[m]
+          ) {
+            loadModeSkillsState(m)
+              .then(() => {
+                if (mode === m) {
+                  renderBuiltinSkillsList();
+                  renderCustomSkillsList();
+                  renderPluginsList();
+                }
+              })
+              .catch(() => {});
+          }
+        }
         pendingFiles = pendingFilesByMode[m] || [];
         renderPendingFileChips();
         const isOllamaMode = m === "ollama";
@@ -2990,7 +3023,7 @@
         }
         if (customSkillsGroup) {
           customSkillsGroup.style.display =
-            isOllamaMode || isLocalMode ? "" : "none";
+            isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
         }
         const bookSearchConfigGroup = document.getElementById(
           "bookSearchConfigGroup",
@@ -3024,8 +3057,10 @@
         // every mode can raise one — the button follows the request, not the
         // mode.
         piPermissionBtn.style.display = activePiPermissionRequest ? "" : "none";
-        if (!isOllamaMode && mcpOpen) {
+        if (isPiMode && mcpOpen) {
           toggleMcp();
+        } else if (!isPiMode && mcpOpen && typeof refreshMcpPanelForMode === "function") {
+          refreshMcpPanelForMode();
         }
         document.getElementById("uploadBtn").style.display = "";
         if (!isOllamaMode) closePromptEditor();
@@ -3061,6 +3096,11 @@
       }
 
       function clearChat() {
+        if (mode === "pi" && typeof abortActiveGeneration === "function") {
+          // Stop the foreground stream before resetting Pi, so an old turn
+          // cannot finish into the newly cleared conversation.
+          abortActiveGeneration();
+        }
         if (currentConvId && mode === "pi") {
           fetch(apiUrl("/api/pi/new-session"), {
             method: "POST",
@@ -3453,6 +3493,7 @@
             if (
               evt.type === "tool_start" ||
               evt.type === "tool_update" ||
+              evt.type === "tool_call_update" ||
               evt.type === "tool_end" ||
               evt.type === "stderr" ||
               evt.type === "trace"

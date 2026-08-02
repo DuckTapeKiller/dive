@@ -239,23 +239,6 @@
             return true;
           }
           if (name === "help" || name === "commands") {
-            let extra = "";
-            try {
-              const r = await callPiCommand({ type: "get_commands" });
-              const cmds = r?.result?.data?.commands || [];
-              if (cmds.length) {
-                extra =
-                  "\n\n**Pi commands** (sent to the agent as a message):\n" +
-                  cmds
-                    .map(
-                      (c) =>
-                        `- \`/${c.name}\`${
-                          c.description ? " — " + c.description : ""
-                        }`,
-                    )
-                    .join("\n");
-              }
-            } catch (_e) {}
             record(
               "**Dive Pi commands**\n" +
                 "- `/models` — list available models\n" +
@@ -263,8 +246,7 @@
                 "- `/think <level>` — set thinking level\n" +
                 "- `/compact` — compact the session\n" +
                 "- `/stats` — session statistics\n" +
-                "- `/help` — this list" +
-                extra,
+                "- `/help` — this list",
             );
             return true;
           }
@@ -284,43 +266,145 @@
       let piEventConvId = null;
       let piChannelRun = null;
 
+      function piChannelResponseText(run, response = run.response || "") {
+        const prior = String(run.baseMessage?.content || "").trim();
+        const next = String(response || "").trim();
+        if (!prior) return next;
+        // A background wake is an internal continuation after the answer has
+        // already been rendered. Keep its trace, steps, widgets, and sources,
+        // but never append Pi's process-summary prose as a second answer.
+        return prior;
+      }
+
+      function piChannelSources(run) {
+        return normalizeLibrarySourceResults([
+          ...getMessageLibrarySources(run.baseMessage),
+          ...(Array.isArray(run.sources) ? run.sources : []),
+        ]);
+      }
+
+      function renderPiChannelResponse(run) {
+        const text = piChannelResponseText(run);
+        const sources = piChannelSources(run);
+        if (run.assistantDiv?.isConnected) {
+          renderAssistantMessage(run.assistantDiv, text, sources);
+        } else {
+          setDraftAssistant("pi", text, sources);
+        }
+      }
+
       function finalizePiChannelRun(finalResponse) {
-        const session = getActiveModeSession("pi");
         const run = piChannelRun;
         piChannelRun = null;
         if (!run) return;
-        // This finalizer is the only close path for channel (wake) turns:
-        // freeze the bubble's timeline and elapsed clock, or a kept bubble
-        // ticks forever after the retry/continuation finished.
-        run.controller?.finalizeTimeline?.();
-        run.controller?.stopTimer?.();
+        const session = run.session || getActiveModeSession("pi");
+        const baseHistory = Array.isArray(run.history) ? run.history : [];
+        const activeSession = getActiveModeSession("pi");
+        const canRender =
+          mode === "pi" &&
+          currentConvId === run.convId &&
+          activeSession === session;
         const responseText =
           typeof finalResponse === "string" && finalResponse
             ? finalResponse
             : run.response || "";
-        setDraftAssistant("pi", responseText, []);
+        run.response = responseText;
+        run.controller?.finalizeTimeline?.();
+        run.controller?.stopTimer?.();
+
+        const nextHistory = [...baseHistory];
+        const sources = piChannelSources(run);
+        const mergedText = piChannelResponseText(run, responseText);
+        const baseIndex = Number.isInteger(run.baseIndex)
+          ? run.baseIndex
+          : -1;
+        if (baseIndex >= 0 && nextHistory[baseIndex]?.role === "assistant") {
+          const previous = nextHistory[baseIndex];
+          const previousMetadata = getAssistantMetadataFromMessage(previous);
+          const wakeMetadata = run.controller?.getSnapshot?.() || {};
+          const mergeMetadata = (key) => {
+            const wakeValue = Array.isArray(wakeMetadata[key])
+              ? wakeMetadata[key]
+              : [];
+            const previousValue = Array.isArray(previousMetadata[key])
+              ? previousMetadata[key]
+              : [];
+            return run.reusedController
+              ? wakeValue.length
+                ? wakeValue
+                : previousValue
+              : [...previousValue, ...wakeValue];
+          };
+          const previousThinking = previousMetadata.thinking || "";
+          const wakeThinking = wakeMetadata.thinking || "";
+          const mergedThinking = run.reusedController
+            ? wakeThinking || previousThinking
+            : previousThinking && wakeThinking
+              ? `${previousThinking}\n\n${wakeThinking}`
+              : previousThinking || wakeThinking;
+          const mergedMessage = buildAssistantHistoryMessage(
+            mergedText,
+            sources,
+            {
+              thinking: mergedThinking,
+              traceLines: mergeMetadata("traceLines"),
+              traceEvents: mergeMetadata("traceEvents"),
+              passages: mergeMetadata("passages"),
+              status: "done",
+            },
+          );
+          nextHistory[baseIndex] = { ...previous, ...mergedMessage };
+        } else if (responseText.trim()) {
+          const metadata = run.controller?.getSnapshot?.() || {};
+          metadata.status = "done";
+          nextHistory.push(
+            buildAssistantHistoryMessage(responseText, sources, metadata),
+          );
+        }
+
+        if (canRender) {
+          session.history = nextHistory;
+          history = [...nextHistory];
+          session.draftAssistant = null;
+          session.streamingAssistantDiv = null;
+          // Keep the finished thinking controller attached. Finalizing a wake
+          // must freeze its steps and trace, never remove or replace them.
+          session.thinkingController = run.controller || null;
+          if (baseIndex >= 0 && run.assistantDiv?.isConnected) {
+            renderAssistantMessage(
+              run.assistantDiv,
+              nextHistory[baseIndex].content,
+              sources,
+            );
+          } else if (baseIndex < 0 && responseText.trim()) {
+            session.streamingAssistantDiv = addMessage(
+              responseText,
+              "assistant",
+              { librarySources: sources },
+            );
+          }
+        }
+        // The continuation is merged into the original assistant bubble. Keep
+        // every trace, step, widget, and status frame; if this wake had to
+        // create a new controller, place it before the answer rather than
+        // leaving a second block below it.
         if (
-          run.controller?.isConnected &&
-          !run.controller.hadReasoning &&
-          !run.controller.hadTrace &&
-          !run.controller.hadPassages
+          !run.reusedController &&
+          run.controller?.element?.parentElement &&
+          run.assistantDiv?.closest(".msg-wrap")?.parentElement
         ) {
-          run.controller.remove();
+          const answerWrap = run.assistantDiv.closest(".msg-wrap");
+          answerWrap.parentElement.insertBefore(run.controller.element, answerWrap);
         }
-        const assistantMessage = finalizeDraftAssistant("pi", responseText, []);
-        // A wake turn has no user message of its own — append assistant-only.
-        session.history = [...session.history, assistantMessage];
-        if (mode === "pi" && currentConvId === session.convId) {
-          history = [...session.history];
+        if (run.controller?.isConnected) {
+          session.lastThinkingController = run.controller;
         }
-        persistConversationSnapshot(session.convId, "pi", session.history, "");
+        // The server persists async wake turns authoritatively when it emits
+        // the settled event. Do not write the same wake from the browser.
         refreshSidePanelRecent();
-        // Background continuation finished — return the button to Send.
         if (typeof updateSendButtonState === "function") {
           updateSendButtonState();
         }
-        // Pi keeps generating on the channel after the prompt stream closes, so
-        // this is the point at which a queued message may finally go out.
         if (typeof scheduleQueueDrain === "function") scheduleQueueDrain("pi");
       }
 
@@ -343,8 +427,14 @@
         if (piEventSource && piEventConvId === currentConvId) return;
         closePiEventChannel();
         piEventConvId = currentConvId;
+        const channelSession = getActiveModeSession("pi");
+        if (!channelSession.piEventSequences) channelSession.piEventSequences = {};
+        const after =
+          Number(channelSession.piEventSequences[currentConvId]) || 0;
         piEventSource = new EventSource(
-          apiUrl(`/api/pi/events?conv=${encodeURIComponent(currentConvId)}`),
+          apiUrl(
+            `/api/pi/events?conv=${encodeURIComponent(currentConvId)}&after=${after}`,
+          ),
         );
         piEventSource.onmessage = (msg) => {
           let evt;
@@ -366,6 +456,8 @@
         "tool_start",
         "tool_update",
         "tool_end",
+        "tool_call_update",
+        "web_sources",
         "pi_widget",
         "pi_status",
         "pi_notice",
@@ -379,14 +471,64 @@
         "stderr",
         "trace",
       ]);
-
       function handlePiChannelEvent(evt) {
         if (!evt || typeof evt.type !== "string") return;
         const session = getActiveModeSession("pi");
-        // A live prompt stream already renders everything it receives; the
-        // channel only takes over when no run is attached.
-        if (session.activeAbortController) return;
         if (mode !== "pi" || session.convId !== currentConvId) return;
+        if (evt.convId && evt.convId !== session.convId) return;
+        if (Number.isSafeInteger(evt.sequence)) {
+          if (!session.piEventSequences) session.piEventSequences = {};
+          const lastSequence =
+            Number(session.piEventSequences[session.convId]) || 0;
+          if (evt.sequence <= lastSequence) return;
+          session.piEventSequences[session.convId] = evt.sequence;
+        }
+        // A live prompt stream already renders everything it receives; the
+        // channel only takes over when no run is attached. Sequence IDs are
+        // still recorded above so reconnects do not replay its events.
+        if (session.activeAbortController) return;
+        // Completed historical runs are already represented in conversation
+        // history. Their replay records are for reconciliation only, never a
+        // reason to create a duplicate background assistant bubble.
+        if (
+          evt.replay === true &&
+          evt.completed === true &&
+          !piChannelRun
+        ) {
+          return;
+        }
+        if (evt.type === "replay_gap") {
+          if (!session.piReplayReconcile) {
+            session.piReplayReconcile = true;
+            fetch(
+              apiUrl(
+                "/api/conversations/id/" +
+                  encodeURIComponent(session.convId),
+              ),
+            )
+              .then((response) =>
+                readJsonResponse(response, "Reconcile Pi history"),
+              )
+              .then((conversation) => {
+                if (
+                  mode === "pi" &&
+                  currentConvId === session.convId &&
+                  !session.activeAbortController &&
+                  !piChannelRun &&
+                  Array.isArray(conversation?.history)
+                ) {
+                  session.history = [...conversation.history];
+                  history = [...session.history];
+                  renderSessionTranscript(session);
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                session.piReplayReconcile = false;
+              });
+          }
+          return;
+        }
         if (!piChannelRun) {
           if (!PI_CHANNEL_SUBSTANTIVE.has(evt.type)) return;
           // Straggler gate: the SSE socket can deliver a run's trailing
@@ -407,17 +549,47 @@
             }
           }
           session.thinkingStartedAt = Date.now();
-          const controller = addThinking({
-            live: true,
-            startedAt: session.thinkingStartedAt,
-            modeName: "pi",
-            convId: session.convId || currentConvId,
-          });
+          const priorController = session.lastThinkingController?.isConnected
+            ? session.lastThinkingController
+            : null;
+          const controller =
+            priorController ||
+            addThinking({
+              live: true,
+              startedAt: session.thinkingStartedAt,
+              modeName: "pi",
+              convId: session.convId || currentConvId,
+            });
+          const reusedController = !!priorController;
           session.thinkingController = controller;
           controller.addTraceLine(
             "Pi woke in the background — streaming its continuation.",
           );
-          piChannelRun = { controller, response: "" };
+          const channelHistory = Array.isArray(session.history)
+            ? [...session.history]
+            : [];
+          const baseIndex = channelHistory.findLastIndex(
+            (message) => message?.role === "assistant",
+          );
+          const baseMessage =
+            baseIndex >= 0 ? channelHistory[baseIndex] : null;
+          const assistantBubbles = [
+            ...chat.querySelectorAll(".msg-wrap.assistant > .msg.assistant"),
+          ];
+          const assistantDiv =
+            baseIndex >= 0 ? assistantBubbles.at(-1) || null : null;
+          piChannelRun = {
+            controller,
+            response: "",
+            sources: [],
+            session,
+            convId: session.convId,
+            history: channelHistory,
+            baseIndex,
+            baseMessage,
+            assistantDiv,
+            reusedController,
+          };
           // A background continuation is now generating — surface Stop.
           if (typeof updateSendButtonState === "function") {
             updateSendButtonState();
@@ -429,7 +601,15 @@
             typeof evt.response === "string"
               ? evt.response
               : run.response + (evt.delta || "");
-          setDraftAssistant("pi", run.response, []);
+          renderPiChannelResponse(run);
+          return;
+        }
+        if (evt.type === "web_sources") {
+          run.sources = normalizeLibrarySourceResults([
+            ...(Array.isArray(run.sources) ? run.sources : []),
+            ...(Array.isArray(evt.sources) ? evt.sources : []),
+          ]);
+          renderPiChannelResponse(run);
           return;
         }
         if (evt.type === "done") {

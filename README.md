@@ -4,7 +4,7 @@
 
 ## A Local-First Chat & Agent Interface for LM Studio, Ollama, Pi, llama.cpp, and Cloud Models
 
-**Version 4.0.3**
+**Version 5.0.6**
 
 Dive is a local-first desktop app (and web UI) with a flat, brutalist interface for working with local AI backends, terminal-grade agents, and — optionally — your own cloud API keys. The server and app run entirely on your machine; local modes need no internet at all.
 
@@ -44,6 +44,8 @@ https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
 ## Tool Calling & Skills
 
 Ollama, LM Studio, and llama.cpp support **native tool calling (OpenAI schema)** with an automatic XML fallback for models that ignore `tools`. Cloud mode supports the same skills. **Agent Mode** (per mode) enables plan-first prompting with a configurable tool budget.
+
+Skill activation is mode-local across Ollama, Cloud, LM Studio, and llama.cpp: built-in toggles, plugin-skill activation, custom-skill availability, MCP configuration, connected clients, and tool generations cannot bleed into another mode. Plugin code remains installed globally, while each request captures the active mode's immutable skill/tool snapshot. Legacy global skill and custom-skill files are migrated to mode-specific state on first access.
 
 Built-in skills (toggleable in Settings → Skills):
 

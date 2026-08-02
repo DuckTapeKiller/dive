@@ -24,8 +24,19 @@ const {
   readLessons,
   skillRequiresShellConfirmation,
 } = require("../skills.js");
-const { getMcpOllamaTools, executeMcpTool } = require("../mcp.js");
-const { getPluginToolDefs } = require("../plugins.js");
+const {
+  getMcpOllamaTools,
+  executeMcpTool,
+  acquireMcpSession,
+  releaseMcpSession,
+} = require("../mcp.js");
+const {
+  getPluginToolDefs,
+  getPluginSkillSnapshot,
+  getPluginCommandSnapshot,
+} = require("../plugins.js");
+const { requireNonPiMode } = require("../mode-state.js");
+const { extractWebSources } = require("./web-sources.js");
 
 // Skills the exact-repeat loop guard must not block: agent sessions
 // legitimately call these many times with identical arguments (plan updates,
@@ -80,6 +91,61 @@ module.exports = function createChatDomain(deps) {
 
   const backgroundMediaJobs = new Map();
   const BACKGROUND_MEDIA_JOB_RETENTION_MS = 5 * 60 * 1000;
+
+  // Capture all mutable skill/tool state once per request. Installed plugin
+  // definitions remain shared, but activation, custom definitions, and the MCP
+  // client generation belong to this mode and cannot change underneath a
+  // running turn. The response lease keeps an old MCP generation alive while a
+  // request is still using it during a concurrent reconfiguration.
+  function createSkillContext(mode, res = null) {
+    const normalizedMode = requireNonPiMode(mode);
+    const skillsConfig = loadSkillsConfig(normalizedMode);
+    const customSkills = loadCustomSkills(normalizedMode);
+    const pluginSkills = getPluginSkillSnapshot().filter(
+      (skill) => skillsConfig[skill.name] !== false,
+    );
+    const pluginSkillNames = new Set(pluginSkills.map((skill) => skill.name));
+    const pluginCommands = Object.fromEntries(
+      Object.entries(getPluginCommandSnapshot()).filter(
+        ([, skillName]) =>
+          pluginSkillNames.has(skillName) && skillsConfig[skillName] !== false,
+      ),
+    );
+    const mcpSession = acquireMcpSession(normalizedMode);
+    const context = {
+      mode: normalizedMode,
+      dataDir: DATA_DIR,
+      skillsConfig,
+      customSkills,
+      pluginSkills,
+      pluginCommands,
+      mcpSession,
+      released: false,
+    };
+    context.release = () => {
+      if (context.released) return;
+      context.released = true;
+      releaseMcpSession(mcpSession);
+    };
+    if (res && typeof res.once === "function") {
+      res.once("finish", context.release);
+      res.once("close", context.release);
+    }
+    return context;
+  }
+
+  function skillExecutionContext(mode, modeContext, allowShellCommand) {
+    return {
+      dataDir: DATA_DIR,
+      mode,
+      allowShellCommand,
+      cloudKeys: getCloudSearchKeys(),
+      skillsConfig: modeContext.skillsConfig,
+      customSkills: modeContext.customSkills,
+      pluginSkills: modeContext.pluginSkills,
+      pluginCommands: modeContext.pluginCommands,
+    };
+  }
 
   function selectedDownloadDetails(toolCall) {
     const toolName = toolCall?.function?.name;
@@ -136,7 +202,7 @@ module.exports = function createChatDomain(deps) {
     };
   }
 
-  function startBackgroundMediaJob(toolCall, skillMode, details) {
+  function startBackgroundMediaJob(toolCall, skillMode, details, modeContext) {
     const job = {
       id: randomUUID(),
       toolName: details.toolName,
@@ -153,12 +219,10 @@ module.exports = function createChatDomain(deps) {
 
     Promise.resolve()
       .then(() =>
-        executeSkill(toolCall, {
-          dataDir: DATA_DIR,
-          mode: skillMode,
-          allowShellCommand: true,
-          cloudKeys: getCloudSearchKeys(),
-        }),
+        executeSkill(
+          toolCall,
+          skillExecutionContext(skillMode, modeContext, true),
+        ),
       )
       .then((result) => {
         const message = String(result ?? "");
@@ -237,6 +301,7 @@ module.exports = function createChatDomain(deps) {
         send(400, { error: "message is required" });
         return;
       }
+      const modeContext = createSkillContext(modeId, res);
       const settings = loadLocalModelSettings();
       const conf = settings[modeId] || {};
       const baseUrl = normalizeLocalBaseUrl(
@@ -263,7 +328,10 @@ module.exports = function createChatDomain(deps) {
       const params = sanitizeLocalParams(body.params || conf.params, modeId);
       const { history = [], saveConv, convTitle, library } = body;
       const originalMessage = body.message;
-      const slashCommand = parseSlashCommand(originalMessage);
+      const slashCommand = parseSlashCommand(
+        originalMessage,
+        modeContext.pluginCommands,
+      );
       const message = getCommandMessage(slashCommand, originalMessage);
       // This turn's attachments. Refs sent by the client (a replay or a
       // regenerate) are read back from the attachments store, so an image is
@@ -372,10 +440,12 @@ module.exports = function createChatDomain(deps) {
         localSkillsEnabled = !slashCommand && !databaseContextEnabled;
         if (localSkillsEnabled) {
           if (conf.nativeTools !== false) {
-            nativeTools = getLocalNativeTools();
+            nativeTools = getLocalNativeTools(modeId, modeContext);
             nativeToolsEnabled = nativeTools.length > 0;
           }
           const skillsPrompt = getCloudSkillsPolicyPrompt({
+            mode: modeId,
+            modeContext,
             nativeToolCalling: nativeToolsEnabled,
             agentMode: agentModeEnabled,
             agentMaxRounds: maxRounds,
@@ -403,6 +473,7 @@ module.exports = function createChatDomain(deps) {
             toolCall,
             emit,
             modeId,
+            modeContext,
           );
           throwIfClientAborted();
           appendForcedSkillResult(requestMessages, slashCommand, result);
@@ -492,6 +563,7 @@ module.exports = function createChatDomain(deps) {
               toolCall,
               emit,
               modeId,
+              modeContext,
             );
           } catch (toolError) {
             result = `Error: ${toolError.message}`;
@@ -505,7 +577,7 @@ module.exports = function createChatDomain(deps) {
           outputPreview: String(result || "").slice(0, 300),
           isError: /^Error:/i.test(String(result || "")),
         });
-        const localSources = extractSkillSources(
+        const localSources = extractWebSources(
           toolCall.function.name,
           safeParseArgs(toolCall.function.arguments),
           result,
@@ -612,6 +684,8 @@ module.exports = function createChatDomain(deps) {
             nativeToolsEnabled = false;
             if (skillsPromptMessage) {
               skillsPromptMessage.content = getCloudSkillsPolicyPrompt({
+                mode: modeId,
+                modeContext,
                 agentMode: agentModeEnabled,
                 agentMaxRounds: maxRounds,
               });
@@ -925,15 +999,21 @@ module.exports = function createChatDomain(deps) {
     return result;
   }
 
-  async function executeToolCallWithConfirmation(toolCall, emit, skillMode) {
+  async function executeToolCallWithConfirmation(
+    toolCall,
+    emit,
+    skillMode,
+    modeContext,
+  ) {
+    const { skillsConfig } = modeContext;
     // A disabled skill must NOT crash the stream. Return an instructive result
     // so the model recovers by using one of its enabled skills instead.
     try {
-      assertBuiltinSkillEnabled(toolCall.function.name);
+      assertBuiltinSkillEnabled(toolCall.function.name, skillsConfig);
     } catch (error) {
-      const enabled = Object.entries(loadSkillsConfig())
-        .filter(([, v]) => v !== false)
-        .map(([k]) => k)
+      const enabled = Object.entries(skillsConfig)
+        .filter(([, value]) => value !== false)
+        .map(([key]) => key)
         .join(", ");
       return `${error.message} Do NOT call it again. Use one of your ENABLED skills instead (${enabled}) to answer the question.`;
     }
@@ -964,7 +1044,10 @@ module.exports = function createChatDomain(deps) {
     const requiresShellConfirmation =
       isGalleryPreview || isMediaPreview
         ? false
-        : skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR);
+        : skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR, {
+            customSkills: modeContext.customSkills,
+            pluginSkills: modeContext.pluginSkills,
+          });
     let decision = { allowed: true, reason: "not-required" };
     if (requiresShellConfirmation) {
       decision = await requestShellConfirmation({
@@ -991,7 +1074,10 @@ module.exports = function createChatDomain(deps) {
     }
 
     if (toolCall.function.name.startsWith("mcp__")) {
-      return await executeMcpTool(toolCall);
+      return await executeMcpTool(toolCall, {
+        mode: skillMode,
+        session: modeContext.mcpSession,
+      });
     }
 
     if (requiresShellConfirmation) {
@@ -1002,7 +1088,12 @@ module.exports = function createChatDomain(deps) {
     }
     const selectedDetails = selectedDownloadDetails(toolCall);
     if (selectedDetails) {
-      const job = startBackgroundMediaJob(toolCall, skillMode, selectedDetails);
+      const job = startBackgroundMediaJob(
+        toolCall,
+        skillMode,
+        selectedDetails,
+        modeContext,
+      );
       emit({
         type: "download_started",
         job: backgroundMediaJobSnapshot(job),
@@ -1012,12 +1103,10 @@ module.exports = function createChatDomain(deps) {
       });
       return `${job.label} started in the background (job ${job.id}). The conversation is available while it runs.`;
     }
-    const result = await executeSkill(toolCall, {
-      dataDir: DATA_DIR,
-      mode: skillMode,
-      allowShellCommand: requiresShellConfirmation,
-      cloudKeys: getCloudSearchKeys(),
-    });
+    const result = await executeSkill(
+      toolCall,
+      skillExecutionContext(skillMode, modeContext, requiresShellConfirmation),
+    );
     return presentPluginUiResult(result, emit);
   }
 
@@ -1127,84 +1216,14 @@ module.exports = function createChatDomain(deps) {
     });
   }
 
-  function assertBuiltinSkillEnabled(skillName) {
+  function assertBuiltinSkillEnabled(skillName, config) {
     if (
       !Object.prototype.hasOwnProperty.call(defaultSkillsConfig(), skillName)
     ) {
       return;
     }
-    const config = loadSkillsConfig();
     if (config[skillName] === false) {
       throw new Error(`Skill "${skillName}" is disabled in Skills settings.`);
-    }
-  }
-
-  function extractSkillSources(toolName, argsObj, resultText) {
-    const text = String(resultText || "");
-    const sources = [];
-    const seen = new Set();
-    const add = (title, url) => {
-      const clean = String(url || "").trim();
-      if (!/^https?:\/\//i.test(clean) || seen.has(clean)) return;
-      seen.add(clean);
-      sources.push({
-        title: String(title || hostTitleFromUrl(clean)).slice(0, 140),
-        url: clean,
-      });
-    };
-    // web_search list: "N. Title" line followed by a "URL: <url>" line.
-    const lines = text.split("\n");
-    let lastTitle = "";
-    for (const line of lines) {
-      const t = line.match(/^\s*\d+\.\s*(.+?)\s*$/);
-      if (t) {
-        lastTitle = t[1].trim();
-        continue;
-      }
-      const u = line.match(/^\s*URL:\s*(\S+)/i);
-      if (u) {
-        add(lastTitle, u[1]);
-        lastTitle = "";
-      }
-    }
-    // Citation comments used by wikipedia/britannica/wiktionary: <!-- https://... -->
-    const commentRe = /<!--\s*(https?:\/\/\S+?)\s*-->/g;
-    let m;
-    while ((m = commentRe.exec(text)) !== null)
-      add(hostTitleFromUrl(m[1]), m[1]);
-    // web_scraper reads a single URL passed as an argument.
-    if (toolName === "web_scraper" && argsObj && argsObj.url) {
-      add(hostTitleFromUrl(argsObj.url), argsObj.url);
-    }
-    // book_search lists its providers as markdown links on a "Sources:" line.
-    if (toolName === "book_search") {
-      const BOOK_PROVIDER_LABELS = {
-        openlibrary: "Open Library",
-        google: "Google Books",
-        goodreads: "Goodreads",
-        storygraph: "StoryGraph",
-        hardcover: "Hardcover",
-        librarything: "LibraryThing",
-        calibre: "Calibre",
-      };
-      // Only the links inside the sources comment become pills — the Cover
-      // link stays a plain hyperlink in the reply.
-      const sourcesComment = text.match(/<!--\s*sources:([\s\S]*?)-->/i);
-      const scope = sourcesComment ? sourcesComment[1] : text;
-      const linkRe = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-      let link;
-      while ((link = linkRe.exec(scope)) !== null) {
-        add(BOOK_PROVIDER_LABELS[link[1]] || link[1], link[2]);
-      }
-    }
-    return sources;
-  }
-
-  function hostTitleFromUrl(url) {
-    try {
-      return new URL(url).hostname.replace(/^www\./, "");
-    } catch {
-      return url;
     }
   }
 
@@ -1356,15 +1375,17 @@ module.exports = function createChatDomain(deps) {
     const nativeToolCalling = options.nativeToolCalling === true;
     const agentMode = options.agentMode === true;
     const agentMaxRounds = Number(options.agentMaxRounds) || 25;
-    const skillsConfig = loadSkillsConfig();
+    const skillMode = requireNonPiMode(options.mode);
+    const modeContext = options.modeContext;
+    const { skillsConfig } = modeContext;
     const enabledSkills = ALL_SKILLS.filter(
       (skill) => skillsConfig[skill.function.name] !== false,
     );
-    const customSkills = loadCustomSkills().filter(
+    const customSkills = modeContext.customSkills.filter(
       (skill) =>
         skill && typeof skill.name === "string" && skill.name.trim().length > 0,
     );
-    const pluginSkills = getPluginToolDefs().filter(
+    const pluginSkills = getPluginToolDefs(modeContext.pluginSkills).filter(
       (skill) => skillsConfig[skill.function.name] !== false,
     );
     if (!enabledSkills.length && !customSkills.length && !pluginSkills.length)
@@ -1419,7 +1440,10 @@ module.exports = function createChatDomain(deps) {
       // executor routes mcp__ names to the MCP client), so list them for the
       // XML-driven modes: Cloud and local-mode fallback. Ollama gets MCP tools
       // natively via its own tools API instead.
-      for (const mcpTool of getMcpOllamaTools()) {
+      for (const mcpTool of getMcpOllamaTools(
+        skillMode,
+        modeContext.mcpSession,
+      )) {
         lines.push(
           `${index}. **${mcpTool.function.name}:** ${mcpTool.function.description}\n   - Example: <call:${mcpTool.function.name}>{}</call>`,
         );
@@ -1506,8 +1530,9 @@ module.exports = function createChatDomain(deps) {
       '{"action": "create", "steps": ["Search for sources", "Read the top papers", "Write summary to workspace"]}',
   };
 
-  function getLocalNativeTools() {
-    const skillsConfig = loadSkillsConfig();
+  function getLocalNativeTools(mode, modeContext) {
+    const skillMode = requireNonPiMode(mode);
+    const { skillsConfig } = modeContext;
     const tools = ALL_SKILLS.filter(
       (skill) => skillsConfig[skill.function.name] !== false,
     ).map((skill) => ({
@@ -1521,11 +1546,11 @@ module.exports = function createChatDomain(deps) {
         },
       },
     }));
-    for (const pluginTool of getPluginToolDefs()) {
+    for (const pluginTool of getPluginToolDefs(modeContext.pluginSkills)) {
       if (skillsConfig[pluginTool.function.name] === false) continue;
       tools.push(pluginTool);
     }
-    for (const custom of loadCustomSkills()) {
+    for (const custom of modeContext.customSkills) {
       if (!custom || typeof custom.name !== "string" || !custom.name.trim()) {
         continue;
       }
@@ -1538,7 +1563,8 @@ module.exports = function createChatDomain(deps) {
         },
       });
     }
-    for (const mcpTool of getMcpOllamaTools()) tools.push(mcpTool);
+    for (const mcpTool of getMcpOllamaTools(skillMode, modeContext.mcpSession))
+      tools.push(mcpTool);
     return tools;
   }
 
@@ -2029,20 +2055,21 @@ module.exports = function createChatDomain(deps) {
           send(400, { error: "message is required" });
           return;
         }
+        const modeContext = createSkillContext("cloud", res);
 
         const settings = loadCloudSettings();
         const provider = CLOUD_PROVIDER_SET.has(settings.provider)
           ? settings.provider
           : "openai";
-        const {
-          history = [],
-          saveConv,
-          convTitle,
-          mode = "cloud",
-          library,
-        } = body;
+        const { history = [], saveConv, convTitle, library } = body;
+        // This route is the Cloud runtime; request payloads cannot redirect
+        // it into another mode's conversation or tool state.
+        const mode = "cloud";
         const originalMessage = body.message;
-        const slashCommand = parseSlashCommand(originalMessage);
+        const slashCommand = parseSlashCommand(
+          originalMessage,
+          modeContext.pluginCommands,
+        );
         const message = getCommandMessage(slashCommand, originalMessage);
         // See the local handler: attachments are resolved from the store, so
         // history images stay available to the model and to the saved history.
@@ -2142,6 +2169,8 @@ module.exports = function createChatDomain(deps) {
           cloudSkillsEnabled = !slashCommand && !databaseContextEnabled;
           if (cloudSkillsEnabled) {
             const skillsPrompt = getCloudSkillsPolicyPrompt({
+              mode: "cloud",
+              modeContext,
               agentMode: settings.agentMode === true,
               agentMaxRounds: settings.agentMaxRounds || 25,
             });
@@ -2175,6 +2204,7 @@ module.exports = function createChatDomain(deps) {
               toolCall,
               emit,
               "cloud",
+              modeContext,
             );
             throwIfClientAborted();
             appendForcedSkillResult(requestMessages, slashCommand, result);
@@ -2327,6 +2357,7 @@ module.exports = function createChatDomain(deps) {
                 toolCall,
                 emit,
                 "cloud",
+                modeContext,
               );
             } catch (toolError) {
               result = `Error: ${toolError.message}`;
@@ -2340,7 +2371,7 @@ module.exports = function createChatDomain(deps) {
             outputPreview: String(result || "").slice(0, 300),
             isError: /^Error:/i.test(String(result || "")),
           });
-          const cloudSources = extractSkillSources(
+          const cloudSources = extractWebSources(
             toolCall.function.name,
             safeParseArgs(toolCall.function.arguments),
             result,
@@ -2480,12 +2511,18 @@ module.exports = function createChatDomain(deps) {
           history = [],
           saveConv,
           convTitle,
-          mode = "ollama",
           options,
           library,
         } = body;
+        // The endpoint itself owns the runtime mode. Never let a client body
+        // route an Ollama request into another mode's state bucket.
+        const mode = "ollama";
+        const modeContext = createSkillContext("ollama", res);
         const originalMessage = requestMessage;
-        const slashCommand = parseSlashCommand(originalMessage);
+        const slashCommand = parseSlashCommand(
+          originalMessage,
+          modeContext.pluginCommands,
+        );
         const message = getCommandMessage(slashCommand, originalMessage);
         const attachmentImages = resolveAttachmentImages(body.images);
         const userMessage = { role: "user", content: message };
@@ -2623,6 +2660,7 @@ module.exports = function createChatDomain(deps) {
               toolCall,
               emit,
               "ollama",
+              modeContext,
             );
             if (clientGone) {
               const err = new Error("Request aborted by client.");
@@ -2689,8 +2727,8 @@ module.exports = function createChatDomain(deps) {
             // behaviour) and skills go through the XML prompt.
             const nativeTools =
               body.nativeTools !== false
-                ? getLocalNativeTools()
-                : getMcpOllamaTools();
+                ? getLocalNativeTools("ollama", modeContext)
+                : getMcpOllamaTools("ollama", modeContext.mcpSession);
             if (nativeTools.length > 0) {
               payloadObject.tools = nativeTools;
             }
@@ -2832,6 +2870,7 @@ module.exports = function createChatDomain(deps) {
                             tc,
                             emit,
                             "ollama",
+                            modeContext,
                           );
                         } catch (toolError) {
                           result = `Error: ${toolError.message}`;
@@ -2848,7 +2887,7 @@ module.exports = function createChatDomain(deps) {
                           isError: /^Error:/i.test(String(result || "")),
                         });
 
-                        const ollamaSources = extractSkillSources(
+                        const ollamaSources = extractWebSources(
                           tc.function.name,
                           safeParseArgs(tc.function.arguments),
                           result,
@@ -2999,13 +3038,20 @@ module.exports = function createChatDomain(deps) {
           history = [],
           saveConv,
           convTitle,
-          mode = "ollama",
           options,
         } = body;
+        const mode = "ollama";
+        const modeContext = createSkillContext(mode, res);
         const messages = [...history, { role: "user", content: message }];
         const safeOptions = sanitizeOllamaOptions(options);
 
-        let { promise, abort } = ollamaChat(model, messages, safeOptions);
+        let { promise, abort } = ollamaChat(
+          model,
+          messages,
+          safeOptions,
+          null,
+          modeContext,
+        );
         cancel = abort;
 
         res.on("close", () => {
@@ -3047,14 +3093,20 @@ module.exports = function createChatDomain(deps) {
             let result;
             let disabledSkillError = "";
             try {
-              assertBuiltinSkillEnabled(toolCall.function.name);
+              assertBuiltinSkillEnabled(
+                toolCall.function.name,
+                modeContext.skillsConfig,
+              );
             } catch (error) {
               disabledSkillError = error.message;
             }
             if (disabledSkillError) {
               result = `Error: ${disabledSkillError}`;
             } else if (
-              skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR)
+              skillRequiresShellConfirmation(toolCall.function.name, DATA_DIR, {
+                customSkills: modeContext.customSkills,
+                pluginSkills: modeContext.pluginSkills,
+              })
             ) {
               appendSecurityEvent("shell_command_denied_non_stream", {
                 command: toolCall.function.arguments,
@@ -3063,12 +3115,15 @@ module.exports = function createChatDomain(deps) {
               result =
                 "Error: shell command execution requires interactive confirmation, which is not supported in the non-streaming API.";
             } else if (toolCall.function.name.startsWith("mcp__")) {
-              result = await executeMcpTool(toolCall);
-            } else {
-              result = await executeSkill(toolCall, {
-                dataDir: DATA_DIR,
-                cloudKeys: getCloudSearchKeys(),
+              result = await executeMcpTool(toolCall, {
+                mode,
+                session: modeContext.mcpSession,
               });
+            } else {
+              result = await executeSkill(
+                toolCall,
+                skillExecutionContext(mode, modeContext, false),
+              );
             }
             messages.push({
               role: "tool",
@@ -3076,7 +3131,13 @@ module.exports = function createChatDomain(deps) {
             });
           }
 
-          const secondCall = ollamaChat(model, messages, safeOptions);
+          const secondCall = ollamaChat(
+            model,
+            messages,
+            safeOptions,
+            null,
+            modeContext,
+          );
           cancel = secondCall.abort;
           messageObj = await secondCall.promise;
         }

@@ -1,6 +1,6 @@
 {
   "name": "dive-desktop",
-  "version": "5.0.5",
+  "version": "5.0.6",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -55,6 +55,9 @@
       "skills.js",
       "slash_commands.js",
       "mcp.js",
+      "mode-state.js",
+      "redact.js",
+      "pi-paths.js",
       "plugins.js",
       "index.html",
       "font_faces.css",
@@ -77,6 +80,9 @@
       "skills.js",
       "slash_commands.js",
       "mcp.js",
+      "mode-state.js",
+      "redact.js",
+      "pi-paths.js",
       "plugins.js",
       "prompts.json",
       "font_faces.css",

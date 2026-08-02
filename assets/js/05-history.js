@@ -467,6 +467,17 @@
         return `${window.location.origin}${apiUrl(url)}`;
       }
 
+      // Collapse a trace line onto one line so it renders as a markdown list
+      // item. `maxChars` is for the live trace panels, which have to stay
+      // readable; the export passes Infinity because it must not lose text.
+      function compactExportTraceLine(line, maxChars = Infinity) {
+        const compact = String(line || "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (compact.length <= maxChars) return compact;
+        return `${compact.slice(0, maxChars - 1)}…`;
+      }
+
       // Every message currently on screen, including a reply still streaming.
       function getSessionExportHistory() {
         const session = getActiveModeSession(mode);
@@ -516,21 +527,37 @@
               "",
             );
           }
-          const content = String(msg.content || "").trim();
-          if (content) lines.push(content, "");
-          if (msg.role !== "assistant") return;
+          // A user turn is exported exactly as it was typed — never rewritten.
+          if (msg.role !== "assistant") {
+            const typed = String(msg.content || "").trim();
+            if (typed) lines.push(typed, "");
+            return;
+          }
 
           const metadata = getAssistantMetadataFromMessage(msg);
+          const sources = getMessageLibrarySources(msg);
+          // Skill-call markup is internal and never part of the answer. The
+          // model's own prose source list is dropped only when the structured
+          // Sources section below already carries those links; with nothing to
+          // replace it, the list stays in the prose rather than being lost.
+          const shown = stripSkillCallsForDisplay(msg.content);
+          const content = (
+            sources.length ? stripSourceCitations(shown) : shown
+          ).trim();
+          if (content) lines.push(content, "");
+
           if (metadata.thinking && metadata.thinking.trim()) {
             lines.push("**Reasoning**", "");
             lines.push(markdownBlockquote(metadata.thinking.trim()), "");
           }
-          if (metadata.traceLines && metadata.traceLines.length) {
+          const traceLines = metadata.traceLines
+            .map((line) => compactExportTraceLine(line))
+            .filter(Boolean);
+          if (traceLines.length) {
             lines.push("**Trace**", "");
-            metadata.traceLines.forEach((line) => lines.push(`- ${line}`));
+            traceLines.forEach((line) => lines.push(`- ${line}`));
             lines.push("");
           }
-          const sources = getMessageLibrarySources(msg);
           if (sources.length) {
             lines.push("**Sources**", "");
             sources.forEach((source, index) => {
@@ -971,6 +998,10 @@
 
       function renderLibrarySources(div, sources) {
         div.querySelector(".library-sources-container")?.remove();
+        const legacyContainer = div.parentElement?.querySelector(
+          ":scope > .library-sources-container",
+        );
+        if (legacyContainer) legacyContainer.remove();
         const normalized = normalizeLibrarySourceResults(sources);
         if (!normalized.length) return;
 
@@ -1030,6 +1061,7 @@
           list.appendChild(button);
         });
         container.appendChild(list);
+        // Keep the source pills inside the assistant bubble, below the answer.
         div.appendChild(container);
       }
 
@@ -1052,16 +1084,59 @@
         );
       }
 
-      // Sources are shown as pills, so any "Source:/References:" citation line or
-      // trailing citation the model still writes must be removed from the bubble.
+      // Sources are shown as pills at the bottom of the reply. Remove a
+      // model-written source list from the prose without deleting a paragraph
+      // that follows it.
+      // "Sources", "Fuentes principales", "Referencias consultadas", …: the
+      // noun, optionally qualified, in either language.
+      const SOURCE_HEADING_RE =
+        /^(?:main|primary|selected|principales)?\s*(?:sources?|references?|bibliography|fuentes?|referencias?|bibliograf[ií]a)(?:\s+(?:consulted|used|principales|consultadas?|consultados?|utilizadas?|citadas?|de\s+consulta))?$/;
+      const SOURCE_ITEM_RE = /^(?:[-*+]\s+|\d+[.)]\s+|https?:\/\/)/i;
+
       function stripSourceCitations(text) {
-        return String(text || "")
+        const lines = String(text || "").split("\n");
+        const kept = [];
+        for (let i = 0; i < lines.length; i++) {
+          const heading = lines[i]
+            .replace(/[#*_]/g, "")
+            .replace(/:/g, "")
+            .trim()
+            .toLowerCase();
+          if (!SOURCE_HEADING_RE.test(heading)) {
+            kept.push(lines[i]);
+            continue;
+          }
+          // Collect the list that follows, then drop it only if it actually
+          // held a link. A prose section that happens to be titled
+          // "References" is left completely alone.
+          let end = i + 1;
+          let sawLink = false;
+          while (end < lines.length) {
+            const trimmed = lines[end].trim();
+            if (!trimmed) {
+              end++;
+              continue;
+            }
+            if (!SOURCE_ITEM_RE.test(trimmed) && !/^\s{2,}/.test(lines[end])) {
+              break;
+            }
+            if (/https?:\/\//i.test(trimmed)) sawLink = true;
+            end++;
+          }
+          if (!sawLink) {
+            kept.push(lines[i]);
+            continue;
+          }
+          i = end - 1;
+        }
+        return kept
+          .join("\n")
           .replace(
-            /^[ \t]*(?:\*\*|__)?(?:sources?|references?|fuentes?|referencias?)(?:\*\*|__)?[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)[ \t]*\.?[ \t]*$/gim,
+            /^[ \t]*(?:\*\*|__)?(?:sources?|references?|fuentes?|referencias?)(?:\s+(?:consulted|consultadas?|consultados?))?(?:\*\*|__)?[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)[ \t]*\.?[ \t]*$/gim,
             "",
           )
           .replace(
-            /\s*(?:sources?|references?|fuentes?|referencias?)[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)\s*\.?\s*$/i,
+            /\s*(?:sources?|references?|fuentes?|referencias?)(?:\s+(?:consulted|consultadas?|consultados?))?[ \t]*:?[ \t]*(?:\[[^\]]*\]\([^)]*\)|https?:\/\/\S+)\s*\.?\s*$/i,
             "",
           )
           .replace(/\n{3,}/g, "\n\n")
@@ -2072,7 +2147,7 @@
               pre.classList.add("finished");
             }
           },
-          addTimelineStep(toolName, argsPreview) {
+          addTimelineStep(toolName, argsPreview, toolCallId = "") {
             timeline.style.display = "flex";
             const row = document.createElement("div");
             row.className = "agent-timeline-step pending";
@@ -2091,11 +2166,25 @@
             status.textContent = "…";
             row.append(num, label, status);
             timeline.appendChild(row);
-            timelineSteps.push({ row, status, toolName, done: false });
+            timelineSteps.push({
+              row,
+              status,
+              toolName,
+              toolCallId,
+              done: false,
+            });
             scrollChatToBottom();
           },
-          completeTimelineStep(toolName, isError) {
+          completeTimelineStep(toolName, isError, toolCallId = "") {
+            // Prefer the exact call id (parallel calls to the same tool), but
+            // always fall back to name then oldest-pending: an end event whose
+            // id never matched a start would otherwise leave the step spinning
+            // until finalizeTimeline stops it.
             const step =
+              (toolCallId &&
+                timelineSteps.find(
+                  (s) => !s.done && s.toolCallId === toolCallId,
+                )) ||
               timelineSteps.find((s) => !s.done && s.toolName === toolName) ||
               timelineSteps.find((s) => !s.done);
             if (!step) return;
@@ -2149,11 +2238,19 @@
           get isConnected() {
             return !!wrap.isConnected;
           },
+          get element() {
+            return wrap;
+          },
           get hadReasoning() {
             return hasReasoning;
           },
           get hadTrace() {
-            return traceLines.length > 0 || liveWidgets.size > 0 || hasPluginPreview;
+            return (
+              traceLines.length > 0 ||
+              timelineSteps.length > 0 ||
+              liveWidgets.size > 0 ||
+              hasPluginPreview
+            );
           },
           get hadPassages() {
             return currentPassages.length > 0;
@@ -2170,6 +2267,7 @@
               controller.addTimelineStep(
                 evt.toolName || "tool",
                 evt.argsPreview || "",
+                evt.toolCallId || "",
               );
               controller.setLiveWidget(
                 toolWidgetKey(evt),
@@ -2184,6 +2282,7 @@
               controller.completeTimelineStep(
                 evt.toolName || "tool",
                 evt.isError === true,
+                evt.toolCallId || "",
               );
               controller.setLiveWidget(
                 toolWidgetKey(evt),
@@ -2196,6 +2295,16 @@
               controller.setGalleryPreview(evt);
             } else if (evt.type === "media_playlist_preview") {
               controller.setMediaPlaylistPreview(evt);
+            } else if (evt.type === "tool_call_update") {
+              const phase = String(evt.phase || "toolcall").replace(
+                "toolcall_",
+                "",
+              );
+              if (phase === "start" || phase === "end") {
+                controller.addTraceLine(
+                  `Tool call${Number.isSafeInteger(evt.contentIndex) ? ` #${evt.contentIndex}` : ""} ${phase}`,
+                );
+              }
             }
           }
           controller.finalizeTimeline();
@@ -2269,6 +2378,7 @@
         // is wiped, otherwise it keeps firing against detached nodes on every
         // mode switch (a fresh controller is created below).
         session.thinkingController?.stopTimer?.();
+        session.lastThinkingController = null;
         chat.innerHTML = "";
         updateDownloadButtonState();
         session.streamingAssistantDiv = null;
@@ -2331,6 +2441,9 @@
             appendDrumIcon(session.streamingAssistantDiv);
           }
         }
+        session.lastThinkingController = session.thinkingController?.isConnected
+          ? session.thinkingController
+          : null;
       }
 
       function syncCurrentSessionState() {
@@ -2477,6 +2590,9 @@
         // text (aborted before output, tool-only, failed) must purge its DOM
         // node rather than persist an empty bubble (issue 2.2).
         removeAssistantBubbleIfEmpty(session.streamingAssistantDiv);
+        session.lastThinkingController = session.thinkingController?.isConnected
+          ? session.thinkingController
+          : null;
         session.draftAssistant = null;
         session.streamingAssistantDiv = null;
         session.thinkingController = null;
@@ -2929,19 +3045,72 @@
         }
       }
 
+      async function loadModeSkillsState(modeId) {
+        const activeMode = skillModeId(modeId);
+        if (skillStateLoadedByMode[activeMode]) return;
+        if (skillStateLoadPromises.has(activeMode)) {
+          return skillStateLoadPromises.get(activeMode);
+        }
+        const promise = (async () => {
+          try {
+            const [settingsRes, customRes] = await Promise.all([
+              fetch(
+                apiUrl(
+                  `/api/ollama/skills/settings?mode=${encodeURIComponent(activeMode)}`,
+                ),
+              ),
+              fetch(
+                apiUrl(
+                  `/api/custom-skills?mode=${encodeURIComponent(activeMode)}`,
+                ),
+              ),
+            ]);
+            // A server without the mode-aware endpoints (an older build left
+            // running against new assets) is an unavailable optional settings
+            // API, not a user-visible application error.
+            if (settingsRes.status === 404 || customRes.status === 404) {
+              setBuiltinSkillsConfigForMode(activeMode, {});
+              setCustomSkillsForMode(activeMode, []);
+              skillStateLoadedByMode[activeMode] = true;
+              return;
+            }
+            const settingsPayload = await readJsonResponse(
+              settingsRes,
+              `Load ${activeMode} skills settings`,
+            );
+            const customPayload = await readJsonResponse(
+              customRes,
+              `Load ${activeMode} custom skills`,
+            );
+            setBuiltinSkillsConfigForMode(activeMode, settingsPayload?.settings);
+            setCustomSkillsForMode(activeMode, customPayload?.skills);
+            skillStateLoadedByMode[activeMode] = true;
+            if (mode === activeMode) {
+              renderBuiltinSkillsList();
+              renderCustomSkillsList();
+              renderPluginsList();
+            }
+          } catch (error) {
+            console.error(`Could not load ${activeMode} skills state`, error);
+            throw error;
+          } finally {
+            skillStateLoadPromises.delete(activeMode);
+          }
+        })();
+        skillStateLoadPromises.set(activeMode, promise);
+        return promise;
+      }
+
+      // Boot loads only the active mode, matching ensureMcpModeInitialised.
+      // The other modes load lazily on first switch (03-theme.js) or first send
+      // (07-chat.js); eagerly fetching all four here made those paths dead and
+      // cost eight requests at startup for state three modes may never need.
       async function loadOllamaSkillsConfig() {
         renderBuiltinSkillsList();
-        try {
-          const res = await fetch(apiUrl("/api/ollama/skills/settings"));
-          builtinSkillsConfig = {
-            ...DEFAULT_BUILTIN_SKILLS_CONFIG,
-            ...(await res.json()),
-          };
-          renderBuiltinSkillsList();
-        } catch (error) {
-          console.error("Could not load Ollama skills config", error);
-          renderBuiltinSkillsList();
-        }
+        await loadModeSkillsState(mode).catch(() => {});
+        syncActiveSkillModeState(mode);
+        renderBuiltinSkillsList();
+        renderCustomSkillsList();
         loadPluginsUi().catch(() => {});
       }
 
@@ -3363,6 +3532,8 @@
         try {
           const res = await fetch(apiUrl("/api/plugins/reload"), {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: skillModeId() }),
           });
           loadedPluginsPayload = await readJsonResponse(res, "Reload plugins");
           renderPluginsList();
@@ -3376,18 +3547,35 @@
       }
 
       async function toggleBuiltinSkill(skillName, enabled) {
-        builtinSkillsConfig[skillName] = enabled;
+        const activeMode = skillModeId();
+        const previous = { ...builtinSkillsConfigByMode[activeMode] };
+        const next = { ...previous, [skillName]: enabled };
+        // Optimistic: paint the toggle immediately, then roll back if the
+        // server refuses. Leaving the optimistic value in place would show a
+        // skill as enabled that the server will not actually run.
+        setBuiltinSkillsConfigForMode(activeMode, next);
+        renderBuiltinSkillsList();
+        renderPluginsList();
         try {
-          await fetch(apiUrl("/api/ollama/skills/settings"), {
+          const res = await fetch(apiUrl("/api/ollama/skills/settings"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(builtinSkillsConfig),
+            body: JSON.stringify({ mode: activeMode, settings: next }),
           });
-          renderBuiltinSkillsList();
-          renderPluginsList();
+          const payload = await readJsonResponse(
+            res,
+            `Save ${activeMode} skills settings`,
+          );
+          if (payload?.settings) {
+            setBuiltinSkillsConfigForMode(activeMode, payload.settings);
+          }
         } catch (error) {
-          console.error("Could not save Ollama skills config", error);
+          console.error(`Could not save ${activeMode} skills config`, error);
+          setBuiltinSkillsConfigForMode(activeMode, previous);
+          await appAlert("Failed to save skill setting.", "Skills");
         }
+        renderBuiltinSkillsList();
+        renderPluginsList();
       }
 
       function renderBuiltinSkillsList() {
@@ -3707,14 +3895,16 @@
 
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
-          const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
+          const args = evt.argsPreview
+            ? ` args=${compactExportTraceLine(evt.argsPreview, 240)}`
+            : "";
           return `Tool start: ${tool}${args}`;
         }
 
         if (evt.type === "tool_update") {
           const tool = evt.toolName || "tool";
           const output = evt.outputPreview
-            ? ` output=${evt.outputPreview}`
+            ? ` output=${compactExportTraceLine(evt.outputPreview, 240)}`
             : "";
           return `Tool update: ${tool}${output}`;
         }
@@ -3723,7 +3913,7 @@
           const tool = evt.toolName || "tool";
           const suffix = evt.isError ? " (error)" : " (ok)";
           const output = evt.outputPreview
-            ? ` output=${evt.outputPreview}`
+            ? ` output=${compactExportTraceLine(evt.outputPreview, 240)}`
             : "";
           return `Tool end: ${tool}${suffix}${output}`;
         }
@@ -3772,7 +3962,9 @@
       // Per-tool progress panel frames. Shared by the live stream handler and
       // the history replay loop so the panels survive re-renders identically.
       function toolWidgetKey(evt) {
-        return `tool · ${evt.toolName || "tool"}`;
+        const tool = evt.toolName || "tool";
+        const id = evt.toolCallId ? ` · ${evt.toolCallId}` : "";
+        return `tool · ${tool}${id}`;
       }
       function toolWidgetStartLines(evt) {
         const tool = evt.toolName || "tool";
@@ -3780,22 +3972,22 @@
         // glow (see .pi-widget-details CSS), and the disclosure chevron
         // already sits at the start of the summary line.
         return [`${tool} running…`].concat(
-          evt.argsPreview ? [evt.argsPreview.slice(0, 300)] : [],
+          evt.argsPreview
+            ? [compactExportTraceLine(evt.argsPreview, 300)]
+            : [],
         );
       }
       function toolWidgetUpdateLines(evt) {
         const tool = evt.toolName || "tool";
-        const lines = String(evt.outputPreview || "")
-          .split("\n")
-          .slice(-16);
-        return [`${tool} running…`, ""].concat(lines);
+        const preview = compactExportTraceLine(evt.outputPreview, 500);
+        return [`${tool} running…`, ""].concat(preview ? [preview] : []);
       }
       function toolWidgetEndLines(evt) {
         const tool = evt.toolName || "tool";
-        const lines = String(evt.outputPreview || "")
-          .split("\n")
-          .slice(-16);
-        return [`${evt.isError ? "✗" : "✓"} ${tool}`, ""].concat(lines);
+        const preview = compactExportTraceLine(evt.outputPreview, 500);
+        return [`${evt.isError ? "✗" : "✓"} ${tool}`, ""].concat(
+          preview ? [preview] : [],
+        );
       }
 
       function handleStreamEventTrace(evt, thinking) {
@@ -4010,11 +4202,31 @@
           return;
         }
 
+        if (evt.type === "tool_call_update") {
+          const phase = String(evt.phase || "toolcall").replace(
+            "toolcall_",
+            "",
+          );
+          const index = Number.isSafeInteger(evt.contentIndex)
+            ? ` #${evt.contentIndex}`
+            : "";
+          if (phase === "start" || phase === "end") {
+            thinking.addTraceLine(`Tool call${index} ${phase}`);
+          }
+          return;
+        }
+
         if (evt.type === "tool_start") {
           const tool = evt.toolName || "tool";
-          const args = evt.argsPreview ? ` args=${evt.argsPreview}` : "";
+          const args = evt.argsPreview
+            ? ` args=${compactExportTraceLine(evt.argsPreview, 240)}`
+            : "";
           if (typeof thinking.addTimelineStep === "function") {
-            thinking.addTimelineStep(tool, evt.argsPreview || "");
+            thinking.addTimelineStep(
+              tool,
+              evt.argsPreview || "",
+              evt.toolCallId || "",
+            );
           }
           // Open a live progress panel for the running tool — web searches,
           // subagent fleets etc. stream here in place, like the terminal.
@@ -4041,10 +4253,14 @@
           const tool = evt.toolName || "tool";
           const suffix = evt.isError ? " (error)" : " (ok)";
           const output = evt.outputPreview
-            ? ` output=${evt.outputPreview}`
+            ? ` output=${compactExportTraceLine(evt.outputPreview, 240)}`
             : "";
           if (typeof thinking.completeTimelineStep === "function") {
-            thinking.completeTimelineStep(tool, evt.isError === true);
+            thinking.completeTimelineStep(
+              tool,
+              evt.isError === true,
+              evt.toolCallId || "",
+            );
           }
           // Freeze the tool's live panel at its final output, muted.
           if (typeof thinking.setLiveWidget === "function") {
@@ -4239,17 +4455,14 @@
         );
       }
 
-      let customSkills = [];
-
-      async function loadCustomSkills() {
+      async function loadCustomSkills(modeId = mode) {
+        const activeMode = skillModeId(modeId);
         try {
-          const res = await fetch(apiUrl("/api/custom-skills"));
-          if (res.ok) {
-            customSkills = await res.json();
-            renderCustomSkillsList();
-          }
+          await loadModeSkillsState(activeMode);
+          syncActiveSkillModeState(activeMode);
+          if (mode === activeMode) renderCustomSkillsList();
         } catch (e) {
-          console.error("Failed to load custom skills", e);
+          console.error(`Failed to load ${activeMode} custom skills`, e);
         }
       }
 
@@ -4293,17 +4506,22 @@
           return;
         }
 
-        customSkills.push({ name, description, type, code });
+        const activeMode = skillModeId();
+        const previous = customSkillsByMode[activeMode];
+        const nextSkills = [...previous, { name, description, type, code }];
+        setCustomSkillsForMode(activeMode, nextSkills);
         try {
           const res = await fetch(apiUrl("/api/custom-skills"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(customSkills),
+            body: JSON.stringify({ mode: activeMode, skills: nextSkills }),
           });
           if (res.ok) {
             closeSkillEditor();
-            await loadCustomSkills();
+            renderCustomSkillsList();
           } else {
+            setCustomSkillsForMode(activeMode, previous);
+            renderCustomSkillsList();
             await appAlert("Failed to save custom skill.", "Skills");
           }
         } catch (e) {
@@ -4320,16 +4538,26 @@
         ) {
           return;
         }
-        customSkills.splice(idx, 1);
+        const activeMode = skillModeId();
+        const previous = customSkillsByMode[activeMode];
+        const nextSkills = previous.filter((_skill, index) => index !== idx);
+        setCustomSkillsForMode(activeMode, nextSkills);
+        renderCustomSkillsList();
         try {
           const res = await fetch(apiUrl("/api/custom-skills"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(customSkills),
+            body: JSON.stringify({ mode: activeMode, skills: nextSkills }),
           });
-          if (res.ok) await loadCustomSkills();
+          if (!res.ok) {
+            setCustomSkillsForMode(activeMode, previous);
+            renderCustomSkillsList();
+            await appAlert("Failed to delete custom skill.", "Skills");
+          }
         } catch (e) {
           console.error(e);
+          setCustomSkillsForMode(activeMode, previous);
+          renderCustomSkillsList();
         }
       }
 

@@ -31,23 +31,24 @@ const COMMANDS = {
   },
 };
 
-// Slash commands contributed by plugins (~/dive/plugins). Lazy require so
-// plugins.js is only loaded in processes that actually parse commands.
-function pluginCommandConfig(name) {
-  try {
-    const skillName = require("./plugins.js").getPluginCommands()[name];
-    return skillName ? { type: "skill", skillName, label: name } : null;
-  } catch (_e) {
-    return null;
-  }
-}
-
-function parseSlashCommand(message) {
+// `pluginCommands` is the caller's mode-scoped command→skill snapshot (see
+// plugins.getPluginCommandSnapshot). There is deliberately no fallback to the
+// global plugin registry: a plugin installed but not activated for the calling
+// mode must not be reachable by slash command.
+function parseSlashCommand(message, pluginCommands = null) {
   const raw = typeof message === "string" ? message : "";
   const match = raw.match(/^\s*\/([a-z][a-z0-9_-]*)\b\s*([\s\S]*)$/i);
   if (!match) return null;
   const commandName = match[1].toLowerCase();
-  const config = COMMANDS[commandName] || pluginCommandConfig(commandName);
+  const pluginSkillName =
+    pluginCommands && typeof pluginCommands === "object"
+      ? pluginCommands[commandName]
+      : null;
+  const config =
+    COMMANDS[commandName] ||
+    (pluginSkillName
+      ? { type: "skill", skillName: pluginSkillName, label: commandName }
+      : null);
   if (!config) return null;
   const input = String(match[2] || "").trim();
   return {

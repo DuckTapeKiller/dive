@@ -3292,7 +3292,7 @@
         font-size: calc(11px * var(--font-scale, 1));
         color: var(--text-normal);
         background-color: var(--bg-secondary);
-        border: var(--border-width) solid var(--border-color);
+        border: 0;
         text-decoration: none;
         transition: all 0.2s;
       }
@@ -3333,7 +3333,6 @@
         min-width: 0;
         max-width: 100%;
         box-sizing: border-box;
-        border-color: var(--accent);
         border-radius: 999px;
       }
       .web-source-pill svg {
