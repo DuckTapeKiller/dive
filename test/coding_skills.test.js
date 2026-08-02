@@ -3,17 +3,26 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+// Point Dive's data directory at a temporary tree BEFORE requiring anything
+// that reads it — data-dir.js resolves once at require time. Without this the
+// test creates directories inside the user's real ~/dive/workspace.
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dive-coding-test-"));
+process.env.DIVE_DATA_DIR = dataDir;
+
 const {
   resolveAllowedPath,
   globToRegex,
   skillRequiresShellConfirmation,
 } = require("../skills.js");
 
-const workspace = path.join(os.homedir(), "dive", "workspace");
+const workspace = path.join(dataDir, "workspace");
+
+test.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
 
 test("resolveAllowedPath accepts the workspace and rejects outside paths", () => {
   fs.mkdirSync(workspace, { recursive: true });
-  const ok = resolveAllowedPath("~/dive/workspace");
+  const ok = resolveAllowedPath(workspace);
   assert.ok(!ok.error, ok.error);
   assert.strictEqual(ok.target, fs.realpathSync(workspace));
 
@@ -25,7 +34,7 @@ test("resolveAllowedPath accepts the workspace and rejects outside paths", () =>
 test("resolveAllowedPath rejects relative paths and missing paths", () => {
   assert.ok(resolveAllowedPath("relative/path").error);
   assert.ok(
-    resolveAllowedPath("~/dive/workspace/definitely-not-here-12345").error,
+    resolveAllowedPath(path.join(workspace, "definitely-not-here-12345")).error,
   );
 });
 
@@ -44,7 +53,6 @@ test("globToRegex matches like a shell glob", () => {
 });
 
 test("mutating skills are gated, read-only ones are not", () => {
-  const dataDir = path.join(os.homedir(), "dive");
   assert.strictEqual(
     skillRequiresShellConfirmation("run_python", dataDir),
     true,

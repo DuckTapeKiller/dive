@@ -43,7 +43,7 @@ const MAX_ROTATED_LOG_FILES = 3;
 const PDFTOTEXT_TIMEOUT_MS = 15 * 1000;
 const PDFTOTEXT_MAX_BUFFER = 10 * 1024 * 1024;
 
-const DATA_DIR = path.join(os.homedir(), "dive");
+const { DATA_DIR } = require("./data-dir.js");
 try {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });

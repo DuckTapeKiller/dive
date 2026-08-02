@@ -16,6 +16,7 @@ const os = require("os");
 const path = require("path");
 const { exec, execFile } = require("child_process");
 const { Worker } = require("worker_threads");
+const { DATA_DIR } = require("../data-dir.js");
 const {
   expandHomePath,
   resolveAllowedPath,
@@ -314,11 +315,7 @@ async function executeRunPython({ code, timeout_seconds }, dataDir) {
     );
     if (fs.existsSync(candidate)) python = candidate;
   }
-  const runDir = path.join(
-    dataDir || path.join(os.homedir(), "dive"),
-    "workspace",
-    ".run",
-  );
+  const runDir = path.join(dataDir || DATA_DIR, "workspace", ".run");
   fs.mkdirSync(runDir, { recursive: true });
   const scriptPath = path.join(
     runDir,

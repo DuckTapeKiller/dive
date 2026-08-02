@@ -1,4 +1,5 @@
-// Dive plugin loader. A plugin lives in ~/dive/plugins as either:
+// Dive plugin loader. A plugin lives in <data dir>/plugins (~/dive/plugins by
+// default, see data-dir.js) as either:
 //   my-plugin/            directory form
 //     plugin.json         { "name", "description", "version" } (optional)
 //     index.js            module.exports = { skills: [...], commands: {...} }
@@ -25,10 +26,9 @@
 // A broken plugin never takes the app down: every load and every execution
 // is isolated with try/catch and surfaced as a per-plugin error.
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
-const PLUGINS_DIR = path.join(os.homedir(), "dive", "plugins");
+const { PLUGINS_DIR } = require("./data-dir.js");
 const SKILL_NAME_RE = /^[a-z][a-z0-9_]*$/i;
 const EXECUTE_TIMEOUT_MS = 60 * 1000;
 const MIN_TIMEOUT_MS = 1000;

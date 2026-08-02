@@ -11,7 +11,7 @@ const {
   isReferenceDenseChunk,
 } = require("./epub");
 
-const DATA_DIR = path.join(os.homedir(), "dive");
+const { DATA_DIR } = require("../data-dir.js");
 const CONFIG_FILE = path.join(DATA_DIR, "library-config.json");
 const DEFAULT_CONFIG_FILE = path.join(__dirname, "config.default.json");
 const SCHEMA_FILE = path.join(__dirname, "schema.sql");

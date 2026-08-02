@@ -20,6 +20,7 @@ const os = require("os");
 const path = require("path");
 const net = require("net");
 const dnsPromises = require("dns").promises;
+const { DATA_DIR, WORKSPACE_DIR } = require("../data-dir.js");
 
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -136,7 +137,7 @@ async function assertUrlAllowed(url) {
   return null;
 }
 
-const ALLOWED_DIRS_FILE = path.join(os.homedir(), "dive", "allowed-dirs.json");
+const ALLOWED_DIRS_FILE = path.join(DATA_DIR, "allowed-dirs.json");
 
 function expandHomePath(value) {
   const trimmed = String(value || "").trim();
@@ -149,7 +150,7 @@ function expandHomePath(value) {
 // The allowlist of directories the coding skills may read. Users edit the
 // JSON directly; the workspace sandbox is always included.
 function loadAllowedDirs() {
-  const dirs = [path.join(os.homedir(), "dive", "workspace")];
+  const dirs = [WORKSPACE_DIR];
   try {
     const raw = JSON.parse(fs.readFileSync(ALLOWED_DIRS_FILE, "utf8"));
     for (const entry of raw.directories || []) {
