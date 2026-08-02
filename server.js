@@ -2211,9 +2211,9 @@ function createSseParser(onEvent) {
 // routed to the collapsed thinking box instead of the answer bubble, matching
 // every other mode. Only a block at the very start is treated as reasoning; a
 // tag appearing later in the answer is left untouched.
-// clampOllamaNumber and clampOllamaInteger are kept as thin wrappers for
-// call-site compatibility. They differ from clampNumber in that they do not
-// round to integer (Number) vs parseInt respectively.
+// Three different clamps, not duplicates: clampNumber rounds to an integer,
+// clampOllamaNumber keeps fractions (temperature, top_p), and
+// clampOllamaInteger parses with parseInt.
 function clampOllamaNumber(value, fallback, min, max) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;

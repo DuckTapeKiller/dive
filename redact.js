@@ -75,7 +75,6 @@ function boundedValue(value, maxChars = DEFAULT_BOUNDED_CHARS) {
 }
 
 module.exports = {
-  SENSITIVE_KEY,
   redactText,
   redactValue,
   boundedValue,

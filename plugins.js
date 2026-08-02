@@ -309,8 +309,6 @@ module.exports = {
   loadPlugins,
   listPlugins,
   getPluginToolDefs,
-  getPluginSkill,
-  getPluginCommands,
   getPluginCommandSnapshot,
   pluginSkillRequiresConfirmation,
   getPluginSkillSnapshot,

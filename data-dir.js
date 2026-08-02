@@ -34,7 +34,6 @@ const WORKSPACE_DIR = path.join(DATA_DIR, "workspace");
 
 module.exports = {
   DATA_DIR,
-  DEFAULT_DATA_DIR,
   PLUGINS_DIR,
   WORKSPACE_DIR,
   isOverridden: DATA_DIR !== path.resolve(DEFAULT_DATA_DIR),

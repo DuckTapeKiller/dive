@@ -162,13 +162,9 @@ function saveCustomSkills({ dataDir, mode, skills, onError = () => {} }) {
 
 module.exports = {
   NON_PI_MODES,
-  isNonPiMode,
-  normalizeNonPiMode,
   requireNonPiMode,
-  stateFilePath,
   loadSkillsConfig,
   saveSkillsConfig,
   loadCustomSkills,
   saveCustomSkills,
-  writeJsonAtomically,
 };

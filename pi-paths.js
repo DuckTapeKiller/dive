@@ -89,8 +89,6 @@ function sanitizePiWorkingDirectory(value, dataDir) {
 }
 
 module.exports = {
-  PI_COMMAND_BASENAMES,
-  resolveOwnedPath,
   sanitizePiCommandPath,
   sanitizePiWorkingDirectory,
 };
