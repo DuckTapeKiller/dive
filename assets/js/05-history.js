@@ -2316,6 +2316,20 @@ function addThinking(initialSnapshot = {}) {
   return controller;
 }
 
+// Whether an assistant turn has anything to put in a bubble.
+//
+// Shared by the live path and the history re-render because they must agree.
+// They did not: the live path skipped the bubble for a tool-only turn, the
+// re-render built one anyway, and the stored turn came back as an empty
+// <div class="msg assistant"> — which draws as a visible box, since .msg has
+// padding, a border and a shadow and there is no :empty rule.
+function assistantBubbleHasContent(text, librarySources) {
+  return Boolean(
+    (typeof text === "string" && text.trim()) ||
+    (Array.isArray(librarySources) && librarySources.length),
+  );
+}
+
 function assistantMetadataHasContent(metadata = {}) {
   return Boolean(
     (typeof metadata.thinking === "string" && metadata.thinking.trim()) ||
@@ -2341,8 +2355,17 @@ function renderAssistantHistoryMessage(
     });
     if (session) session.thinkingController = thinking;
   }
+  const librarySources = getMessageLibrarySources(message);
+  // A turn that only ran tools has no answer text and no sources. Its activity
+  // is shown by the thinking panel above, so there is nothing for a bubble to
+  // hold — same rule the live path applies in setDraftAssistant. Without this,
+  // reopening the conversation resurrects the empty placeholder bubble.
+  if (!assistantBubbleHasContent(message.content, librarySources)) {
+    if (session) session.streamingAssistantDiv = null;
+    return null;
+  }
   const div = addMessage(message.content || "", "assistant", {
-    librarySources: getMessageLibrarySources(message),
+    librarySources,
   });
   if (session) session.streamingAssistantDiv = div;
   return div;
@@ -2469,7 +2492,7 @@ function setDraftAssistant(modeName, content, librarySources, metadata) {
     !session.streamingAssistantDiv ||
     !session.streamingAssistantDiv.isConnected
   ) {
-    if (text.trim() || (librarySources || []).length) {
+    if (assistantBubbleHasContent(text, librarySources)) {
       session.streamingAssistantDiv = addMessage("", "assistant");
     }
   }

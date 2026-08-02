@@ -339,18 +339,12 @@ test("the tool-only turn survives a transcript re-render", async () => {
     })()`),
   );
 
-  // KNOWN FAILURE — a real defect, left red on purpose.
-  //
-  // The live turn is correct: no bubble is created while Pi runs a tool. But
-  // renderAssistantHistoryMessage builds the bubble unconditionally
-  // (05-history.js), while the trace panel above it is guarded by
-  // assistantMetadataHasContent. So a stored tool-only turn re-renders as an
-  // empty <div class="msg assistant" data-raw-text="">, and .msg carries
-  // padding, a border and a shadow with no :empty rule anywhere in app.css —
-  // it draws as a visible empty box.
-  //
-  // This is the same element from the original drum report, on the reload path
-  // rather than the live one.
+  // The bug this test was written for: renderAssistantHistoryMessage used to
+  // build the bubble unconditionally while the trace panel above it was
+  // guarded, so a stored tool-only turn came back as an empty
+  // <div class="msg assistant" data-raw-text="">. .msg has padding, a border
+  // and a shadow and app.css has no :empty rule, so it drew as a visible box —
+  // the same element as the original drum report, on the reload path.
   assert.strictEqual(
     after.emptyBubbles,
     0,
