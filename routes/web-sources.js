@@ -6,6 +6,64 @@ function hostTitleFromUrl(url) {
   }
 }
 
+function sourceTitleFromRecord(value) {
+  return String(value || "")
+    .replace(/^\[([^\]]+)\]\([^)]*\)$/, "$1")
+    .replace(/^[*_`]+|[*_`]+$/g, "")
+    .trim();
+}
+
+// Research skills return a deliberately small, explicit manifest: a numbered
+// title followed immediately by its URL. Do not scan the rest of the fetched
+// article text, which may contain unrelated links.
+function extractImmediateNumberedUrlRecords(text, add) {
+  const lines = String(text || "").split(/\r?\n/);
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const title = lines[i].match(/^\s*\d+\.\s+(.+?)\s*$/);
+    const url = lines[i + 1].match(/^\s*URL:\s*(https?:\/\/\S+)/i);
+    if (title && url) add(sourceTitleFromRecord(title[1]), url[1]);
+  }
+}
+
+// Academic-search, fetch-paper, and DuckDuckGo records may include author,
+// DOI, abstract, or snippet lines between the numbered title and URL. Keep the
+// current record only until its first explicit URL, and reset at section
+// boundaries so page prose is never treated as a source manifest.
+function extractDeepResearchManifest(text, add) {
+  const lines = String(text || "").split(/\r?\n/);
+  const marker = lines.findIndex((line) =>
+    /^\s*#{1,6}\s+(?:verified\s+)?source\s+manifest\s*$/i.test(line),
+  );
+  if (marker < 0) return false;
+  for (let i = marker + 1; i + 1 < lines.length; i += 1) {
+    if (/^\s*#{1,6}\s+/.test(lines[i])) break;
+    const title = lines[i].match(/^\s*\d+\.\s+(.+?)\s*$/);
+    const url = lines[i + 1].match(/^\s*URL:\s*(https?:\/\/\S+)/i);
+    if (title && url) add(sourceTitleFromRecord(title[1]), url[1]);
+  }
+  return true;
+}
+
+function extractNumberedUrlRecords(text, add) {
+  let title = "";
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const numbered = line.match(/^\s*\d+\.\s+(.+?)\s*$/);
+    if (numbered) {
+      title = sourceTitleFromRecord(numbered[1]);
+      continue;
+    }
+    if (/^\s*(?:#{1,6}\s+|---+\s*$)/.test(line)) {
+      title = "";
+      continue;
+    }
+    const url = line.match(/^\s*URL:\s*(https?:\/\/\S+)/i);
+    if (title && url) {
+      add(title, url[1]);
+      title = "";
+    }
+  }
+}
+
 function extractWebSources(toolName, argsObj, resultText) {
   const name = String(toolName || "");
   const text = String(resultText || "");
@@ -69,7 +127,27 @@ function extractWebSources(toolName, argsObj, resultText) {
     }
   }
 
-  if (["wikipedia", "britannica", "wiktionary"].includes(name)) {
+  if (name === "deep_research") {
+    // New dossiers isolate the manifest before any untrusted page prose. Keep
+    // the old immediate-record fallback for historical conversation renders.
+    if (!extractDeepResearchManifest(text, add)) {
+      extractImmediateNumberedUrlRecords(text, add);
+    }
+  }
+
+  if (["academic_search", "fetch_paper", "duckduckgo"].includes(name)) {
+    extractNumberedUrlRecords(text, add);
+  }
+
+  if (
+    [
+      "wikipedia",
+      "britannica",
+      "larousse",
+      "scholarpedia",
+      "wiktionary",
+    ].includes(name)
+  ) {
     const comments = /<!--[\s]*((?:https?:\/\/\S+?))[\s]*-->/gi;
     let match;
     while ((match = comments.exec(text)) !== null) {

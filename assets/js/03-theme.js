@@ -2788,6 +2788,13 @@ function renderMode(m) {
   renderSessionTranscript(modeSession[m]);
   if (typeof renderMessageQueue === "function") renderMessageQueue();
   if (typeof scheduleQueueDrain === "function") scheduleQueueDrain(m);
+  // The composer's skill launcher is per-mode: which skills appear is read
+  // from the active mode's settings, and Pi has no Dive skills at all. It has
+  // to be repainted here or the previous mode's buttons stay on screen —
+  // including in Pi, where none of them belong.
+  if (typeof renderComposerSkillButtons === "function") {
+    renderComposerSkillButtons();
+  }
 
   MODE_DEFS.forEach((def) => {
     const button = document.getElementById(def.btnId);
@@ -3298,6 +3305,7 @@ async function runPiRpcConversation(
         evt.type === "pi_widget" ||
         evt.type === "pi_status" ||
         evt.type === "pi_notice" ||
+        evt.type === "attachment_notice" ||
         evt.type === "pi_usage" ||
         evt.type === "async_pending" ||
         evt.type === "provider_retry" ||
@@ -3473,6 +3481,7 @@ async function runOllamaStreamConversation(
         evt.type === "pi_widget" ||
         evt.type === "pi_status" ||
         evt.type === "pi_notice" ||
+        evt.type === "attachment_notice" ||
         evt.type === "pi_usage" ||
         evt.type === "async_pending" ||
         evt.type === "provider_retry" ||
@@ -3610,6 +3619,7 @@ async function runCloudStreamConversation(
         evt.type === "pi_widget" ||
         evt.type === "pi_status" ||
         evt.type === "pi_notice" ||
+        evt.type === "attachment_notice" ||
         evt.type === "pi_usage" ||
         evt.type === "async_pending" ||
         evt.type === "provider_retry" ||
@@ -3758,6 +3768,7 @@ async function runLocalModeConversation(
         evt.type === "pi_widget" ||
         evt.type === "pi_status" ||
         evt.type === "pi_notice" ||
+        evt.type === "attachment_notice" ||
         evt.type === "pi_usage" ||
         evt.type === "async_pending" ||
         evt.type === "provider_retry" ||

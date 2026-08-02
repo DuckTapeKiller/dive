@@ -2923,6 +2923,37 @@ a:hover {
   margin: 0 0 8px;
   padding-left: 18px;
 }
+.research-candidate-button {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 2px 10px;
+  border: var(--border-width) solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-inverse);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: calc(14px * var(--font-scale, 1));
+  font-weight: normal;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+  transition:
+    color 0.12s,
+    background 0.12s,
+    box-shadow 0.12s,
+    border-color 0.12s;
+}
+.research-candidate-button:hover,
+.research-candidate-button:focus-visible {
+  background: var(--flat-fill);
+  border-color: var(--text-normal);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--text-normal) 45%, transparent);
+  outline: none;
+}
+.research-candidate-button:active {
+  background: var(--flat-fill-strong);
+}
 .thinking-markdown blockquote {
   margin: 0 0 8px;
   padding-left: 10px;
@@ -2974,6 +3005,100 @@ a:hover {
   transition:
     background 0.2s,
     color 0.2s;
+}
+#composerSkills {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 0 4px;
+  border-top: var(--border-width) solid var(--border-color);
+}
+#composerSkills.show {
+  display: flex;
+}
+.composer-skill-button {
+  min-height: 26px;
+  padding: 3px 8px;
+  border: var(--border-width) solid var(--border-color);
+  background: var(--bg-inverse);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: calc(10px * var(--font-scale, 1));
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.composer-skill-button:hover {
+  background: var(--flat-fill);
+}
+.composer-skill-button:active {
+  background: var(--flat-fill-strong);
+}
+.builtin-skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 8px;
+}
+.builtin-skills-header,
+.builtin-skill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px 48px;
+  column-gap: 8px;
+  align-items: center;
+}
+.builtin-skills-header {
+  padding: 0 8px 4px;
+  color: var(--text-inverse);
+  font-size: calc(9px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1.2;
+  text-align: center;
+}
+.builtin-skills-header span:first-child {
+  text-align: left;
+}
+.builtin-skill-row {
+  min-width: 0;
+  padding: 8px;
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  border: var(--border-width) solid var(--border-color);
+  margin-bottom: calc(var(--border-width) * -1);
+}
+.builtin-skill-row:hover {
+  background: var(--flat-fill);
+}
+.builtin-skill-info {
+  min-width: 0;
+}
+.builtin-skill-info strong {
+  display: block;
+}
+.builtin-skill-description {
+  margin-top: 4px;
+  color: var(--text-normal);
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: 1.35;
+  opacity: 0.8;
+}
+.builtin-skill-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.builtin-skill-input-unavailable {
+  color: var(--text-inverse);
+  font-size: calc(13px * var(--font-scale, 1));
+  line-height: 1;
+  opacity: 0.4;
+}
+.builtin-skill-row .brutalist-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
 }
 #composerTools {
   display: flex;

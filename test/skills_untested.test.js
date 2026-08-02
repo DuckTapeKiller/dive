@@ -10,11 +10,10 @@
 // public URL or an injectable HTTP layer; neither belongs in a unit test.
 //
 // remember_lesson and propose_plugin only touch the filesystem and are covered
-// properly. The other seven (britannica, wiktionary, duckduckgo, book_search,
-// fact_check, deep_research, deep_etymology) call hardcoded upstreams with no
-// injection point — testing them here would mean real requests to Wikipedia and
-// friends on every run. Their argument handling is covered; their network
-// behaviour is not, and closing that needs an injectable HTTP layer.
+// properly. The other network skills call upstreams, so their provider-specific
+// behavior is not exercised here. deep_research's orchestration and reader
+// quality gates are covered with deterministic hooks in research_quality.test.js;
+// this file keeps the argument-handling checks offline.
 const assert = require("assert");
 const fs = require("fs");
 const os = require("os");

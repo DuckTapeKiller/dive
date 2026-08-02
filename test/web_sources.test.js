@@ -34,3 +34,134 @@ test("does not turn fetched page chrome into payment or account sources", () => 
     },
   ]);
 });
+
+test("extracts only the explicit deep-research source manifest", () => {
+  const sources = extractWebSources(
+    "deep_research",
+    {},
+    [
+      '## Deep research — "topic" (2 sources)',
+      "",
+      "1. First Source",
+      "   URL: https://example.com/article",
+      "",
+      "Article text contains URL: https://unrelated.example/payment",
+      "---",
+      "2. Second Source",
+      "   URL: https://example.org/report",
+      "",
+      "More fetched article text.",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(sources, [
+    { title: "First Source", url: "https://example.com/article" },
+    { title: "Second Source", url: "https://example.org/report" },
+  ]);
+});
+
+test("deep-research manifest never scans numbered links inside evidence", () => {
+  const sources = extractWebSources(
+    "deep_research",
+    {},
+    [
+      "### Verified source manifest",
+      "1. Verified source",
+      "   URL: https://example.com/verified",
+      "",
+      "### Evidence excerpts",
+      "SOURCE 1: Verified source",
+      "1. Unrelated page link",
+      "URL: https://unrelated.example/payment",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(sources, [
+    { title: "Verified source", url: "https://example.com/verified" },
+  ]);
+});
+
+test("extracts the explicit Larousse article comment", () => {
+  const sources = extractWebSources(
+    "larousse",
+    {},
+    "## Larousse: Marie Curie\n\nArticle text.\n\n<!-- https://www.larousse.fr/encyclopedie/personnage/Marie_Curie/123456 -->",
+  );
+  assert.deepStrictEqual(sources, [
+    {
+      title: "larousse.fr",
+      url: "https://www.larousse.fr/encyclopedie/personnage/Marie_Curie/123456",
+    },
+  ]);
+});
+
+test("extracts the explicit Scholarpedia article comment", () => {
+  const sources = extractWebSources(
+    "scholarpedia",
+    {},
+    "## Scholarpedia: Neural networks\n\nArticle text.\n\n<!-- https://www.scholarpedia.org/article/Neural_network -->",
+  );
+  assert.deepStrictEqual(sources, [
+    {
+      title: "scholarpedia.org",
+      url: "https://www.scholarpedia.org/article/Neural_network",
+    },
+  ]);
+});
+
+test("extracts landing URLs from academic-search and fetch-paper records", () => {
+  const academic = extractWebSources(
+    "academic_search",
+    {},
+    [
+      '## Academic search: "topic" (1 papers)',
+      "",
+      "1. A Paper",
+      "   Author One (2024) — Journal",
+      "   DOI: 10.1234/example",
+      "   URL: https://papers.example.org/landing",
+      "   PDF: https://papers.example.org/paper.pdf",
+    ].join("\n"),
+  );
+  const paper = extractWebSources(
+    "fetch_paper",
+    {},
+    [
+      "## Paper",
+      "",
+      "1. A Paper",
+      "   Author One (2024) — Journal",
+      "   URL: https://papers.example.org/landing",
+      "   PDF: https://papers.example.org/paper.pdf",
+      "",
+      "### Content",
+      "Paper text.",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(academic, [
+    { title: "A Paper", url: "https://papers.example.org/landing" },
+  ]);
+  assert.deepStrictEqual(paper, [
+    { title: "A Paper", url: "https://papers.example.org/landing" },
+  ]);
+});
+
+test("extracts numbered DuckDuckGo skill results", () => {
+  const sources = extractWebSources(
+    "duckduckgo",
+    {},
+    [
+      '## Web search results for "topic"',
+      "",
+      "1. First result",
+      "   A short snippet.",
+      "   URL: https://example.com/first",
+      "",
+      "2. Second result",
+      "   Another snippet.",
+      "   URL: https://example.org/second",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(sources, [
+    { title: "First result", url: "https://example.com/first" },
+    { title: "Second result", url: "https://example.org/second" },
+  ]);
+});

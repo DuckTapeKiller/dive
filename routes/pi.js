@@ -205,6 +205,7 @@ function createPiDomain(deps) {
     persistAsyncWakeTurn,
     sanitizeTraceEventForStorage,
     resolveAttachmentImages,
+    describeDroppedAttachments,
     normalizeStoredConversationMessages,
     extForImageMime,
     emitSlashCommand,
@@ -2879,13 +2880,29 @@ function createPiDomain(deps) {
           writeStreamEvent({ type: "library_error", error: e.message });
         }
 
+        // Resolved and reported before Pi is started: the user attached these
+        // regardless of whether the agent comes up, so a startup failure must
+        // not also swallow the news that some of them were dropped.
+        const droppedAttachments = [];
+        const turnImages = resolveAttachmentImages(
+          body.images,
+          droppedAttachments,
+        );
+        if (droppedAttachments.length) {
+          writeStreamEvent({
+            type: "attachment_notice",
+            message: describeDroppedAttachments(droppedAttachments),
+            dropped: droppedAttachments,
+          });
+        }
+
         const piSettings = loadPiSettings();
         const convId = requirePiConversationId(body.saveConv);
         const convProc = getOrCreatePiConvProcess(convId, piSettings);
         await convProc.initialStatePromise;
         const preparedImages = preparePiImagePrompt(
           convProc,
-          resolveAttachmentImages(body.images),
+          turnImages,
           promptMessage,
         );
         session = sendPiPrompt(

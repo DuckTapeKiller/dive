@@ -1112,6 +1112,99 @@ function stripSourceCitations(text) {
     .replace(/\s+$/, "");
 }
 
+function researchAnswerSignalsAmbiguity(text) {
+  return /\b(?:several distinct individuals|multiple distinct (?:individuals|people|topics)|multiple individuals|possible matches|possible individuals|could refer to more than one|more than one (?:person|individual|topic)|ambiguous|various possible results)\b/i.test(
+    String(text || ""),
+  );
+}
+
+function candidateTitleFromNode(node, explicitCandidateSection) {
+  const strong = node.querySelector("strong, b");
+  if (!strong) return null;
+  const strongText = String(strong.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const numbered = strongText.match(/^\d+[.)]\s+(.+)$/);
+  const heading = /^h[2-4]$/i.test(node.tagName || "");
+  const listCandidate = node.tagName === "LI" && explicitCandidateSection;
+  if (!numbered && !heading && !listCandidate) return null;
+  const label = (numbered ? numbered[1] : strongText)
+    .replace(/^[-•]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (
+    !label ||
+    label.length < 3 ||
+    label.length > 180 ||
+    /^(?:identity|career highlights|contributions|later life|legacy|background|summary|reasoning|trace)$/i.test(
+      label.replace(/:$/, ""),
+    )
+  ) {
+    return null;
+  }
+  return { buttonSource: strong, label };
+}
+
+function activateResearchCandidate(query) {
+  if (
+    !SKILL_MODE_IDS.includes(mode) ||
+    activeBuiltinSkills().deep_research === false
+  ) {
+    return;
+  }
+  const clean = String(query || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  const inputEl = document.getElementById("input");
+  if (!clean || !inputEl) return;
+  inputEl.value = `/deep_research ${clean}`;
+  if (typeof resetInputSize === "function") resetInputSize();
+  inputEl.focus();
+  inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+  if (typeof sendMessage === "function") void sendMessage();
+}
+
+function renderResearchCandidateButtons(div) {
+  if (
+    !div ||
+    !SKILL_MODE_IDS.includes(mode) ||
+    activeBuiltinSkills().deep_research === false
+  ) {
+    return 0;
+  }
+  const rawText = div.dataset.rawText || div.textContent || "";
+  if (!researchAnswerSignalsAmbiguity(rawText)) return 0;
+  const explicitCandidateSection =
+    /\b(?:possible matches|possible individuals|candidate topics)\b/i.test(
+      rawText,
+    );
+  let count = 0;
+  for (const node of [...div.querySelectorAll("p, h2, h3, h4, li")]) {
+    if (node.closest(".research-candidate-button")) continue;
+    const candidate = candidateTitleFromNode(node, explicitCandidateSection);
+    if (!candidate) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "research-candidate-button";
+    button.textContent = candidate.label;
+    button.title = `Research ${candidate.label}`;
+    button.setAttribute("aria-label", `Research ${candidate.label}`);
+    button.dataset.researchQuery = candidate.label;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      activateResearchCandidate(button.dataset.researchQuery);
+    });
+    const onlyStrongText =
+      node.textContent.trim() === candidate.buttonSource.textContent.trim();
+    if (onlyStrongText) node.replaceChildren(button);
+    else candidate.buttonSource.replaceWith(button);
+    count += 1;
+  }
+  return count;
+}
+
 function renderAssistantMessage(div, text, librarySources) {
   if (!div) return;
   const cleanText = stripSourceCitations(stripSkillCallsForDisplay(text));
@@ -1127,6 +1220,7 @@ function renderAssistantMessage(div, text, librarySources) {
 
   if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
     div.innerHTML = DOMPurify.sanitize(marked.parse(finalText));
+    renderResearchCandidateButtons(div);
     forceLinksToNewTab(div);
     renderLibrarySources(div, sourceResults);
 
@@ -3437,6 +3531,44 @@ async function reloadPlugins() {
   }
 }
 
+async function toggleInputSkill(skillName, shown) {
+  const activeMode = skillModeId();
+  if (!INPUT_SKILL_NAMES.includes(skillName)) return;
+  if (shown && activeBuiltinSkills()[skillName] === false) {
+    renderBuiltinSkillsList();
+    return;
+  }
+  const previous = {
+    ...builtinSkillsConfigByMode[activeMode],
+    inputSkills: { ...activeInputSkills() },
+  };
+  const next = {
+    ...previous,
+    inputSkills: { ...previous.inputSkills, [skillName]: shown },
+  };
+  setBuiltinSkillsConfigForMode(activeMode, next);
+  renderBuiltinSkillsList();
+  try {
+    const res = await fetch(apiUrl("/api/ollama/skills/settings"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: activeMode, settings: next }),
+    });
+    const payload = await readJsonResponse(
+      res,
+      `Save ${activeMode} input skill settings`,
+    );
+    if (payload?.settings) {
+      setBuiltinSkillsConfigForMode(activeMode, payload.settings);
+    }
+  } catch (error) {
+    console.error(`Could not save ${activeMode} input skill config`, error);
+    setBuiltinSkillsConfigForMode(activeMode, previous);
+    await appAlert("Failed to save input skill setting.", "Skills");
+  }
+  renderBuiltinSkillsList();
+}
+
 async function toggleBuiltinSkill(skillName, enabled) {
   const activeMode = skillModeId();
   const previous = { ...builtinSkillsConfigByMode[activeMode] };
@@ -3472,20 +3604,52 @@ async function toggleBuiltinSkill(skillName, enabled) {
 function renderBuiltinSkillsList() {
   const list = document.getElementById("builtinSkillsList");
   if (!list) return;
-  let html = "";
+  let html = `
+    <div class="builtin-skills-header" aria-hidden="true">
+      <span>SKILL</span>
+      <span>ENABLED</span>
+      <span>INPUT</span>
+    </div>
+  `;
   for (const [skill, info] of Object.entries(ALL_BUILTIN_SKILLS_INFO)) {
     const enabled = activeBuiltinSkills()[skill] !== false;
+    const inputEligible = INPUT_SKILL_NAMES.includes(skill);
+    const shown = activeInputSkills()[skill] === true;
+    const inputControl = inputEligible
+      ? `<input
+          type="checkbox"
+          class="brutalist-toggle input-skill-toggle"
+          data-skill="${skill}"
+          aria-label="Show ${humanizeSkillLabel(skill)} in the input composer"
+          title="Show ${humanizeSkillLabel(skill)} in the input composer"
+          ${shown ? "checked" : ""}
+          ${enabled ? "" : "disabled"}
+        >`
+      : '<span class="builtin-skill-input-unavailable" aria-label="Not available in the input composer">—</span>';
     html += `
-            <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
-              <div>
-                <strong>${humanizeSkillLabel(skill)}</strong>
-                <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${info.desc}</div>
-              </div>
-              <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${skill}" ${enabled ? "checked" : ""} >
-            </div>
-          `;
+      <div class="builtin-skill-row">
+        <div class="builtin-skill-info">
+          <strong>${humanizeSkillLabel(skill)}</strong>
+          <div class="builtin-skill-description">${info.desc}</div>
+        </div>
+        <div class="builtin-skill-control">
+          <input
+            type="checkbox"
+            class="brutalist-toggle builtin-skill-toggle"
+            data-skill="${skill}"
+            aria-label="Enable ${humanizeSkillLabel(skill)}"
+            title="Enable ${humanizeSkillLabel(skill)}"
+            ${enabled ? "checked" : ""}
+          >
+        </div>
+        <div class="builtin-skill-control">${inputControl}</div>
+      </div>
+    `;
   }
   list.innerHTML = html;
+  if (typeof renderComposerSkillButtons === "function") {
+    renderComposerSkillButtons();
+  }
 }
 
 async function loadPiSettings() {
@@ -3948,6 +4112,19 @@ function handleStreamEventTrace(evt, thinking) {
         thinking.addTraceLine(`Status · ${statusKey}: ${evt.text}`);
       }
     }
+    return;
+  }
+
+  if (evt.type === "attachment_notice") {
+    // Marked as a failure so the collapsed Execution Trace summary reads
+    // "(failed)": an attachment the user could see in their own bubble did not
+    // reach the model, and that must not pass unremarked.
+    thinking.addTraceLine(
+      `Attachments: ${evt.message || "some were not sent."}`,
+      {
+        failure: true,
+      },
+    );
     return;
   }
 

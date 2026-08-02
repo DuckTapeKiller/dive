@@ -39,6 +39,8 @@ const {
 // search — everything that answers a question from the web.
 const {
   executeWikipedia,
+  executeLarousse,
+  executeScholarpedia,
   executeWiktionary,
   executeBritannica,
   executeDuckDuckGo,
@@ -181,6 +183,39 @@ const ALL_SKILLS = [
   {
     type: "function",
     function: {
+      name: "larousse",
+      description:
+        "Searches the French Larousse Encyclopédie for expert-edited background information. It is useful for historical, biographical, cultural, and scientific topics; the final answer must remain in the user's language. For broad research, deep_research includes Larousse alongside Wikipedia, Britannica, and independent sources.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The search term or question" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "scholarpedia",
+      description:
+        "Searches Scholarpedia, a peer-reviewed expert encyclopedia of specialist scientific and technical topics. Use it for academic background and living-review material, not as a substitute for primary research papers or current news. The final answer must remain in the user's language. For scientific research, deep_research may include it automatically.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "The scientific or technical topic",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "book_search",
       description:
         "Searches a net of book providers (Open Library, Google Books, Goodreads, StoryGraph, and configured Hardcover/LibraryThing/Calibre) in parallel for book metadata, merges the results and returns a ready-made markdown table plus description and sources. Use for any question about a book's publication details, editions or metadata. The query can be a title, an author, or an ISBN. IMPORTANT: this tool's output is already formatted for the user — reproduce the returned markdown table (and description) VERBATIM in your reply; do not paraphrase it into prose.",
@@ -247,7 +282,7 @@ const ALL_SKILLS = [
     function: {
       name: "deep_research",
       description:
-        "PREFERRED for any factual, biographical, current-events, or 'who/what is X' question. In ONE call it searches the web across multiple angles and reads several independent sources (different websites), returning their full content plus every source URL. For thorough coverage, pass 'queries' with 2-4 VARIED angles (different phrasing and scope), e.g. ['Dean Benedetti biography', 'Dean Benedetti Charlie Parker recordings', 'Dean Benedetti jazz history'] — not one query. After it returns, write a comprehensive, multi-paragraph answer that synthesizes ALL the sources.",
+        "PREFERRED for any factual, biographical, historical, current-events, or 'who/what is X' question. This is a full evidence-research pipeline in ONE call: it builds varied research angles, consults structured encyclopedic orientation sources (Wikipedia, Britannica, the French Larousse Encyclopédie, Norway's Store norske leksikon, and Scholarpedia for scientific topics) when appropriate, searches independent web and scholarly sources, validates pages against bot walls and relevance, rejects unusable evidence, permanently excludes Grokipedia, selects diverse sources, uses Wayback Machine and archive.ph as provenance-labelled fallbacks for deleted, blocked, or archived articles, and returns a compact evidence dossier for synthesis. Archived copies are not automatically current and must be corroborated for time-sensitive claims. Pass 'queries' with 2-4 genuinely different angles, e.g. ['Dean Benedetti biography', 'Dean Benedetti Charlie Parker recordings', 'Dean Benedetti archival sources', 'Dean Benedetti scholarly history'] — not repeated wording. Never treat the source count as proof: the final answer must distinguish corroborated facts, single-source claims, interpretations, disagreements, and unknowns, and must not fill evidence gaps from memory.",
       parameters: {
         type: "object",
         properties: {
@@ -264,7 +299,8 @@ const ALL_SKILLS = [
           },
           max_sources: {
             type: "number",
-            description: "How many sources to read (4-8, default 6).",
+            description:
+              "Maximum number of verified source dossiers to include (1-10, default 6). The tool may return fewer when evidence is weak; it never pads the result with irrelevant pages.",
           },
           academic: {
             type: "boolean",
@@ -386,7 +422,7 @@ When asked about these relationships, ALWAYS query both words and explain the di
     function: {
       name: "web_scraper",
       description:
-        "Fetches a URL and returns its clean main text/markdown (no nav/ads). Use this after the duckduckgo skill to read a result you selected, then answer the user from what you read.",
+        "Fetches a URL and returns its clean main text/markdown (no nav/ads). If the live page is blocked or unavailable, it may use a Wayback Machine or archive.ph snapshot and labels that retrieval as archived. Use this after the duckduckgo skill to read a result you selected, then answer the user from what you read.",
       parameters: {
         type: "object",
         properties: {
@@ -1000,6 +1036,10 @@ async function executeSkill(toolCall, context = {}) {
       return await executeWikipedia(args);
     case "britannica":
       return await executeBritannica(args, context);
+    case "larousse":
+      return await executeLarousse(args, context);
+    case "scholarpedia":
+      return await executeScholarpedia(args, context);
     case "book_search":
       return await executeBookSearch(args, context);
     case "wiktionary":

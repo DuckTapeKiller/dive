@@ -5,6 +5,7 @@ const {
   isDatabaseSlashCommand,
   isSkillSlashCommand,
   parseSlashCommand,
+  INPUT_SKILL_NAMES,
 } = require("../slash_commands");
 
 test("parses global database slash command", () => {
@@ -37,6 +38,32 @@ test("builds forced Wikipedia skill call with language prefix", () => {
     language: "es",
   });
   assert.strictEqual(toolCall.function.name, "wikipedia");
+});
+
+test("builds quick input skill commands", () => {
+  const book = buildForcedSkillToolCall(
+    parseSlashCommand("/book_search The Name of the Rose"),
+  );
+  assert.strictEqual(book.function.name, "book_search");
+  assert.deepStrictEqual(JSON.parse(book.function.arguments), {
+    query: "The Name of the Rose",
+  });
+
+  const research = buildForcedSkillToolCall(
+    parseSlashCommand("/deep_research who was Ada Lovelace?"),
+  );
+  assert.strictEqual(research.function.name, "deep_research");
+  assert.deepStrictEqual(JSON.parse(research.function.arguments), {
+    query: "who was Ada Lovelace?",
+  });
+
+  assert.ok(INPUT_SKILL_NAMES.has("book_search"));
+  assert.ok(INPUT_SKILL_NAMES.has("larousse"));
+  assert.ok(INPUT_SKILL_NAMES.has("scholarpedia"));
+  const scholarpedia = buildForcedSkillToolCall(
+    parseSlashCommand("/scholarpedia neural networks"),
+  );
+  assert.strictEqual(scholarpedia.function.name, "scholarpedia");
 });
 
 test("builds calculator and notes commands", () => {

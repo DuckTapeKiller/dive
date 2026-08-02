@@ -458,6 +458,72 @@ test("frontend boots without network fetch crashes", async () => {
   );
 });
 
+test("ambiguous research candidates become clickable focused-research buttons", async () => {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  dom.window.document.getElementById("btnLlamaCpp").click();
+  const div = dom.window.document.createElement("div");
+  dom.window.renderAssistantMessage(
+    div,
+    [
+      "The name refers to several distinct individuals.",
+      "",
+      "**1. Dean Benedetti (Saxophonist)**",
+      "",
+      "* **Identity:** Jazz saxophonist.",
+      "",
+      "**2. Bob Benedetti (Academic Administrator)**",
+      "",
+      "* **Identity:** University dean.",
+    ].join("\n"),
+    [],
+  );
+  const buttons = [...div.querySelectorAll(".research-candidate-button")];
+  assert.deepStrictEqual(
+    buttons.map((button) => button.textContent),
+    ["Dean Benedetti (Saxophonist)", "Bob Benedetti (Academic Administrator)"],
+  );
+  let sentValue = "";
+  const originalSend = dom.window.sendMessage;
+  dom.window.sendMessage = () => {
+    sentValue = dom.window.document.getElementById("input").value;
+  };
+  buttons[0].click();
+  dom.window.sendMessage = originalSend;
+  assert.strictEqual(sentValue, "/deep_research Dean Benedetti (Saxophonist)");
+  assert.deepStrictEqual(errors, []);
+});
+
+test("a clear research answer keeps ordinary numbered detail as prose", async () => {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  dom.window.document.getElementById("btnLlamaCpp").click();
+  const div = dom.window.document.createElement("div");
+  dom.window.renderAssistantMessage(
+    div,
+    [
+      "Dean Benedetti was the American saxophonist associated with Charlie Parker.",
+      "",
+      "1. He transcribed Parker's solos.",
+      "2. He later stopped performing because of illness.",
+    ].join("\n"),
+    [],
+  );
+  assert.strictEqual(
+    div.querySelectorAll(".research-candidate-button").length,
+    0,
+  );
+  assert.deepStrictEqual(errors, []);
+});
+
 test("Pi web sources render as pills inside the assistant bubble", async () => {
   const { dom } = createDom();
   await waitFor(
@@ -808,6 +874,103 @@ test("skill toggles render the selected mode's saved bucket", async () => {
     ).checked,
     true,
   );
+  assert.deepStrictEqual(errors, []);
+});
+
+test("input skill toggles create a slash command button", async () => {
+  const baseFetch = createFetchStub();
+  const fetchImpl = async (url, options = {}) => {
+    const rawPath = String(url).replace("http://localhost", "");
+    const parsed = new URL(`http://localhost${rawPath}`);
+    if (parsed.pathname === "/api/ollama/skills/settings") {
+      if (options.method === "POST") {
+        const body = JSON.parse(options.body || "{}");
+        return jsonResponse({
+          mode: body.mode || "ollama",
+          settings: body.settings || {},
+        });
+      }
+      return jsonResponse({
+        mode: parsed.searchParams.get("mode") || "ollama",
+        settings: {
+          book_search: true,
+          inputSkills: {},
+        },
+      });
+    }
+    return baseFetch(url, options);
+  };
+  const { dom, errors } = createDom(fetchImpl);
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+
+  assert.ok(dom.window.document.getElementById("inputSkillsList") === null);
+  assert.deepStrictEqual(
+    [
+      ...dom.window.document.querySelectorAll(".builtin-skills-header span"),
+    ].map((node) => node.textContent),
+    ["SKILL", "ENABLED", "INPUT"],
+  );
+  // Nothing is offered until the user asks for it. Without this, a broken
+  // visibility gate that shows every skill would still satisfy the assertions
+  // below, because the button it looks for would already be there.
+  assert.deepStrictEqual(
+    [
+      ...dom.window.document.querySelectorAll(
+        "#composerSkills .composer-skill-button",
+      ),
+    ].map((node) => node.getAttribute("data-skill")),
+    [],
+    "composer buttons appeared for skills the user never enabled",
+  );
+
+  const toggle = dom.window.document.querySelector(
+    '#builtinSkillsList .input-skill-toggle[data-skill="book_search"]',
+  );
+  assert.ok(toggle);
+  assert.strictEqual(toggle.checked, false);
+  toggle.checked = true;
+  toggle.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  await waitFor(
+    () =>
+      dom.window.document.querySelector(
+        '#composerSkills .composer-skill-button[data-skill="book_search"]',
+      ) !== null,
+  );
+
+  const input = dom.window.document.getElementById("input");
+  const button = dom.window.document.querySelector(
+    '#composerSkills .composer-skill-button[data-skill="book_search"]',
+  );
+  button.click();
+  assert.strictEqual(input.value, "/book_search ");
+
+  // Exactly the enabled skill, and nothing else.
+  assert.deepStrictEqual(
+    [
+      ...dom.window.document.querySelectorAll(
+        "#composerSkills .composer-skill-button",
+      ),
+    ].map((node) => node.getAttribute("data-skill")),
+    ["book_search"],
+    "enabling one skill revealed others the user did not enable",
+  );
+
+  // Pi has no Dive skills, so the launcher must not follow the user there.
+  dom.window.document.getElementById("btnPi").click();
+  assert.deepStrictEqual(
+    [
+      ...dom.window.document.querySelectorAll(
+        "#composerSkills .composer-skill-button",
+      ),
+    ].map((node) => node.getAttribute("data-skill")),
+    [],
+    "the Dive skill launcher was shown in Pi mode",
+  );
+
   assert.deepStrictEqual(errors, []);
 });
 

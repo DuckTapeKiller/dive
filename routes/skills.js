@@ -7,6 +7,7 @@ const os = require("os");
 const path = require("path");
 const { PLUGINS_DIR, listPlugins, loadPlugins } = require("../plugins.js");
 const { requireNonPiMode } = require("../mode-state.js");
+const { INPUT_SKILL_NAMES } = require("../slash_commands.js");
 
 module.exports = function createSkillsDomain(deps) {
   const {
@@ -305,7 +306,11 @@ module.exports = function createSkillsDomain(deps) {
           return true;
         }
 
-        const VALID_SKILL_KEYS = new Set(Object.keys(defaultSkillsConfig()));
+        const VALID_SKILL_KEYS = new Set(
+          Object.keys(defaultSkillsConfig()).filter(
+            (key) => key !== "inputSkills",
+          ),
+        );
         for (const plugin of listPlugins()) {
           for (const skillName of plugin.skills)
             VALID_SKILL_KEYS.add(skillName);
@@ -315,6 +320,27 @@ module.exports = function createSkillsDomain(deps) {
             VALID_SKILL_KEYS.has(k),
           ),
         );
+        if (
+          Object.prototype.hasOwnProperty.call(submittedSettings, "inputSkills")
+        ) {
+          const rawInputSkills = submittedSettings.inputSkills;
+          if (
+            !rawInputSkills ||
+            typeof rawInputSkills !== "object" ||
+            Array.isArray(rawInputSkills)
+          ) {
+            send(400, { error: "inputSkills must be an object" });
+            return true;
+          }
+          filtered.inputSkills = Object.fromEntries(
+            Object.entries(rawInputSkills)
+              .filter(
+                ([skillName, shown]) =>
+                  INPUT_SKILL_NAMES.has(skillName) && shown === true,
+              )
+              .map(([skillName]) => [skillName, true]),
+          );
+        }
         const nextSettings = { ...loadSkillsConfig(mode), ...filtered };
 
         saveSkillsConfig(nextSettings, mode);

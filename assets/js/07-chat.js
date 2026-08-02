@@ -136,6 +136,61 @@ function buildTurnUserMessage(content, images) {
   return entry;
 }
 
+function renderComposerSkillButtons() {
+  const bar = document.getElementById("composerSkills");
+  if (!bar) return;
+  if (!SKILL_MODE_IDS.includes(mode)) {
+    bar.innerHTML = "";
+    bar.classList.remove("show");
+    bar.setAttribute("aria-hidden", "true");
+    return;
+  }
+  const skills = INPUT_SKILL_NAMES.filter(
+    (skill) =>
+      activeBuiltinSkills()[skill] !== false &&
+      activeInputSkills()[skill] === true,
+  );
+  bar.innerHTML = skills
+    .map(
+      (skill) =>
+        `<button type="button" class="composer-skill-button" data-skill="${skill}" aria-label="Insert /${skill}" title="Insert /${skill}">/${skill}</button>`,
+    )
+    .join("");
+  bar.classList.toggle("show", skills.length > 0);
+  bar.setAttribute("aria-hidden", skills.length ? "false" : "true");
+}
+
+function activateComposerSkill(skillName) {
+  if (!INPUT_SKILL_NAMES.includes(skillName)) return;
+  const inputEl = document.getElementById("input");
+  if (!inputEl) return;
+  const command = `/${skillName}`;
+  const current = inputEl.value;
+  const trimmed = current.trimStart();
+  const commandMatch = trimmed.match(/^\/[a-z][a-z0-9_-]*\b/i);
+  if (!current.trim()) {
+    inputEl.value = `${command} `;
+  } else if (commandMatch) {
+    const leading = current.slice(0, current.length - trimmed.length);
+    const remainder = trimmed.slice(commandMatch[0].length).trimStart();
+    inputEl.value = `${leading}${command}${remainder ? ` ${remainder}` : " "}`;
+  } else {
+    inputEl.value = `${command} ${current}`;
+  }
+  inputEl.focus();
+  inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length;
+  if (typeof autoResizeInput === "function") autoResizeInput();
+}
+
+renderComposerSkillButtons();
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest(".composer-skill-button");
+  if (!button) return;
+  event.preventDefault();
+  activateComposerSkill(button.getAttribute("data-skill"));
+});
+
 async function sendMessage() {
   const runMode = mode;
   const allowThinkingRemoval = runMode !== "pi";
@@ -2507,6 +2562,8 @@ document.addEventListener("DOMContentLoaded", function () {
   document.addEventListener("change", function (e) {
     if (e.target.classList.contains("builtin-skill-toggle")) {
       toggleBuiltinSkill(e.target.getAttribute("data-skill"), e.target.checked);
+    } else if (e.target.classList.contains("input-skill-toggle")) {
+      toggleInputSkill(e.target.getAttribute("data-skill"), e.target.checked);
     } else if (
       e.target.id === "topbarPromptSelect" ||
       e.target.id === "settingActivePrompt"

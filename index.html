@@ -714,6 +714,7 @@
               rows="1"
               placeholder="Type a message..."
             ></textarea>
+            <div id="composerSkills" aria-label="Quick skill commands"></div>
             <div id="composerTools">
               <button
                 id="uploadBtn"
@@ -3600,17 +3601,11 @@
               Enable or disable built-in skills. Ollama and Cloud models can
               trigger enabled skills automatically; slash commands force a
               specific skill. Shell Command requires explicit interactive
-              confirmation even when enabled.
+              confirmation even when enabled. The INPUT toggle exposes a
+              slash-command shortcut above the composer without changing whether
+              the skill is enabled; it is saved separately for each mode.
             </div>
-            <div
-              id="builtinSkillsList"
-              style="
-                display: flex;
-                flex-direction: column;
-                gap: 0;
-                margin-top: 8px;
-              "
-            >
+            <div id="builtinSkillsList" class="builtin-skills-list">
               <!-- Populated dynamically via JS -->
             </div>
           </div>

@@ -331,10 +331,37 @@ function attachmentRefsForStorage(images) {
 // the bytes inline (fresh upload) or only a URL ref (history replay, regen).
 // Inline images are persisted on the way through so the turn that used them can
 // be stored with refs.
-function resolveAttachmentImages(images) {
+// How many images one turn may carry to the model.
+const MAX_TURN_IMAGES = 8;
+
+// Resolve a turn's attachments to what the model will actually receive.
+//
+// Attachments get dropped for three reasons, and all three used to happen in
+// silence: the user attached ten images and their own message bubble showed
+// ten thumbnails while the model was sent eight. Pass `dropped` to collect
+// what was lost so the caller can say so.
+function resolveAttachmentImages(images, dropped = null) {
+  const list = Array.isArray(images) ? images : [];
   const out = [];
-  for (const img of Array.isArray(images) ? images : []) {
-    if (!img || typeof img !== "object") continue;
+  const note = (reason, img) => {
+    if (!dropped) return;
+    const name =
+      img && typeof img === "object" && typeof img.name === "string"
+        ? img.name
+        : "";
+    dropped.push({ reason, name });
+  };
+  for (const img of list) {
+    // Everything past the cap is counted rather than abandoned mid-loop, so
+    // the notice can say how many were left behind.
+    if (out.length >= MAX_TURN_IMAGES) {
+      note("over_limit", img);
+      continue;
+    }
+    if (!img || typeof img !== "object") {
+      note("invalid", img);
+      continue;
+    }
     if (typeof img.dataBase64 === "string" && img.dataBase64 && img.mimeType) {
       const normalized = normalizeAttachmentImages([img])[0];
       const stored = storeAttachmentImage(normalized);
@@ -342,10 +369,42 @@ function resolveAttachmentImages(images) {
     } else {
       const loaded = loadAttachmentImage(img);
       if (loaded) out.push(loaded);
+      else note("unreadable", img);
     }
-    if (out.length >= 8) break;
   }
   return out;
+}
+
+// One sentence for the user about what did not make it to the model.
+function describeDroppedAttachments(dropped) {
+  if (!Array.isArray(dropped) || !dropped.length) return "";
+  const named = (list) =>
+    list
+      .map((d) => d.name)
+      .filter(Boolean)
+      .join(", ");
+  const parts = [];
+  const byReason = {
+    over_limit: dropped.filter((d) => d.reason === "over_limit"),
+    unreadable: dropped.filter((d) => d.reason === "unreadable"),
+    invalid: dropped.filter((d) => d.reason === "invalid"),
+  };
+  if (byReason.over_limit.length) {
+    const names = named(byReason.over_limit);
+    parts.push(
+      `${byReason.over_limit.length} beyond the ${MAX_TURN_IMAGES}-image limit for one turn${names ? ` (${names})` : ""}`,
+    );
+  }
+  if (byReason.unreadable.length) {
+    const names = named(byReason.unreadable);
+    parts.push(
+      `${byReason.unreadable.length} could not be read back from storage${names ? ` (${names})` : ""}`,
+    );
+  }
+  if (byReason.invalid.length) {
+    parts.push(`${byReason.invalid.length} malformed`);
+  }
+  return `${dropped.length} attachment${dropped.length === 1 ? "" : "s"} not sent to the model: ${parts.join("; ")}.`;
 }
 
 // A long conversation can accumulate more images than any context window can
@@ -1097,6 +1156,8 @@ function defaultSkillsConfig() {
     wikipedia: true,
     book_search: true,
     britannica: true,
+    larousse: true,
+    scholarpedia: true,
     wiktionary: true,
     deep_etymology: true,
     deep_research: true,
@@ -2444,6 +2505,7 @@ const chatDomain = require("./routes/chat")({
   getLibraryRequestForCommand,
   loadCloudSettings,
   resolveAttachmentImages,
+  describeDroppedAttachments,
   hydrateHistoryImages,
   normalizeStoredConversationMessages,
   ollamaChat,
@@ -2471,6 +2533,7 @@ const piDomain = require("./routes/pi")({
   persistAsyncWakeTurn,
   sanitizeTraceEventForStorage,
   resolveAttachmentImages,
+  describeDroppedAttachments,
   normalizeStoredConversationMessages,
   extForImageMime,
   emitSlashCommand,

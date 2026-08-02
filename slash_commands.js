@@ -3,11 +3,42 @@ const COMMANDS = {
   wiki: { type: "skill", skillName: "wikipedia", label: "wikipedia" },
   wikipedia: { type: "skill", skillName: "wikipedia", label: "wikipedia" },
   britannica: { type: "skill", skillName: "britannica", label: "britannica" },
+  larousse: { type: "skill", skillName: "larousse", label: "larousse" },
+  scholarpedia: {
+    type: "skill",
+    skillName: "scholarpedia",
+    label: "scholarpedia",
+  },
+  book_search: {
+    type: "skill",
+    skillName: "book_search",
+    label: "book search",
+  },
+  deep_research: {
+    type: "skill",
+    skillName: "deep_research",
+    label: "deep research",
+  },
+  academic_search: {
+    type: "skill",
+    skillName: "academic_search",
+    label: "academic search",
+  },
+  fetch_paper: {
+    type: "skill",
+    skillName: "fetch_paper",
+    label: "fetch paper",
+  },
   wiktionary: { type: "skill", skillName: "wiktionary", label: "wiktionary" },
   etymology: {
     type: "skill",
     skillName: "deep_etymology",
     label: "etymology",
+  },
+  deep_etymology: {
+    type: "skill",
+    skillName: "deep_etymology",
+    label: "deep etymology",
   },
   duckduckgo: {
     type: "skill",
@@ -15,12 +46,27 @@ const COMMANDS = {
     label: "duckduckgo",
   },
   scrape: { type: "skill", skillName: "web_scraper", label: "web scraper" },
+  web_scraper: {
+    type: "skill",
+    skillName: "web_scraper",
+    label: "web scraper",
+  },
   calc: { type: "skill", skillName: "calculator", label: "calculator" },
   calculator: { type: "skill", skillName: "calculator", label: "calculator" },
   time: { type: "skill", skillName: "time_and_date", label: "time/date" },
+  time_and_date: {
+    type: "skill",
+    skillName: "time_and_date",
+    label: "time/date",
+  },
   factcheck: { type: "skill", skillName: "fact_check", label: "fact check" },
   fact_check: { type: "skill", skillName: "fact_check", label: "fact check" },
   notes: { type: "skill", skillName: "local_notes", label: "local notes" },
+  local_notes: {
+    type: "skill",
+    skillName: "local_notes",
+    label: "local notes",
+  },
   book: { type: "skill", skillName: "book_search", label: "book search" },
   isbn: { type: "skill", skillName: "book_search", label: "book search" },
   shell: { type: "skill", skillName: "shell_command", label: "shell" },
@@ -29,7 +75,32 @@ const COMMANDS = {
     skillName: "remember_lesson",
     label: "remember lesson",
   },
+  remember_lesson: {
+    type: "skill",
+    skillName: "remember_lesson",
+    label: "remember lesson",
+  },
 };
+
+const INPUT_SKILL_NAMES = new Set([
+  "wikipedia",
+  "britannica",
+  "larousse",
+  "scholarpedia",
+  "book_search",
+  "deep_research",
+  "academic_search",
+  "fetch_paper",
+  "wiktionary",
+  "deep_etymology",
+  "duckduckgo",
+  "web_scraper",
+  "calculator",
+  "time_and_date",
+  "fact_check",
+  "local_notes",
+  "remember_lesson",
+]);
 
 // `pluginCommands` is the caller's mode-scoped command→skill snapshot (see
 // plugins.getPluginCommandSnapshot). There is deliberately no fallback to the
@@ -93,6 +164,12 @@ function buildForcedSkillToolCall(command) {
       break;
     }
     case "britannica":
+    case "larousse":
+    case "scholarpedia":
+    case "book_search":
+    case "deep_research":
+    case "academic_search":
+    case "duckduckgo":
       args = { query: requiredInput(input, command.name) };
       break;
     case "wiktionary": {
@@ -111,6 +188,9 @@ function buildForcedSkillToolCall(command) {
     case "web_scraper":
       args = { url: requiredInput(input, command.name) };
       break;
+    case "fetch_paper":
+      args = { url_or_doi: requiredInput(input, command.name) };
+      break;
     case "calculator":
       args = { expression: requiredInput(input, command.name) };
       break;
@@ -122,6 +202,9 @@ function buildForcedSkillToolCall(command) {
       args = { claim: parsed.text, language: parsed.language };
       break;
     }
+    case "remember_lesson":
+      args = { lesson: requiredInput(input, command.name) };
+      break;
     case "local_notes":
       if (!input || /^read\b/i.test(input)) {
         args = { action: "read" };
@@ -182,4 +265,5 @@ module.exports = {
   isDatabaseSlashCommand,
   isSkillSlashCommand,
   parseSlashCommand,
+  INPUT_SKILL_NAMES,
 };
