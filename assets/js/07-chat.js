@@ -2601,8 +2601,6 @@ document.addEventListener("DOMContentLoaded", function () {
       const idx = e.target.getAttribute("data-idx");
       if (idx !== null) {
         if (typeof deleteCustomSkill === "function") deleteCustomSkill(idx);
-        else if (typeof deleteCustomPrompt === "function")
-          deleteCustomPrompt(idx);
       }
     }
   });

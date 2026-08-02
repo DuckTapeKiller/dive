@@ -2598,11 +2598,6 @@ function getCloudProviderLabel(provider) {
   return "OpenAI";
 }
 
-function formatTitleCase(value) {
-  if (!value) return "";
-  return String(value).charAt(0).toUpperCase() + String(value).slice(1);
-}
-
 function updateModeStatus() {
   const statusEl = document.getElementById("modeStatus");
   if (!statusEl) return;
@@ -2627,12 +2622,8 @@ function updateModeStatus() {
     return;
   }
   if (mode === "pi") {
-    const modelName = piStatusInfo?.model || "Model ?";
-    const state = piStatusInfo?.state || "IDLE";
-    const cost = piStatusInfo?.cost || "Cost ?";
-    const think = piStatusInfo?.thinkingLevel
-      ? formatTitleCase(piStatusInfo.thinkingLevel)
-      : "?";
+    // Pi's model, state, cost and thinking level are shown by the Pi status
+    // bar, so this element stays empty.
     statusEl.textContent = "";
     statusEl.title = "";
     return;

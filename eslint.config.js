@@ -40,9 +40,12 @@ module.exports = [
   },
   {
     // Split client files: sequential classic scripts sharing one global
-    // scope. Per-file analysis cannot see cross-file symbols, so the
-    // undef/unused rules only produce noise here; the jsdom boot tests
-    // verify the recomposed whole.
+    // scope. Per-file analysis cannot see cross-file symbols (there are
+    // ~2,200 cross-file references), so undef/unused can only be checked on
+    // the whole program. scripts/lint-frontend.js does exactly that — it
+    // concatenates these files the way index.html loads them and runs
+    // no-undef/no-unused-vars over the result, mapping findings back to
+    // file:line. It runs in `npm run lint` and on pre-commit.
     files: ["assets/js/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",

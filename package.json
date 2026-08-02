@@ -24,11 +24,12 @@
     "library:search": "node library/search.js",
     "library:status": "node library/indexer.js --status",
     "library:watch": "node library/indexer.js --watch",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/lint-frontend.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --test test/*.test.js",
-    "prepare": "husky"
+    "prepare": "husky",
+    "lint:frontend": "node scripts/lint-frontend.js"
   },
   "devDependencies": {
     "electron": "^42.3.0",
