@@ -604,15 +604,13 @@ function updateDownloadButtonState() {
 
 // Remove every attachment for the current mode.
 function clearPendingFiles() {
-  pendingFiles = [];
-  pendingFilesByMode[mode] = pendingFiles;
+  setActivePendingFiles([]);
   renderPendingFileChips();
 }
 
 // Remove a single attachment (by index) for the current mode.
 function removePendingFile(idx) {
-  pendingFiles.splice(idx, 1);
-  pendingFilesByMode[mode] = pendingFiles;
+  activePendingFiles().splice(idx, 1);
   renderPendingFileChips();
 }
 
@@ -622,7 +620,7 @@ function renderPendingFileChips() {
   const fileChip = document.getElementById("fileChip");
   if (!fileChip) return;
   fileChip.textContent = "";
-  pendingFiles.forEach((att, idx) => {
+  activePendingFiles().forEach((att, idx) => {
     const pill = document.createElement("span");
     pill.className = "file-pill";
     const label = document.createElement("span");
@@ -653,7 +651,7 @@ function renderPendingFileChips() {
   }
   fileChip.classList.toggle(
     "show",
-    pendingFiles.length > 0 || pendingUploads > 0,
+    activePendingFiles().length > 0 || pendingUploads > 0,
   );
   fileInput.value = "";
 }
@@ -670,7 +668,7 @@ async function ingestFiles(fileList) {
   renderPendingFileChips();
   const run = (async () => {
     for (const file of files) {
-      const targetFiles = pendingFilesByMode[targetMode] || pendingFiles;
+      const targetFiles = pendingFilesByMode[targetMode] || [];
       if (targetFiles.length >= MAX_ATTACHMENTS) {
         alert(`You can attach at most ${MAX_ATTACHMENTS} files.`);
         break;
@@ -698,7 +696,6 @@ async function ingestFiles(fileList) {
             : { name: file.name, kind: "text", text: data.text };
         targetFiles.push(att);
         pendingFilesByMode[targetMode] = targetFiles;
-        if (targetMode === mode) pendingFiles = targetFiles;
       } catch (e) {
         alert(`Upload failed for ${file.name}: ${e.message}`);
       }
@@ -3044,7 +3041,6 @@ async function loadModeSkillsState(modeId) {
 async function loadOllamaSkillsConfig() {
   renderBuiltinSkillsList();
   await loadModeSkillsState(mode).catch(() => {});
-  syncActiveSkillModeState(mode);
   renderBuiltinSkillsList();
   renderCustomSkillsList();
   loadPluginsUi().catch(() => {});
@@ -3087,7 +3083,7 @@ function renderPluginsList() {
     const commandText = commands ? ` | Commands: ${commands}` : "";
     let skillRows = "";
     for (const skillName of plugin.skills || []) {
-      const enabled = builtinSkillsConfig[skillName] !== false;
+      const enabled = activeBuiltinSkills()[skillName] !== false;
       skillRows += `
               <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
                 <span>${esc(humanizeSkillLabel(skillName))}</span>
@@ -3502,7 +3498,7 @@ function renderBuiltinSkillsList() {
   if (!list) return;
   let html = "";
   for (const [skill, info] of Object.entries(ALL_BUILTIN_SKILLS_INFO)) {
-    const enabled = builtinSkillsConfig[skill] !== false;
+    const enabled = activeBuiltinSkills()[skill] !== false;
     html += `
             <div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
               <div>
@@ -4348,7 +4344,6 @@ async function loadCustomSkills(modeId = mode) {
   const activeMode = skillModeId(modeId);
   try {
     await loadModeSkillsState(activeMode);
-    syncActiveSkillModeState(activeMode);
     if (mode === activeMode) renderCustomSkillsList();
   } catch (e) {
     console.error(`Failed to load ${activeMode} custom skills`, e);
@@ -4359,7 +4354,7 @@ function renderCustomSkillsList() {
   const container = document.getElementById("customSkillsList");
   if (!container) return;
   container.innerHTML = "";
-  customSkills.forEach((skill, idx) => {
+  activeCustomSkills().forEach((skill, idx) => {
     const div = document.createElement("div");
     div.className = "prompt-item";
     div.innerHTML = `

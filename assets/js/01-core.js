@@ -142,18 +142,21 @@ const modeSession = {
 // a file never bleeds into another mode. Multiple files accumulate — each
 // upload appends, and each has its own removable pill.
 const MAX_ATTACHMENTS = 8;
-let pendingFiles = [];
+// The current mode's attachments. Deliberately a function, not a variable:
+// a module-level alias into pendingFilesByMode has to be re-pointed by hand on
+// every mode change, and goes stale the moment one path forgets.
+function activePendingFiles() {
+  return pendingFilesByMode[mode] || [];
+}
+function setActivePendingFiles(files) {
+  pendingFilesByMode[mode] = Array.isArray(files) ? files : [];
+  return pendingFilesByMode[mode];
+}
 // In-flight uploads, so a message sent the instant a file is dropped
 // still waits for it instead of going out with no attachment.
 let pendingUploads = 0;
 let pendingUploadsDone = Promise.resolve();
-const pendingFilesByMode = {
-  ollama: [],
-  pi: [],
-  cloud: [],
-  lmstudio: [],
-  llamacpp: [],
-};
+const pendingFilesByMode = Object.fromEntries(MODE_IDS.map((id) => [id, []]));
 let lastUserMessage = null;
 let lastSentMessage = null;
 let currentConvId = null;
@@ -191,13 +194,9 @@ const fontScales = {
   lmstudio: 1,
   llamacpp: 1,
 };
-const thinkingExpandedByMode = {
-  ollama: false,
-  pi: false,
-  cloud: false,
-  lmstudio: false,
-  llamacpp: false,
-};
+const thinkingExpandedByMode = Object.fromEntries(
+  MODE_IDS.map((id) => [id, false]),
+);
 function normalizeFontScale(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 1;
@@ -727,8 +726,15 @@ const builtinSkillsConfigByMode = Object.fromEntries(
 const customSkillsByMode = Object.fromEntries(
   SKILL_MODE_IDS.map((modeId) => [modeId, []]),
 );
-let builtinSkillsConfig = builtinSkillsConfigByMode.ollama;
-let customSkills = customSkillsByMode.ollama;
+// Same rule as attachments: read the active mode's bucket on demand. The
+// previous aliases had to be re-pointed by syncActiveSkillModeState on every
+// mode change, which is what left a stale skills list on screen.
+function activeBuiltinSkills() {
+  return builtinSkillsConfigByMode[skillModeId(mode)];
+}
+function activeCustomSkills() {
+  return customSkillsByMode[skillModeId(mode)];
+}
 const skillStateLoadedByMode = Object.fromEntries(
   SKILL_MODE_IDS.map((modeId) => [modeId, false]),
 );
@@ -738,26 +744,17 @@ function skillModeId(modeId = mode) {
   return SKILL_MODE_IDS.includes(modeId) ? modeId : "ollama";
 }
 
-function syncActiveSkillModeState(modeId = mode) {
-  const activeMode = skillModeId(modeId);
-  builtinSkillsConfig = builtinSkillsConfigByMode[activeMode];
-  customSkills = customSkillsByMode[activeMode];
-  return activeMode;
-}
-
 function setBuiltinSkillsConfigForMode(modeId, settings) {
   const activeMode = skillModeId(modeId);
   builtinSkillsConfigByMode[activeMode] = {
     ...DEFAULT_BUILTIN_SKILLS_CONFIG,
     ...(settings && typeof settings === "object" ? settings : {}),
   };
-  if (mode === activeMode) syncActiveSkillModeState(activeMode);
 }
 
 function setCustomSkillsForMode(modeId, skills) {
   const activeMode = skillModeId(modeId);
   customSkillsByMode[activeMode] = Array.isArray(skills) ? skills : [];
-  if (mode === activeMode) syncActiveSkillModeState(activeMode);
 }
 
 const ALL_BUILTIN_SKILLS_INFO = {
@@ -1009,17 +1006,18 @@ function getOllamaBasePolicyPrompt(promptOverlay) {
   let toolText = "Available tools:\n";
   let idx = 1;
   for (const [skill, info] of Object.entries(ALL_BUILTIN_SKILLS_INFO)) {
-    if (builtinSkillsConfig[skill] !== false) {
+    if (activeBuiltinSkills()[skill] !== false) {
       toolText += `${idx}. **${skill}:** ${info.desc}\n   - Example: <call:${skill}>${info.example}</call>\n`;
       idx++;
     }
   }
 
   let customSkillsText = "";
-  if (typeof customSkills !== "undefined" && customSkills.length > 0) {
+  const activeCustom = activeCustomSkills();
+  if (activeCustom.length > 0) {
     customSkillsText =
       "\n\n### USER DEFINED CUSTOM SKILLS\nYou ALSO have access to the following custom skills defined by the user:\n";
-    customSkills.forEach((skill, i) => {
+    activeCustom.forEach((skill, i) => {
       customSkillsText += `${i + idx}. **${skill.name}**: ${skill.description}\n`;
       customSkillsText += `   - *How to call:* <call:${skill.name}>{}</call>\n`;
     });

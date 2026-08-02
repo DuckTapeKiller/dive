@@ -2715,48 +2715,124 @@ async function refreshPiStatus() {
   }
 }
 
-function setMode(m) {
-  if (!modeSession[m]) m = "ollama";
-  if (typeof collectDatabaseConfigFromForm === "function") {
-    try {
-      databaseConfig = collectDatabaseConfigFromForm();
-      databaseChatModes = databaseConfig.chatModes;
-    } catch (_error) {
-      // ignore DOM read issues during early initialization
-    }
-  }
-  // Save current mode session state before switching
-  syncCurrentSessionState();
+// Per-mode settings groups. A table rather than twenty style.display lines:
+// adding a mode is a registry edit, and the audiences are stated once.
+function modeVisibilityRules() {
+  const byId = (id) => document.getElementById(id);
+  return [
+    [piPaletteGroup, ["pi"]],
+    [cloudPaletteGroup, ["cloud"]],
+    [ollamaGenGroup, ["ollama"]],
+    [ollamaFontGroup, ["ollama"]],
+    [piFontGroup, ["pi"]],
+    [cloudFontGroup, ["cloud"]],
+    [piSettingsGroup, ["pi"]],
+    [cloudSettingsGroup, ["cloud"]],
+    [byId("lmStudioSettingsGroup"), ["lmstudio"]],
+    [byId("llamaCppSettingsGroup"), ["llamacpp"]],
+    [byId("llamaCppModelsGroup"), ["llamacpp"]],
+    [byId("builtinSkillsGroup"), DIVE_SKILL_MODE_IDS],
+    [byId("customSkillsGroup"), DIVE_SKILL_MODE_IDS],
+    [byId("bookSearchConfigGroup"), DIVE_SKILL_MODE_IDS],
+    [promptSettingsGroup, PROMPT_MODE_KEYS],
+    [promptManageGroup, PROMPT_MODE_KEYS],
+  ];
+}
 
-  // Attachments are per-mode and independent: stash the current mode's
-  // files, then restore the target mode's own files (if any). Files never
-  // bleed across modes, but leaving and returning to a mode keeps them.
-  pendingFilesByMode[mode] = pendingFiles;
-  mode = m;
-  if (typeof syncActiveSkillModeState === "function") {
-    syncActiveSkillModeState(m);
+// Read at call time: these are reassigned when the user picks a palette/font,
+// so a snapshot would be the same stale-alias bug this refactor removes.
+function paletteForMode(m) {
+  if (m === "ollama") return ollamaPalette;
+  if (m === "pi") return piPalette;
+  if (m === "lmstudio") return lmstudioPalette;
+  if (m === "llamacpp") return llamacppPalette;
+  return cloudPalette;
+}
+
+function fontForMode(m) {
+  if (m === "ollama") return ollamaFont;
+  if (m === "pi") return piFont;
+  if (m === "lmstudio") return lmstudioFont;
+  if (m === "llamacpp") return llamacppFont;
+  return cloudFont;
+}
+
+// Everything the DOM shows for a mode, derived from `mode` and the registry.
+// Idempotent and safe to call on its own: switching modes is setMode's job,
+// painting the result is entirely this function's.
+function renderMode(m) {
+  const isPiMode = m === "pi";
+  const isOllamaMode = m === "ollama";
+  const isCloudMode = m === "cloud";
+  const isLocalMode = LOCAL_MODE_IDS.includes(m);
+  const hasDiveSkills = DIVE_SKILL_MODE_IDS.includes(m);
+
+  renderPendingFileChips();
+  applyPalette(paletteForMode(m));
+  applyFont(fontForMode(m));
+  applyFontScale(fontScales[m] || 1);
+  document.documentElement.setAttribute("data-mode", m);
+
+  renderSessionTranscript(modeSession[m]);
+  if (typeof renderMessageQueue === "function") renderMessageQueue();
+  if (typeof scheduleQueueDrain === "function") scheduleQueueDrain(m);
+
+  MODE_DEFS.forEach((def) => {
+    const button = document.getElementById(def.btnId);
+    if (button) button.className = m === def.id ? "active" : "";
+  });
+
+  // Topbar model dropdown: every mode picks a model here (Pi via its RPC
+  // bridge). Prompt dropdown: prompt modes only.
+  modelSelect.classList.toggle("mode-hidden", false);
+  topbarPromptSelect.classList.toggle(
+    "mode-hidden",
+    !PROMPT_MODE_KEYS.includes(m),
+  );
+  populateTopbarModelSelect();
+  if (isPiMode && !piAvailableModels.length) loadPiTopbarModels();
+  if (isLocalMode && (localModelsCache[m] || []).length === 0) {
+    fetchLocalModelList(m).catch(() => {});
   }
-  if (
-    typeof ensureMcpModeInitialised === "function" &&
-    SKILL_MODE_IDS.includes(m)
-  ) {
-    ensureMcpModeInitialised(m).catch(() => {});
+  if (m === "llamacpp" && typeof refreshLlamaCppManager === "function") {
+    refreshLlamaCppManager().catch(() => {});
   }
-  if (SKILL_MODE_IDS.includes(m)) {
-    // The settings DOM is shared by all non-Pi modes. Always repaint it
-    // from the target mode's bucket; otherwise a loaded llama.cpp list
-    // remains visible when switching to a mode that was already loaded.
-    if (typeof renderBuiltinSkillsList === "function") {
-      renderBuiltinSkillsList();
-      renderCustomSkillsList();
-      renderPluginsList();
+
+  updateSettingsTabAvailability({
+    isOllamaMode,
+    isCloudMode,
+    isLocalMode,
+    isLlamaCppMode: m === "llamacpp",
+  });
+  for (const [element, modes] of modeVisibilityRules()) {
+    if (element) element.style.display = modes.includes(m) ? "" : "none";
+  }
+  databaseSettingsGroup.style.display = "";
+
+  // This mode's own active prompt, then the lists/dropdowns that show it.
+  activePromptId = PROMPT_MODE_KEYS.includes(m)
+    ? localStorage.getItem(activePromptStorageKey(m)) || ""
+    : "";
+  if (typeof renderPromptsList === "function") renderPromptsList();
+  if (typeof populatePromptSelect === "function") populatePromptSelect();
+
+  // Skills state is per mode and the settings DOM is shared, so always paint
+  // from this mode's bucket, then repaint if its state still has to load.
+  if (hasDiveSkills) {
+    if (typeof ensureMcpModeInitialised === "function") {
+      ensureMcpModeInitialised(m).catch(() => {});
     }
+    renderBuiltinSkillsList();
+    renderCustomSkillsList();
+    renderPluginsList();
     if (
       typeof loadModeSkillsState === "function" &&
       !skillStateLoadedByMode[m]
     ) {
       loadModeSkillsState(m)
         .then(() => {
+          // Repaint only the skill surfaces. A full renderMode here would
+          // re-issue the lessons/system-prompt/side-panel fetches.
           if (mode === m) {
             renderBuiltinSkillsList();
             renderCustomSkillsList();
@@ -2766,148 +2842,9 @@ function setMode(m) {
         .catch(() => {});
     }
   }
-  pendingFiles = pendingFilesByMode[m] || [];
-  renderPendingFileChips();
-  const isOllamaMode = m === "ollama";
-  const isPiMode = m === "pi";
-  const isCloudMode = m === "cloud";
-  applyPalette(
-    isOllamaMode
-      ? ollamaPalette
-      : isPiMode
-        ? piPalette
-        : m === "lmstudio"
-          ? lmstudioPalette
-          : m === "llamacpp"
-            ? llamacppPalette
-            : cloudPalette,
-  );
-  applyFont(
-    isOllamaMode
-      ? ollamaFont
-      : isPiMode
-        ? piFont
-        : m === "lmstudio"
-          ? lmstudioFont
-          : m === "llamacpp"
-            ? llamacppFont
-            : cloudFont,
-  );
-  applyFontScale(fontScales[m] || 1);
 
-  document.documentElement.setAttribute("data-mode", m); // Switches the CSS colors
-
-  // Restore the target mode's session state
-  const saved = modeSession[m];
-  history = saved.convId ? [...saved.history] : [];
-  currentConvId = saved.convId || null;
-  // The composer draft is per-mode too, so an unsent message in one mode
-  // does not appear when switching to another. Setting value directly does
-  // not fire the input event, so resize the textarea to match.
-  input.value = saved.draft || "";
-  if (typeof autoResizeInput === "function") autoResizeInput();
-  // Must come after currentConvId is restored above: the strip only
-  // shows the queue belonging to the conversation now on screen, and it
-  // sends now if this mode is no longer busy.
-  if (typeof renderMessageQueue === "function") renderMessageQueue();
-  if (typeof scheduleQueueDrain === "function") scheduleQueueDrain(m);
-  lastUserMessage = saved.lastUserMessage || null;
-  lastSentMessage = saved.lastSentMessage || null;
-  lastExchangePersisted = saved.lastExchangePersisted !== false ? true : false;
-
-  renderSessionTranscript(saved);
-  document.getElementById("btnOllama").className =
-    m === "ollama" ? "active" : "";
-  document.getElementById("btnPi").className = m === "pi" ? "active" : "";
-  document.getElementById("btnCloud").className = m === "cloud" ? "active" : "";
-  const isLocalMode = LOCAL_MODE_IDS.includes(m);
-  MODE_DEFS.forEach((def) => {
-    if (LOCAL_MODE_IDS.includes(def.id)) {
-      const b = document.getElementById(def.btnId);
-      if (b) b.className = m === def.id ? "active" : "";
-    }
-  });
-  // Topbar model dropdown: Ollama, LM Studio, llama.cpp, and Cloud all
-  // pick a model here (Pi has none). Prompt dropdown: every prompt mode
-  // (Ollama, Cloud, local modes). Pi now feeds the shared model picker
-  // too (via its RPC bridge).
-  modelSelect.classList.toggle("mode-hidden", false);
-  topbarPromptSelect.classList.toggle(
-    "mode-hidden",
-    !PROMPT_MODE_KEYS.includes(m),
-  );
-  populateTopbarModelSelect();
-  if (isPiMode && !piAvailableModels.length) {
-    loadPiTopbarModels();
-  }
-  if (isLocalMode && (localModelsCache[m] || []).length === 0) {
-    fetchLocalModelList(m).catch(() => {});
-  }
-  if (m === "llamacpp" && typeof refreshLlamaCppManager === "function") {
-    refreshLlamaCppManager().catch(() => {});
-  }
-  updateSettingsTabAvailability({
-    isOllamaMode,
-    isCloudMode,
-    isLocalMode,
-    isLlamaCppMode: m === "llamacpp",
-  });
-  piPaletteGroup.style.display = isPiMode ? "" : "none";
-  cloudPaletteGroup.style.display = isCloudMode ? "" : "none";
-  ollamaGenGroup.style.display = isOllamaMode ? "" : "none";
-  databaseSettingsGroup.style.display = "";
-  ollamaFontGroup.style.display = isOllamaMode ? "" : "none";
-  piFontGroup.style.display = isPiMode ? "" : "none";
-  cloudFontGroup.style.display = isCloudMode ? "" : "none";
-  const isPromptMode = PROMPT_MODE_KEYS.includes(m);
-  promptSettingsGroup.style.display = isPromptMode ? "" : "none";
-  promptManageGroup.style.display = isPromptMode ? "" : "none";
-  // Load this mode's own active prompt, then refresh the lists/dropdowns.
-  activePromptId = isPromptMode
-    ? localStorage.getItem(activePromptStorageKey(m)) || ""
-    : "";
-  if (typeof renderPromptsList === "function") renderPromptsList();
-  if (typeof populatePromptSelect === "function") populatePromptSelect();
-  const builtinSkillsGroup = document.getElementById("builtinSkillsGroup");
-  const customSkillsGroup = document.getElementById("customSkillsGroup");
-  if (builtinSkillsGroup) {
-    builtinSkillsGroup.style.display =
-      isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
-  }
-  if (customSkillsGroup) {
-    customSkillsGroup.style.display =
-      isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
-  }
-  const bookSearchConfigGroup = document.getElementById(
-    "bookSearchConfigGroup",
-  );
-  if (bookSearchConfigGroup) {
-    bookSearchConfigGroup.style.display =
-      isOllamaMode || isCloudMode || isLocalMode ? "" : "none";
-  }
-  piSettingsGroup.style.display = isPiMode ? "" : "none";
-  cloudSettingsGroup.style.display = isCloudMode ? "" : "none";
-  const lmStudioSettingsGroup = document.getElementById(
-    "lmStudioSettingsGroup",
-  );
-  const llamaCppSettingsGroup = document.getElementById(
-    "llamaCppSettingsGroup",
-  );
-  // Each local mode's config shows in MAIN only for its own mode, exactly
-  // like the Ollama/Pi/Cloud settings groups.
-  if (lmStudioSettingsGroup) {
-    lmStudioSettingsGroup.style.display = m === "lmstudio" ? "" : "none";
-  }
-  if (llamaCppSettingsGroup) {
-    llamaCppSettingsGroup.style.display = m === "llamacpp" ? "" : "none";
-  }
-  const llamaCppModelsGroup = document.getElementById("llamaCppModelsGroup");
-  if (llamaCppModelsGroup) {
-    llamaCppModelsGroup.style.display = m === "llamacpp" ? "" : "none";
-  }
   // A pending permission request belongs to whichever mode raised it, and
-  // every mode can raise one — the button follows the request, not the
-  // mode.
+  // every mode can raise one — the button follows the request, not the mode.
   piPermissionBtn.style.display = activePiPermissionRequest ? "" : "none";
   if (isPiMode && mcpOpen) {
     toggleMcp();
@@ -2920,17 +2857,14 @@ function setMode(m) {
   }
   document.getElementById("uploadBtn").style.display = "";
   if (!isOllamaMode) closePromptEditor();
-  if (historyOpen) {
-    loadHistoryPanel();
-  }
-  if (isOllamaMode) {
-    refreshOllamaModelContext().catch(() => {});
-  }
+  if (historyOpen) loadHistoryPanel();
+  if (isOllamaMode) refreshOllamaModelContext().catch(() => {});
   if (isPiMode) {
     refreshPiStatus().catch(() => {});
   } else {
     updateModeStatus();
   }
+
   syncSearchAlgorithmModeToChatMode();
   renderDatabaseConfigForm();
   updateBookFilterUi();
@@ -2938,17 +2872,45 @@ function setMode(m) {
   ensurePiEventChannel();
   updateTokenCounter();
   updateSendButtonState();
-  // Lessons are per-mode: entering a mode rebinds the Lessons editor
-  // to THIS mode's file, so another mode's lessons can never carry
-  // over (covers switching modes while Settings is open).
-  if (typeof loadLessonsUi === "function") {
-    loadLessonsUi().catch(() => {});
-  }
-  // Same for the editable system prompts: rebind to this mode's own
-  // override files.
+  // Lessons and editable system prompts are per-mode: rebind their editors to
+  // THIS mode's files, covering a mode switch while Settings is open.
+  if (typeof loadLessonsUi === "function") loadLessonsUi().catch(() => {});
   if (typeof loadSystemPromptsUi === "function") {
     loadSystemPromptsUi().catch(() => {});
   }
+}
+
+// Switch modes: persist the outgoing session, move `mode`, restore the
+// incoming session, then paint. All DOM work lives in renderMode.
+function setMode(m) {
+  if (!modeSession[m]) m = "ollama";
+  if (typeof collectDatabaseConfigFromForm === "function") {
+    try {
+      databaseConfig = collectDatabaseConfigFromForm();
+      databaseChatModes = databaseConfig.chatModes;
+    } catch (_error) {
+      // ignore DOM read issues during early initialization
+    }
+  }
+  syncCurrentSessionState();
+
+  mode = m;
+
+  // Restore the target mode's session before painting: renderMode's queue
+  // strip and transcript both read it.
+  const saved = modeSession[m];
+  history = saved.convId ? [...saved.history] : [];
+  currentConvId = saved.convId || null;
+  // The composer draft is per-mode too, so an unsent message in one mode does
+  // not appear when switching. Setting value directly does not fire the input
+  // event, so resize the textarea to match.
+  input.value = saved.draft || "";
+  if (typeof autoResizeInput === "function") autoResizeInput();
+  lastUserMessage = saved.lastUserMessage || null;
+  lastSentMessage = saved.lastSentMessage || null;
+  lastExchangePersisted = saved.lastExchangePersisted !== false;
+
+  renderMode(m);
 }
 
 function clearChat() {

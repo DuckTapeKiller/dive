@@ -157,7 +157,6 @@ async function sendMessage() {
   ) {
     try {
       await loadModeSkillsState(runMode);
-      if (mode === runMode) syncActiveSkillModeState(runMode);
     } catch (_error) {
       // The server still enforces the mode-scoped state. Keep the send
       // path usable with the local defaults if the settings request fails.
@@ -191,7 +190,9 @@ async function sendMessage() {
       return;
     }
   }
-  const messageSource = pendingFiles.length ? "uploaded_file" : "manual";
+  const messageSource = activePendingFiles().length
+    ? "uploaded_file"
+    : "manual";
   logSecurityEvent("user_message_submitted", {
     mode: runMode,
     source: messageSource,
@@ -239,9 +240,10 @@ async function sendMessage() {
   // Storage form of the same attachments: URL refs, no base64, so the
   // conversation snapshot stays small while the images stay in history.
   let historyImages = null;
-  if (pendingFiles.length) {
-    const imageAtts = pendingFiles.filter((f) => f.kind === "image");
-    const textAtts = pendingFiles.filter((f) => f.kind !== "image");
+  const attachments = activePendingFiles();
+  if (attachments.length) {
+    const imageAtts = attachments.filter((f) => f.kind === "image");
+    const textAtts = attachments.filter((f) => f.kind !== "image");
     // Text/PDF files are injected into the prompt (each labelled);
     // images are sent as data, not text.
     if (textAtts.length) {
@@ -1378,7 +1380,7 @@ function enqueueMessage() {
   if (!session.convId) session.convId = currentConvId;
   session.queue.push({
     text,
-    files: pendingFiles.slice(),
+    files: activePendingFiles().slice(),
     convId: currentConvId,
   });
   input.value = "";
@@ -1426,8 +1428,7 @@ function scheduleQueueDrain(modeName) {
       renderMessageQueue();
       return;
     }
-    pendingFiles = next.files;
-    pendingFilesByMode[mode] = pendingFiles;
+    setActivePendingFiles(next.files);
     renderPendingFileChips();
     input.value = next.text;
     queueDrainInFlight = true;
@@ -1843,7 +1844,6 @@ const mcpInitialisedByMode = Object.fromEntries(
   MCP_MODE_IDS.map((modeId) => [modeId, false]),
 );
 const mcpInitPromises = new Map();
-let lastMcpStatuses = null;
 
 // Read localStorage once. mcpConfigByMode is the in-memory source of
 // truth afterwards; persistMcpConfigStorage writes it back on edit.
@@ -1917,9 +1917,6 @@ async function ensureMcpModeInitialised(activeMode = mode) {
       ? payload.servers
       : null;
     mcpInitialisedByMode[activeMode] = true;
-    if (mode === activeMode) {
-      lastMcpStatuses = mcpStatusesByMode[activeMode];
-    }
     return true;
   })().finally(() => mcpInitPromises.delete(activeMode));
   mcpInitPromises.set(activeMode, promise);
@@ -1943,8 +1940,7 @@ function refreshMcpPanelForMode() {
   if (!configArea) return;
   const raw = activeMcpConfig();
   configArea.value = raw;
-  lastMcpStatuses = mcpStatusesByMode[activeMcpMode()];
-  renderMcpList(raw, lastMcpStatuses);
+  renderMcpList(raw);
 }
 
 function renderMcpList(
@@ -2013,8 +2009,7 @@ function toggleMcp() {
     const configArea = document.getElementById("mcpConfigArea");
     const saved = activeMcpConfig();
     configArea.value = saved;
-    lastMcpStatuses = mcpStatusesByMode[activeMcpMode()];
-    renderMcpList(saved, lastMcpStatuses);
+    renderMcpList(saved);
   } else {
     panel.classList.remove("open");
     resizerEl.style.display = "none";
@@ -2041,13 +2036,13 @@ async function saveMcpConfig() {
       body: JSON.stringify({ mode: modeId, config: raw }),
     });
     const payload = await res.json().catch(() => null);
-    lastMcpStatuses = Array.isArray(payload?.servers) ? payload.servers : null;
-    mcpStatusesByMode[modeId] = lastMcpStatuses;
+    const statuses = Array.isArray(payload?.servers) ? payload.servers : null;
+    mcpStatusesByMode[modeId] = statuses;
     mcpInitialisedByMode[modeId] = true;
-    renderMcpList(raw, lastMcpStatuses);
+    renderMcpList(raw, statuses);
 
-    const okCount = (lastMcpStatuses || []).filter((s) => s.ok).length;
-    const failCount = (lastMcpStatuses || []).filter((s) => !s.ok).length;
+    const okCount = (statuses || []).filter((s) => s.ok).length;
+    const failCount = (statuses || []).filter((s) => !s.ok).length;
     if (failCount > 0) {
       status.textContent = `${okCount} CONNECTED, ${failCount} FAILED`;
       status.style.color = "#ff4444";
@@ -2091,7 +2086,6 @@ async function purgeMcpDownloads() {
       body: JSON.stringify({ mode: activeMcpMode(), config: raw }),
     });
     const payload = await readJsonResponse(res, "Delete MCP downloads");
-    lastMcpStatuses = null;
     mcpStatusesByMode[activeMcpMode()] = null;
     mcpInitialisedByMode[activeMcpMode()] = true;
     renderMcpList(activeMcpConfig(), null);
