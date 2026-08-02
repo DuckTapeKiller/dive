@@ -53,6 +53,7 @@
     "productName": "Dive",
     "asarUnpack": [
       "server.js",
+      "server/**/*",
       "skills.js",
       "skills/**/*",
       "slash_commands.js",
@@ -80,6 +81,7 @@
       "routes/**/*",
       "index.html",
       "server.js",
+      "server/**/*",
       "skills.js",
       "skills/**/*",
       "slash_commands.js",

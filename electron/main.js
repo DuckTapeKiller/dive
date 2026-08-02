@@ -148,6 +148,10 @@ function syncRuntimeFiles(runtimeDir) {
       required: true,
     },
   );
+  copyIfExists(path.join(appRoot, "server"), path.join(runtimeDir, "server"), {
+    recursive: true,
+    required: true,
+  });
   copyIfExists(
     path.join(appRoot, "index.html"),
     path.join(runtimeDir, "index.html"),

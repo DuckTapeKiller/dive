@@ -20,11 +20,33 @@ const {
 } = require("./mode-state.js");
 const { isDatabaseSlashCommand } = require("./slash_commands");
 const { MODE_IDS, DEFAULT_ENABLED_MODES } = require("./assets/js/00-modes.js");
+const { redactText: redactTraceText } = require("./redact.js");
+// Sanitising stream events for storage lives in server/trace.js.
 const {
-  redactText: redactTraceText,
-  redactValue: redactTraceValue,
-  boundedValue: boundedTraceValue,
-} = require("./redact.js");
+  serializeLibraryResults,
+  sanitizeStoredTraceLines,
+  sanitizeTraceEventForStorage,
+} = require("./server/trace.js");
+// Cloud provider transport. Injected with the image/SSE/usage helpers it
+// shares with the local-model transport below.
+const {
+  CLOUD_PROVIDER_SET,
+  CLOUD_DEFAULT_MODELS,
+  sanitizeCloudSettings,
+  saveCloudSettings,
+  loadCloudSettings,
+  getCloudApiKey,
+  redactCloudSettings,
+  buildCloudEndpoint,
+  streamCloudCompletion,
+} = require("./server/cloud.js")({
+  clampNumber: (...a) => clampNumber(...a),
+  createHttpError: (...a) => createHttpError(...a),
+  collectMessageImages: (...a) => collectMessageImages(...a),
+  applyOpenAiImages: (...a) => applyOpenAiImages(...a),
+  createSseParser: (...a) => createSseParser(...a),
+  normalizeUsage: (...a) => normalizeUsage(...a),
+});
 const {
   sanitizePiCommandPath,
   sanitizePiWorkingDirectory,
@@ -90,7 +112,7 @@ const CUSTOM_SKILLS_FILE = path.join(DATA_DIR, "custom_skills.json");
 const SKILLS_CONFIG_FILE = path.join(DATA_DIR, "skills_config.json");
 const PI_SETTINGS_FILE = path.join(DATA_DIR, "pi-settings.json");
 const UI_SETTINGS_FILE = path.join(DATA_DIR, "ui-settings.json");
-const CLOUD_SETTINGS_FILE = path.join(DATA_DIR, "cloud-settings.json");
+
 const OLLAMA_SETTINGS_FILE = path.join(DATA_DIR, "ollama-settings.json");
 const FONT_FACES_FILE = path.join(__dirname, "font_faces.css");
 const FONTS_DIR = path.join(__dirname, "fonts");
@@ -150,8 +172,7 @@ const VALID_UI_PALETTES = new Set([
   "nordic",
   "carbon",
 ]);
-const CLOUD_PROVIDERS = ["openai", "anthropic", "mistral", "google"];
-const CLOUD_PROVIDER_SET = new Set(CLOUD_PROVIDERS);
+
 // Image attachments: extensions we accept on upload and their MIME types.
 const IMAGE_MIME_BY_EXT = new Map([
   [".jpg", "image/jpeg"],
@@ -420,27 +441,7 @@ function applyOpenAiImages(messages, trailingImages) {
     return copy;
   });
 }
-const CLOUD_DEFAULT_MODELS = {
-  openai: "gpt-5",
-  anthropic: "claude-opus-4-8",
-  mistral: "mistral-large-latest",
-  google: "gemini-2.5-pro",
-};
-const CLOUD_DEFAULT_BASE_URLS = {
-  openai: "https://api.openai.com/v1",
-  anthropic: "https://api.anthropic.com/v1",
-  mistral: "https://api.mistral.ai/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta/openai",
-};
-const CLOUD_ENV_KEY_NAMES = {
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  mistral: "MISTRAL_API_KEY",
-  google: "GEMINI_API_KEY",
-};
-const CLOUD_MIN_MAX_TOKENS = 1;
-const CLOUD_MAX_MAX_TOKENS = 128000;
-const CLOUD_DEFAULT_MAX_TOKENS = 2048;
+
 const DEFAULT_UI_FONTS = Object.freeze({
   ollama: '"iA Writer Quattro S", serif',
   pi: "Montserrat, sans-serif",
@@ -1455,162 +1456,6 @@ function saveUiSettings(settings) {
   }
 }
 
-function defaultCloudSettings() {
-  return {
-    provider: "openai",
-    models: { ...CLOUD_DEFAULT_MODELS },
-    baseUrls: { ...CLOUD_DEFAULT_BASE_URLS },
-    apiKeys: {},
-    maxTokens: CLOUD_DEFAULT_MAX_TOKENS,
-    // Agent mode: plan-first prompting and a larger tool-call budget.
-    agentMode: false,
-    agentMaxRounds: 25,
-  };
-}
-
-function normalizeCloudBaseUrl(value, fallback) {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-  if (!trimmed) return fallback;
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return fallback;
-    }
-    return parsed.toString().replace(/\/+$/, "");
-  } catch (e) {
-    return fallback;
-  }
-}
-
-function sanitizeCloudSettings(rawInput, existingInput = null) {
-  const defaults = defaultCloudSettings();
-  const existing =
-    existingInput &&
-    typeof existingInput === "object" &&
-    !Array.isArray(existingInput)
-      ? existingInput
-      : {};
-  const raw =
-    rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
-      ? rawInput
-      : {};
-
-  const next = {
-    provider: CLOUD_PROVIDER_SET.has(existing.provider)
-      ? existing.provider
-      : defaults.provider,
-    models: { ...defaults.models, ...(existing.models || {}) },
-    baseUrls: { ...defaults.baseUrls, ...(existing.baseUrls || {}) },
-    apiKeys: { ...(existing.apiKeys || {}) },
-    maxTokens: clampNumber(
-      existing.maxTokens,
-      CLOUD_MIN_MAX_TOKENS,
-      CLOUD_MAX_MAX_TOKENS,
-      defaults.maxTokens,
-    ),
-    agentMode: existing.agentMode === true,
-    agentMaxRounds: clampNumber(existing.agentMaxRounds, 1, 50, 25),
-  };
-
-  if (CLOUD_PROVIDER_SET.has(raw.provider)) {
-    next.provider = raw.provider;
-  }
-  if (typeof raw.agentMode === "boolean") {
-    next.agentMode = raw.agentMode;
-  }
-  if (raw.agentMaxRounds !== undefined) {
-    next.agentMaxRounds = clampNumber(raw.agentMaxRounds, 1, 50, 25);
-  }
-
-  if (
-    raw.models &&
-    typeof raw.models === "object" &&
-    !Array.isArray(raw.models)
-  ) {
-    for (const provider of CLOUD_PROVIDERS) {
-      if (typeof raw.models[provider] === "string") {
-        const model = raw.models[provider].trim().slice(0, 200);
-        if (model) next.models[provider] = model;
-      }
-    }
-  }
-
-  if (
-    raw.baseUrls &&
-    typeof raw.baseUrls === "object" &&
-    !Array.isArray(raw.baseUrls)
-  ) {
-    for (const provider of CLOUD_PROVIDERS) {
-      next.baseUrls[provider] = normalizeCloudBaseUrl(
-        raw.baseUrls[provider],
-        next.baseUrls[provider] || defaults.baseUrls[provider],
-      );
-    }
-  }
-
-  if (
-    raw.apiKeys &&
-    typeof raw.apiKeys === "object" &&
-    !Array.isArray(raw.apiKeys)
-  ) {
-    for (const provider of CLOUD_PROVIDERS) {
-      if (typeof raw.apiKeys[provider] !== "string") continue;
-      const value = raw.apiKeys[provider].trim();
-      if (value) {
-        next.apiKeys[provider] = value.slice(0, 4000);
-      }
-    }
-  }
-
-  if (
-    raw.clearApiKeys &&
-    typeof raw.clearApiKeys === "object" &&
-    !Array.isArray(raw.clearApiKeys)
-  ) {
-    for (const provider of CLOUD_PROVIDERS) {
-      if (raw.clearApiKeys[provider] === true) {
-        delete next.apiKeys[provider];
-      }
-    }
-  }
-
-  next.maxTokens = clampNumber(
-    raw.maxTokens,
-    CLOUD_MIN_MAX_TOKENS,
-    CLOUD_MAX_MAX_TOKENS,
-    next.maxTokens,
-  );
-
-  return next;
-}
-
-function saveCloudSettings(settings) {
-  const sanitized = sanitizeCloudSettings(settings, defaultCloudSettings());
-  fs.writeFileSync(CLOUD_SETTINGS_FILE, JSON.stringify(sanitized, null, 2), {
-    mode: 0o600,
-  });
-  try {
-    fs.chmodSync(CLOUD_SETTINGS_FILE, 0o600);
-  } catch (e) {}
-  return sanitized;
-}
-
-function loadCloudSettings() {
-  if (fs.existsSync(CLOUD_SETTINGS_FILE)) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(CLOUD_SETTINGS_FILE, "utf8"));
-      const sanitized = sanitizeCloudSettings(raw, defaultCloudSettings());
-      if (JSON.stringify(raw) !== JSON.stringify(sanitized)) {
-        saveCloudSettings(sanitized);
-      }
-      return sanitized;
-    } catch (e) {
-      console.warn("Failed to load Cloud settings:", e.message || e);
-    }
-  }
-  return defaultCloudSettings();
-}
-
 // ---- Local OpenAI-compatible modes: LM Studio and llama.cpp ----
 // Both expose an OpenAI-style /v1/chat/completions (SSE) + /v1/models with no
 // auth. They are first-class bespoke modes with their own endpoints, but share
@@ -1939,67 +1784,6 @@ async function streamLocalOpenAiCompletion({
   };
 }
 
-// Resolve "Automatic" (empty model) to a concrete model id for a local server.
-// Ollama JIT-loads on any request, but LM Studio returns 400 "No models
-// loaded" when asked to chat with no model specified and none loaded. So when
-// the user picked Automatic we name a model explicitly: prefer one that is
-// already loaded (no reload cost), else the first non-embedding model the
-// server reports (LM Studio JIT-loads it). Returns "" if none can be found, in
-// which case the request proceeds as before (llama.cpp serves its loaded model).
-// Is a given model already loaded on the server? (LM Studio native endpoint.)
-// Explicitly load a model into LM Studio. JIT loading is unreliable / can be
-// disabled, so we don't depend on it: the REST load endpoint deterministically
-// loads the model (and does NOT evict an already-loaded embedding model, so
-// library indexing keeps working). Best-effort: returns true on success, false
-// if the endpoint is unavailable or the load fails, in which case the caller
-// proceeds and lets the chat request surface any real error.
-// For LM Studio: make sure the chosen chat model is loaded before we send the
-// chat request, so the user never has to load one manually (their indexer may
-// have loaded only an embedding model). No-op for llama.cpp (it always serves
-// the model it was started with) and when there is no concrete model to load.
-// Shared streaming handler for the bespoke local modes (LM Studio, llama.cpp).
-// Remove any skill-call syntax that survived the streaming loop so it can never
-// reach the chat bubble. Covers three cases the local models produce that Ollama
-// does not: a completed <call:...></call> when skills were disabled (DB on), a
-// malformed call missing its closing tag, and a dangling opener at end of text.
-// Derive the source pills (title + URL) from a skill result so the UI can show
-// every source it consulted, the same way library passages are surfaced. Covers
-// web_search result lists, <!-- url --> citation comments, and web_scraper URLs.
-// Parse a tool-call argument string without throwing.
-// Skill web sources must survive into the saved conversation: merge them into
-// the librarySources persisted on the assistant message (deduped by URL) so
-// the source pills re-render when the chat is reopened from history.
-function getCloudApiKey(settings, provider) {
-  const envKeyName = CLOUD_ENV_KEY_NAMES[provider];
-  const envValue = envKeyName ? process.env[envKeyName] : "";
-  if (typeof settings.apiKeys?.[provider] === "string") {
-    const saved = settings.apiKeys[provider].trim();
-    if (saved) return saved;
-  }
-  return typeof envValue === "string" ? envValue.trim() : "";
-}
-
-// Cloud keys the web-search skills can reuse as high-quality search backends.
-// Whichever the user already saved (or set via env) is used, else DuckDuckGo.
-function redactCloudSettings(settings) {
-  const sanitized = sanitizeCloudSettings(settings, defaultCloudSettings());
-  return {
-    provider: sanitized.provider,
-    models: sanitized.models,
-    baseUrls: sanitized.baseUrls,
-    maxTokens: sanitized.maxTokens,
-    agentMode: sanitized.agentMode,
-    agentMaxRounds: sanitized.agentMaxRounds,
-    hasApiKey: Object.fromEntries(
-      CLOUD_PROVIDERS.map((provider) => [
-        provider,
-        Boolean(getCloudApiKey(sanitized, provider)),
-      ]),
-    ),
-    envKeyNames: { ...CLOUD_ENV_KEY_NAMES },
-  };
-}
-
 function parseMultipart(buffer, boundary) {
   const parts = [];
   const sep = Buffer.from("--" + boundary);
@@ -2263,256 +2047,6 @@ function normalizeStoredConversationMessages(history, message, images) {
   return stored;
 }
 
-function serializeLibraryResults(results, options = {}) {
-  const includeSourcePaths = options?.includeSourcePaths !== false;
-  return (Array.isArray(results) ? results : []).map((result) => ({
-    chunkId: result.chunkId,
-    title: result.title,
-    author: result.author,
-    path: includeSourcePaths ? result.path : "",
-    heading: result.heading,
-    kind: result.kind,
-    score: result.score,
-    snippet: result.snippet,
-  }));
-}
-
-function sanitizeStoredTraceLines(lines) {
-  if (!Array.isArray(lines)) return [];
-  return lines
-    .slice(0, 400)
-    .map((line) => redactTraceText(line).slice(0, 4000))
-    .filter((line) => line.length > 0);
-}
-
-function sanitizeTraceEventForStorage(event) {
-  if (!event || typeof event !== "object") return null;
-  const type = typeof event.type === "string" ? event.type : "";
-  // Streaming micro-events are not stored: the full thinking text is already
-  // persisted separately (metadata.thinking) and history replay never reads
-  // them — keeping hundreds of one-word deltas only bloats conversations.
-  if (
-    !type ||
-    type === "delta" ||
-    type === "done" ||
-    type === "heartbeat" ||
-    type === "thinking_start" ||
-    type === "thinking_delta" ||
-    type === "thinking_end" ||
-    type === "session_start" ||
-    type === "pi_raw_event"
-  ) {
-    return null;
-  }
-  const clean = { type };
-  for (const key of [
-    "label",
-    "detail",
-    "error",
-    "command",
-    "name",
-    "skillName",
-    "toolName",
-    "toolCallId",
-    "argsPreview",
-    "outputPreview",
-    "eventType",
-    "phase",
-    "chunk",
-    "delta",
-    "key",
-    "text",
-    "message",
-    "noticeType",
-    "model",
-    "jobId",
-    "status",
-  ]) {
-    if (typeof event[key] === "string") clean[key] = event[key].slice(0, 4000);
-  }
-  for (const key of [
-    "isError",
-    "failure",
-    "success",
-    "retrievedCount",
-    "injectedCount",
-    "uniqueSourceCount",
-    "maxContextChars",
-    "input",
-    "output",
-    "cost",
-    "tokensBefore",
-    "attempt",
-    "maxAttempts",
-    "delayMs",
-    "contentIndex",
-    "sequence",
-  ]) {
-    if (typeof event[key] === "boolean" || typeof event[key] === "number") {
-      clean[key] = event[key];
-    }
-  }
-  if (type === "gallery_preview") {
-    if (typeof event.previewId === "string")
-      clean.previewId = event.previewId.slice(0, 120);
-    if (typeof event.destinationPath === "string") {
-      clean.destinationPath = event.destinationPath.slice(0, 1000);
-    }
-    if (typeof event.strategy === "string")
-      clean.strategy = event.strategy.slice(0, 80);
-    if (Array.isArray(event.sourceUrls)) {
-      clean.sourceUrls = event.sourceUrls
-        .slice(0, 20)
-        .map((url) => String(url).slice(0, 4000));
-    }
-    if (Array.isArray(event.candidates)) {
-      clean.candidates = event.candidates.slice(0, 500).map((item) => {
-        const metadata =
-          item && item.metadata && typeof item.metadata === "object"
-            ? item.metadata
-            : null;
-        return {
-          index: Number.isInteger(item?.index) ? item.index : 0,
-          url: String(item?.url || "").slice(0, 4000),
-          displayName: String(item?.displayName || "image").slice(0, 500),
-          duplicateOf: Number.isInteger(item?.duplicateOf)
-            ? item.duplicateOf
-            : null,
-          metadata: metadata
-            ? {
-                dimensions:
-                  metadata.dimensions && typeof metadata.dimensions === "object"
-                    ? {
-                        widthPx: Number(metadata.dimensions.widthPx) || 0,
-                        heightPx: Number(metadata.dimensions.heightPx) || 0,
-                      }
-                    : null,
-                sizeBytes: Number.isSafeInteger(metadata.sizeBytes)
-                  ? metadata.sizeBytes
-                  : null,
-                mimeType: String(metadata.mimeType || "").slice(0, 100),
-                error: String(metadata.error || "").slice(0, 500),
-              }
-            : null,
-        };
-      });
-    }
-    if (Array.isArray(event.warnings)) {
-      clean.warnings = event.warnings.slice(0, 20).map((warning) => ({
-        url: String(warning?.url || "").slice(0, 4000),
-        detail: String(warning?.detail || "").slice(0, 1000),
-      }));
-    }
-  }
-  if (type === "media_playlist_preview") {
-    if (typeof event.previewId === "string")
-      clean.previewId = event.previewId.slice(0, 120);
-    if (typeof event.destinationPath === "string") {
-      clean.destinationPath = event.destinationPath.slice(0, 1000);
-    }
-    for (const key of [
-      "mode",
-      "audioFormat",
-      "videoContainer",
-      "compatibilityProfile",
-    ]) {
-      if (typeof event[key] === "string") clean[key] = event[key].slice(0, 100);
-    }
-    if (Array.isArray(event.sourceUrls)) {
-      clean.sourceUrls = event.sourceUrls
-        .slice(0, 20)
-        .map((url) => String(url).slice(0, 4000));
-    }
-    if (Array.isArray(event.candidates)) {
-      clean.candidates = event.candidates.slice(0, 500).map((item) => ({
-        index: Number.isInteger(item?.index) ? item.index : 0,
-        url: String(item?.url || "").slice(0, 4000),
-        webpageUrl: String(item?.webpageUrl || "").slice(0, 4000),
-        mediaUrl: String(item?.mediaUrl || "").slice(0, 4000),
-        title: String(item?.title || "").slice(0, 1000),
-        displayName: String(
-          item?.displayName || item?.title || "media entry",
-        ).slice(0, 1000),
-        description: String(item?.description || "").slice(0, 1000),
-        availability: String(item?.availability || "").slice(0, 100),
-        date: String(item?.date || "").slice(0, 100),
-        durationSeconds: Number.isFinite(Number(item?.durationSeconds))
-          ? Number(item.durationSeconds)
-          : null,
-        duration: String(item?.duration || "").slice(0, 50),
-        thumbnail: String(item?.thumbnail || "").slice(0, 4000),
-        series: String(item?.series || "").slice(0, 500),
-        season: String(item?.season || "").slice(0, 100),
-        episode: String(item?.episode || "").slice(0, 500),
-        episodeNumber: Number.isFinite(Number(item?.episodeNumber))
-          ? Number(item.episodeNumber)
-          : null,
-        playlistIndex: Number.isInteger(item?.playlistIndex)
-          ? item.playlistIndex
-          : null,
-        extractor: String(item?.extractor || "").slice(0, 200),
-      }));
-    }
-    if (Array.isArray(event.warnings)) {
-      clean.warnings = event.warnings.slice(0, 20).map((warning) => ({
-        url: String(warning?.url || "").slice(0, 4000),
-        detail: String(warning?.detail || "").slice(0, 1000),
-      }));
-    }
-  }
-  if (event.result && typeof event.result === "object") {
-    clean.result = boundedTraceValue(redactTraceValue(event.result));
-  }
-  if (event.payload && typeof event.payload === "object") {
-    clean.payload = boundedTraceValue(redactTraceValue(event.payload));
-  }
-  if (Array.isArray(event.lines)) {
-    clean.lines = event.lines
-      .slice(0, 80)
-      .map((line) => String(line).slice(0, 400));
-  } else if (event.lines === null) {
-    clean.lines = null;
-  }
-  if (Array.isArray(event.results)) {
-    clean.results = serializeLibraryResults(event.results).slice(0, 50);
-  }
-  if (Array.isArray(event.sources)) {
-    clean.sources = event.sources
-      .slice(0, 50)
-      .map((source) => ({
-        title: String(source?.title || "source").slice(0, 140),
-        url: String(source?.url || "").slice(0, 4000),
-      }))
-      .filter((source) => /^https?:\/\//i.test(source.url));
-  }
-  if (
-    event.meta &&
-    typeof event.meta === "object" &&
-    !Array.isArray(event.meta)
-  ) {
-    clean.meta = {};
-    for (const [key, value] of Object.entries(event.meta)) {
-      if (
-        typeof value === "string" ||
-        typeof value === "number" ||
-        typeof value === "boolean"
-      ) {
-        clean.meta[key] =
-          typeof value === "string" ? value.slice(0, 1000) : value;
-      }
-    }
-  }
-  // Most fields above are copied verbatim, so the whole event still needs a
-  // redaction pass. `result`/`payload` were already redacted before bounding
-  // (bounding an unredacted value could split a secret across the truncation
-  // point), so they are held out rather than walked a second time.
-  const { result, payload, ...rest } = clean;
-  const redacted = redactTraceValue(rest);
-  if (result !== undefined) redacted.result = result;
-  if (payload !== undefined) redacted.payload = payload;
-  return redacted;
-}
-
 function getLibraryContextSourceResults(libraryContext) {
   return Array.isArray(libraryContext?.contextResults)
     ? libraryContext.contextResults
@@ -2595,114 +2129,6 @@ function emitSlashCommand(emit, command) {
   });
 }
 
-function buildCloudEndpoint(baseUrl, pathSuffix) {
-  const normalized = String(baseUrl || "").replace(/\/+$/, "");
-  return `${normalized}${pathSuffix}`;
-}
-
-function buildCloudRequest(provider, settings, messages, images) {
-  const model = settings.models?.[provider] || CLOUD_DEFAULT_MODELS[provider];
-  const baseUrl =
-    settings.baseUrls?.[provider] || CLOUD_DEFAULT_BASE_URLS[provider];
-  const maxTokens = clampNumber(
-    settings.maxTokens,
-    CLOUD_MIN_MAX_TOKENS,
-    CLOUD_MAX_MAX_TOKENS,
-    CLOUD_DEFAULT_MAX_TOKENS,
-  );
-  const apiKey = getCloudApiKey(settings, provider);
-  if (!apiKey) {
-    throw createHttpError(
-      400,
-      `Missing ${provider} API key. Add it in Cloud settings or set ${CLOUD_ENV_KEY_NAMES[provider]}.`,
-    );
-  }
-
-  if (provider === "anthropic") {
-    const systemParts = [];
-    const anthropicMessages = [];
-    for (const entry of collectMessageImages(messages, images)) {
-      const item = entry.message;
-      if (!item || typeof item !== "object") continue;
-      if (item.role === "system") {
-        if (typeof item.content === "string" && item.content.trim()) {
-          systemParts.push(item.content.trim());
-        }
-        continue;
-      }
-      // The skill-call loop can produce consecutive same-role messages;
-      // merge them so the request stays valid for strict role alternation.
-      const previous = anthropicMessages[anthropicMessages.length - 1];
-      if (previous && previous.role === item.role) {
-        previous.content = `${previous.content}\n\n${item.content}`;
-        previous.images = [...previous.images, ...entry.images];
-        continue;
-      }
-      anthropicMessages.push({
-        role: item.role,
-        content: item.content,
-        images: entry.images,
-      });
-    }
-    // Attach each turn's images to it as content blocks.
-    for (const item of anthropicMessages) {
-      const attached = item.images;
-      delete item.images;
-      if (!attached.length) continue;
-      const textContent = typeof item.content === "string" ? item.content : "";
-      const blocks = [];
-      if (textContent) blocks.push({ type: "text", text: textContent });
-      for (const img of attached) {
-        blocks.push({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: img.mimeType,
-            data: img.dataBase64,
-          },
-        });
-      }
-      item.content = blocks;
-    }
-    return {
-      url: buildCloudEndpoint(baseUrl, "/messages"),
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: {
-        model,
-        max_tokens: maxTokens,
-        system: systemParts.join("\n\n"),
-        messages: anthropicMessages,
-        stream: true,
-      },
-    };
-  }
-
-  // OpenAI-compatible vision: a turn carrying images has its content rendered
-  // as an array of text + image_url (data URL) parts.
-  const body = {
-    model,
-    messages: applyOpenAiImages(messages, images),
-    max_tokens: maxTokens,
-    stream: true,
-  };
-  if (provider === "openai") {
-    body.stream_options = { include_usage: true };
-  }
-
-  return {
-    url: buildCloudEndpoint(baseUrl, "/chat/completions"),
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body,
-  };
-}
-
 function normalizeUsage(provider, usage) {
   if (!usage || typeof usage !== "object") return null;
   if (provider === "anthropic") {
@@ -2777,97 +2203,6 @@ function createSseParser(onEvent) {
       if (data) onEvent(eventName, data);
     },
   };
-}
-
-async function streamCloudCompletion({
-  provider,
-  settings,
-  messages,
-  images,
-  signal,
-  onDelta,
-  onUsage,
-}) {
-  const request = buildCloudRequest(provider, settings, messages, images);
-  const upstreamRes = await fetch(request.url, {
-    method: "POST",
-    headers: request.headers,
-    body: JSON.stringify(request.body),
-    signal,
-  });
-
-  if (!upstreamRes.ok) {
-    const raw = await upstreamRes.text().catch(() => "");
-    throw createHttpError(
-      upstreamRes.status,
-      `Cloud provider request failed (${upstreamRes.status}): ${(raw || upstreamRes.statusText || "empty response body").slice(0, 700)}`,
-    );
-  }
-  if (!upstreamRes.body) {
-    throw createHttpError(502, "Cloud provider returned no stream body.");
-  }
-
-  let latestUsage = null;
-  const parser = createSseParser((_eventName, data) => {
-    if (data === "[DONE]") return;
-    let parsed;
-    try {
-      parsed = JSON.parse(data);
-    } catch (e) {
-      return;
-    }
-
-    if (parsed?.type === "error" || parsed?.error) {
-      const message =
-        parsed.error?.message ||
-        parsed.message ||
-        "Cloud provider stream error.";
-      throw createHttpError(502, message);
-    }
-
-    if (provider === "anthropic") {
-      if (parsed.type === "message_start" && parsed.message?.usage) {
-        latestUsage = normalizeUsage(provider, parsed.message.usage);
-        if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
-      }
-      if (parsed.type === "message_delta" && parsed.usage) {
-        latestUsage = {
-          ...(latestUsage || {}),
-          ...normalizeUsage(provider, parsed.usage),
-        };
-        if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
-      }
-      const textDelta =
-        parsed.type === "content_block_delta" &&
-        parsed.delta?.type === "text_delta" &&
-        typeof parsed.delta.text === "string"
-          ? parsed.delta.text
-          : "";
-      if (textDelta && typeof onDelta === "function") {
-        onDelta(textDelta);
-      }
-      return;
-    }
-
-    if (parsed.usage) {
-      latestUsage = normalizeUsage(provider, parsed.usage);
-      if (latestUsage && typeof onUsage === "function") onUsage(latestUsage);
-    }
-    const delta = parsed.choices?.[0]?.delta?.content;
-    if (typeof delta === "string" && delta && typeof onDelta === "function") {
-      onDelta(delta);
-    }
-  });
-
-  const reader = upstreamRes.body.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    parser.push(value);
-  }
-  parser.flush();
-
-  return latestUsage;
 }
 
 // Some models (Gemma via the Google endpoint, DeepSeek-R1, QwQ, …) put their
