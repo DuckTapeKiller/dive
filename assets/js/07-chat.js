@@ -356,12 +356,6 @@ async function sendMessage() {
   const activeLibrarySources = { results: [] };
   const recordRunTrace = (evt) => {
     handleStreamEventTrace(evt, runSession.thinkingController || thinking);
-    const drumActive = mode === runMode && currentConvId === runConvId;
-    if (evt.type === "tool_start") {
-      setToolExecutingDrum(runSession, true, drumActive);
-    } else if (evt.type === "tool_end" || evt.type === "done") {
-      setToolExecutingDrum(runSession, false, drumActive);
-    }
   };
 
   try {
@@ -852,12 +846,6 @@ async function regenerate(wrapEl) {
   const activeLibrarySources = { results: [] };
   const recordRunTrace = (evt) => {
     handleStreamEventTrace(evt, runSession.thinkingController || thinking);
-    const drumActive = mode === runMode && currentConvId === runConvId;
-    if (evt.type === "tool_start") {
-      setToolExecutingDrum(runSession, true, drumActive);
-    } else if (evt.type === "tool_end" || evt.type === "done") {
-      setToolExecutingDrum(runSession, false, drumActive);
-    }
   };
   const handlePartial = (partialResponse) => {
     if (

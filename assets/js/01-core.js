@@ -125,7 +125,6 @@ function createModeSession() {
     thinkingController: null,
     lastThinkingController: null,
     thinkingStartedAt: null,
-    drumPending: false,
   };
 }
 

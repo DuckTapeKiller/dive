@@ -1515,3 +1515,53 @@ test("a turn that did reason still shows its thinking panel", async () => {
   assert.strictEqual(panel.style.display, "block");
   assert.match(panel.textContent, /First I considered the options/);
 });
+
+test("no assistant bubble exists until the model produces text", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const w = dom.window;
+  const bubbles = () =>
+    w.document.querySelectorAll("#chat .msg.assistant").length;
+  // Build the eval source from Node so nested quotes are never hand-escaped.
+  const draft = (text) =>
+    w.eval(`setDraftAssistant("ollama", ${JSON.stringify(text)}, [])`);
+
+  // setDraftAssistant is a no-op unless the named mode is the active one, so
+  // switch to it first — otherwise every assertion below passes vacuously.
+  w.eval('setMode("ollama")');
+  await new Promise((r) => setTimeout(r, 60));
+  w.eval('getActiveModeSession("ollama").convId = currentConvId = "drumless"');
+  assert.strictEqual(w.eval("mode"), "ollama");
+  assert.strictEqual(bubbles(), 0);
+
+  // A turn that has only emitted a tool call: the visible text strips to
+  // nothing, so there must be no bubble and no placeholder icon.
+  draft('<call:web_search>{"query":"x"}</call>');
+  assert.strictEqual(bubbles(), 0, "a tool-only turn created an empty bubble");
+  assert.strictEqual(
+    w.document.querySelectorAll("#chat .lucide-drum").length,
+    0,
+    "the drum placeholder is back",
+  );
+
+  // A partial call mid-stream must not create one either.
+  draft("<call:web_sea");
+  assert.strictEqual(bubbles(), 0, "a partial call created an empty bubble");
+
+  // Still nothing for an empty or whitespace draft.
+  draft("");
+  draft("   \n  ");
+  assert.strictEqual(bubbles(), 0, "whitespace created a bubble");
+
+  // The bubble appears exactly when real text arrives.
+  draft("Here is the answer.");
+  assert.strictEqual(bubbles(), 1, "no bubble once the model produced text");
+  assert.match(
+    w.document.querySelector("#chat .msg.assistant").textContent,
+    /Here is the answer/,
+  );
+});

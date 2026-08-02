@@ -1030,7 +1030,7 @@ function renderLibrarySources(div, sources) {
 
 // Remove every form of skill-call syntax so a raw <call:...> can NEVER be
 // shown in a bubble, in ANY mode or render path. This is the single choke
-// point that guarantees the drum — not the call — is what the user sees.
+// point that guarantees the call markup never reaches the bubble.
 function stripSkillCallsForDisplay(text) {
   return (
     String(text || "")
@@ -1042,7 +1042,7 @@ function stripSkillCallsForDisplay(text) {
       .replace(/<call:[^>]*>?\s*$/i, "")
       // A bare partial "<".."<call" fragment at the very end (mid-stream).
       // The lone "<" case matters: stream chunks can split right after
-      // the opening bracket of "<call:", and it must show the drum too.
+      // the opening bracket of "<call:", and it must be hidden too.
       .replace(/<(?:c(?:a(?:l(?:l)?)?)?)?$/i, "")
   );
 }
@@ -1163,14 +1163,13 @@ function renderAssistantMessage(div, text, librarySources) {
   }
 }
 
-// An assistant bubble is "empty" when it carries no rendered text and no
-// drum — the exact `<div class="msg assistant" data-raw-text="">` husk
-// that a cancelled, failed, or tool-only turn would otherwise leave in
-// the DOM. Remove its whole wrap so the view never shows blank bubbles.
+// An assistant bubble is "empty" when it carries no rendered text — the exact
+// `<div class="msg assistant" data-raw-text="">` husk that a cancelled, failed,
+// or tool-only turn would otherwise leave in the DOM. Remove its whole wrap so
+// the view never shows blank bubbles.
 function assistantBubbleIsEmpty(div) {
   if (!div) return false;
   if ((div.dataset.rawText || "").trim()) return false;
-  if (div.querySelector(".lucide-drum")) return false;
   if ((div.textContent || "").trim()) return false;
   return true;
 }
@@ -2394,7 +2393,7 @@ function renderSessionTranscript(session) {
     });
   }
 
-  // Restore active session state (thinking controller and tool drum)
+  // Restore active session state (thinking controller)
   if (session.activeAbortController) {
     if (!session.thinkingController) {
       session.thinkingController = addThinking({
@@ -2404,9 +2403,6 @@ function renderSessionTranscript(session) {
         modeName: mode,
         convId: session.convId || currentConvId,
       });
-    }
-    if (session.drumPending) {
-      appendDrumIcon(session.streamingAssistantDiv);
     }
   }
   session.lastThinkingController = session.thinkingController?.isConnected
@@ -2435,54 +2431,15 @@ function syncCurrentSessionState() {
   session.lastExchangePersisted = lastExchangePersisted;
 }
 
-// The animated drum shown while a mode is streaming a tool/skill call.
-const DRUM_ICON_HTML = `<div style="display:flex; justify-content:flex-start; align-items:center; opacity:0.6; padding-top: 5px; color: var(--accent);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-drum-icon lucide-drum" style="animation: pulse 1.5s infinite;"><path d="m2 2 8 8"/><path d="m22 2-8 8"/><ellipse cx="12" cy="9" rx="10" ry="5"/><path d="M7 13.4v7.9"/><path d="M12 14v8"/><path d="M17 13.4v7.9"/><path d="M2 9v8a10 5 0 0 0 20 0V9"/></svg></div>`;
-function appendDrumIcon(div) {
-  if (div && !div.querySelector(".lucide-drum")) {
-    div.insertAdjacentHTML("beforeend", DRUM_ICON_HTML);
-  }
-}
-function removeDrumIcon(div) {
-  if (!div) return;
-  div.querySelector(".lucide-drum")?.parentElement?.remove();
-}
-
-// Drive the tool-execution drum from explicit tool_start/tool_end trace
-// events. This makes it reliable for native (OpenAI-schema) tool calls
-// too, which carry no "<call:" text for the display-strip heuristic to
-// catch. drumPending is stored on the session so it is restored when the
-// mode's transcript is re-rendered (see renderSessionTranscript).
-function setToolExecutingDrum(session, executing, isActive) {
-  if (!session) return;
-  session.drumPending = executing;
-  if (!isActive) return;
-  if (executing) {
-    if (
-      !session.streamingAssistantDiv ||
-      !session.streamingAssistantDiv.isConnected
-    ) {
-      session.streamingAssistantDiv = addMessage("", "assistant");
-    }
-    appendDrumIcon(session.streamingAssistantDiv);
-    scrollChatToBottom();
-  } else {
-    removeDrumIcon(session.streamingAssistantDiv);
-    // A tool ran but produced no visible assistant text — don't leave the
-    // now-drumless empty bubble sitting in the DOM.
-    if (removeAssistantBubbleIfEmpty(session.streamingAssistantDiv)) {
-      session.streamingAssistantDiv = null;
-    }
-  }
-}
-
 function setDraftAssistant(modeName, content, librarySources, metadata) {
   const session = getActiveModeSession(modeName);
   // Hide any skill call (partial, complete, or malformed) from the visible
-  // bubble and surface the animated drum instead. Applied here so every
-  // mode (ollama, pi, cloud, lmstudio, llamacpp) behaves identically.
+  // bubble. Applied here so every mode (ollama, pi, cloud, lmstudio,
+  // llamacpp) behaves identically. While a turn is only calling tools the
+  // stripped text is empty, and an empty draft creates no bubble at all —
+  // tool activity is shown by the thinking panel, not by a placeholder.
   const raw = content || "";
   const text = stripSkillCallsForDisplay(raw);
-  const showDrumIcon = text !== raw;
   const existingMetadata = getAssistantMetadataFromMessage(
     session.draftAssistant,
   );
@@ -2501,11 +2458,6 @@ function setDraftAssistant(modeName, content, librarySources, metadata) {
     librarySources || [],
     nextMetadata,
   );
-  // Remember whether a tool/skill call is mid-flight so the drum can be
-  // restored when this mode's transcript is re-rendered (e.g. after the
-  // user switches modes and comes back while it is still calling tools).
-  session.drumPending = showDrumIcon;
-
   if (mode !== modeName || currentConvId !== session.convId) return;
   if (
     !session.streamingAssistantDiv ||
@@ -2521,9 +2473,6 @@ function setDraftAssistant(modeName, content, librarySources, metadata) {
       text,
       librarySources || [],
     );
-    if (showDrumIcon) {
-      appendDrumIcon(session.streamingAssistantDiv);
-    }
     scrollChatToBottom();
   }
 }
@@ -2548,9 +2497,6 @@ function finalizeDraftAssistant(modeName, content, librarySources) {
     librarySources || [],
     metadata,
   );
-  // A finalized turn has no tool executing, so strip any stale drum
-  // first — otherwise it would keep an otherwise-empty bubble alive.
-  removeDrumIcon(session.streamingAssistantDiv);
   // Never leave a blank assistant husk behind: a turn that ended with no
   // text (aborted before output, tool-only, failed) must purge its DOM
   // node rather than persist an empty bubble (issue 2.2).
@@ -2561,7 +2507,6 @@ function finalizeDraftAssistant(modeName, content, librarySources) {
   session.draftAssistant = null;
   session.streamingAssistantDiv = null;
   session.thinkingController = null;
-  session.drumPending = false;
   return assistantMessage;
 }
 
