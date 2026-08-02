@@ -3004,8 +3004,21 @@ function gracefulShutdown(signal) {
   shuttingDown = true;
   console.log(`Received ${signal}. Shutting down gracefully...`);
 
-  // Clean up all Pi processes
+  // Clean up all Pi processes. This also ends Pi's own SSE subscribers.
   piDomain.api.shutdownAll();
+
+  // End the global app-event stream too. server.close() waits for every open
+  // connection, and an SSE channel never ends on its own — leaving these open
+  // meant any shutdown with the UI connected fell through to the force-exit
+  // below, taking a full 5 seconds and exiting non-zero.
+  for (const res of appEventClients) {
+    try {
+      res.end();
+    } catch (_error) {
+      // Expected at shutdown: the socket may already be gone.
+    }
+  }
+  appEventClients.clear();
 
   // Force exit after 5 seconds, including if an MCP transport is stuck while
   // closing. Normal shutdown waits for every mode-local MCP generation first.

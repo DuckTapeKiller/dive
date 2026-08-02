@@ -1,11 +1,19 @@
-// Contract tests for the three streaming chat endpoints that had none:
-//   /api/chat/stream       Ollama      (upstream: NDJSON on /api/chat)
-//   /api/llamacpp/stream   llama.cpp   (upstream: OpenAI SSE on /chat/completions)
-//   /api/lmstudio/stream   LM Studio   (same)
+// Contract tests for the streaming chat endpoints:
+//   /api/chat/stream        Ollama      (upstream: NDJSON on /api/chat)
+//   /api/llamacpp/stream    llama.cpp   (upstream: OpenAI SSE on /chat/completions)
+//   /api/lmstudio/stream    LM Studio   (same)
+//   /api/cloud/chat/stream  Cloud       (same, via the configurable base URL)
+//
+// Pi is the fifth mode; its streaming lives in routes/pi.js and is covered by
+// pi_rpc.test.js and pi_sse_channel.test.js.
 //
 // A real Dive server runs against its own DIVE_DATA_DIR, pointed at a fake
 // upstream in this process. Nothing here touches the user's ~/dive, and no
 // real model is required, so the assertions are deterministic.
+//
+// Each mode wires its own client-disconnect hook, so the abort tests are
+// deliberately repeated per mode rather than factored into one: they caught
+// three separate hook sites, and a shared test would have covered only one.
 const assert = require("assert");
 const fs = require("fs");
 const http = require("http");
@@ -27,6 +35,8 @@ let dataDir;
 let script = { kind: "text", chunks: ["hello ", "world"] };
 // Every upstream request body, so tests can assert what Dive actually sent.
 let seen = [];
+// Upstream connections Dive closed, so an abort can be checked at the far end.
+let upstreamClosed = [];
 
 function ollamaChunk(obj) {
   return JSON.stringify(obj) + "\n";
@@ -95,11 +105,40 @@ function startUpstream() {
         if (script.kind === "hang") {
           // Write one chunk, then never finish: the abort test closes the
           // client connection while this is still open.
+          //
+          // Record whether Dive tears this connection down. A "Stop" that only
+          // stops the browser rendering, while the server keeps pulling tokens
+          // from the model, is exactly the bug Pi had.
+          res.on("close", () => {
+            upstreamClosed.push(req.url);
+          });
           res.write(
             isOllama
               ? ollamaChunk({ message: { content: "start" }, done: false })
               : sseChunk({ choices: [{ delta: { content: "start" } }] }),
           );
+          return;
+        }
+
+        if (script.kind === "slow") {
+          // Long enough for a DELETE to land while the turn is still running.
+          for (const c of ["one ", "two ", "three "]) {
+            res.write(
+              isOllama
+                ? ollamaChunk({ message: { content: c }, done: false })
+                : sseChunk({ choices: [{ delta: { content: c } }] }),
+            );
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          if (isOllama) {
+            res.write(ollamaChunk({ message: { content: "" }, done: true }));
+          } else {
+            res.write(
+              sseChunk({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+            );
+            res.write("data: [DONE]\n\n");
+          }
+          res.end();
           return;
         }
 
@@ -195,6 +234,18 @@ test.before(async () => {
         baseUrl: `http://127.0.0.1:${UPSTREAM_PORT}`,
         model: "fake-model",
       },
+    },
+  });
+
+  // Cloud talks OpenAI's wire format, so the same fake upstream serves it.
+  // The key is never checked by the fake; it only has to be non-empty for the
+  // request to be attempted at all.
+  await post("/api/cloud/settings", {
+    settings: {
+      provider: "openai",
+      model: "fake-model",
+      baseUrls: { openai: `http://127.0.0.1:${UPSTREAM_PORT}` },
+      apiKeys: { openai: "test-key-not-a-real-secret" },
     },
   });
 });
@@ -298,6 +349,94 @@ for (const [endpoint, mode] of ENDPOINTS) {
       `${endpoint}: the server stopped responding after an aborted stream`,
     );
   });
+
+  test(`${endpoint} stops pulling from the model when the client aborts`, async () => {
+    // D1. The previous test proves the client stops receiving. This one proves
+    // the work actually stops: Stop must tear down the upstream connection, not
+    // just disconnect the browser and leave the model generating.
+    script = { kind: "hang" };
+    seen = [];
+    upstreamClosed = [];
+    const controller = new AbortController();
+    const res = await fetch(`${BASE}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "hi",
+        history: [],
+        model: "fake-model",
+        saveConv: `teardown-${mode}`,
+        convTitle: "Teardown",
+      }),
+      signal: controller.signal,
+    });
+    const reader = res.body.getReader();
+    await reader.read();
+    await new Promise((r) => setTimeout(r, 150));
+    controller.abort();
+
+    // Give the teardown a moment to propagate to the far end.
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && upstreamClosed.length === 0) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(
+      upstreamClosed.length > 0,
+      `${endpoint}: the client aborted but the upstream model connection was left open — the model keeps generating after Stop`,
+    );
+  });
+
+  test(`${endpoint}: deleting a conversation mid-turn does not resurrect it`, async () => {
+    // D1. The turn is still running when the user deletes the conversation;
+    // when it finishes it must not write the conversation back.
+    script = { kind: "text", chunks: ["first answer"] };
+    seen = [];
+    const convId = `delete-midturn-${mode}`;
+    await readEvents(
+      await post(endpoint, {
+        message: "first",
+        history: [],
+        model: "fake-model",
+        saveConv: convId,
+        convTitle: "Delete",
+      }),
+    );
+    const created = await fetch(
+      `${BASE}/api/conversations/id/${encodeURIComponent(convId)}`,
+    );
+    assert.strictEqual(
+      created.status,
+      200,
+      "setup: conversation was not saved",
+    );
+
+    script = { kind: "slow" };
+    const turn = post(endpoint, {
+      message: "second",
+      history: [{ role: "user", content: "first" }],
+      model: "fake-model",
+      saveConv: convId,
+      convTitle: "Delete",
+    });
+    await new Promise((r) => setTimeout(r, 300)); // mid-turn
+    const del = await fetch(
+      `${BASE}/api/conversations/id/${encodeURIComponent(convId)}`,
+      { method: "DELETE" },
+    );
+    assert.strictEqual(del.status, 200, "the delete itself failed");
+
+    await readEvents(await turn); // let the turn finish writing
+    await new Promise((r) => setTimeout(r, 300));
+
+    const after = await fetch(
+      `${BASE}/api/conversations/id/${encodeURIComponent(convId)}`,
+    );
+    assert.notStrictEqual(
+      after.status,
+      200,
+      `${endpoint}: a conversation deleted mid-turn came back when the turn finished`,
+    );
+  });
 }
 
 test("/api/chat/stream runs a tool call and feeds the result back", async () => {
@@ -337,5 +476,103 @@ test("/api/chat/stream runs a tool call and feeds the result back", async () => 
     followUp,
     /42/,
     "the calculator result was not fed back to the model",
+  );
+});
+
+// ------------------------------------------------------------------- cloud
+//
+// Cloud is the fifth mode and the only one that talks to a paid API, which is
+// exactly why an abort that does not reach the upstream matters most here: a
+// Stop that leaves the provider generating is billed tokens the user cancelled.
+// Pointed at the same fake upstream through the configurable base URL.
+
+test("/api/cloud/chat/stream streams the provider's answer", async () => {
+  script = { kind: "text", chunks: ["Cl", "oud ", "answer"] };
+  seen = [];
+  const res = await post("/api/cloud/chat/stream", {
+    message: "hi",
+    history: [],
+    saveConv: "stream-cloud",
+    convTitle: "Cloud",
+  });
+  assert.strictEqual(res.status, 200);
+  const events = await readEvents(res);
+  const deltas = events.filter((e) => e.type === "delta");
+  assert.ok(
+    deltas.length > 0,
+    `no deltas; saw types: ${[...new Set(events.map((e) => e.type))].join(", ")}`,
+  );
+  assert.strictEqual(deltas.at(-1).response, "Cloud answer");
+});
+
+test("/api/cloud/chat/stream stops pulling from the provider when the client aborts", async () => {
+  script = { kind: "hang" };
+  seen = [];
+  upstreamClosed = [];
+  const controller = new AbortController();
+  const res = await fetch(`${BASE}/api/cloud/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: "hi",
+      history: [],
+      saveConv: "teardown-cloud",
+      convTitle: "Teardown",
+    }),
+    signal: controller.signal,
+  });
+  assert.strictEqual(res.status, 200);
+  const reader = res.body.getReader();
+  await reader.read();
+  await new Promise((r) => setTimeout(r, 150));
+  controller.abort();
+
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline && upstreamClosed.length === 0) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(
+    upstreamClosed.length > 0,
+    "the client aborted but the cloud provider connection was left open — billed tokens keep being generated after Stop",
+  );
+});
+
+test("/api/cloud/chat/stream: deleting a conversation mid-turn does not resurrect it", async () => {
+  script = { kind: "text", chunks: ["first answer"] };
+  seen = [];
+  const convId = "delete-midturn-cloud";
+  await readEvents(
+    await post("/api/cloud/chat/stream", {
+      message: "first",
+      history: [],
+      saveConv: convId,
+      convTitle: "Delete",
+    }),
+  );
+  assert.strictEqual(
+    (await fetch(`${BASE}/api/conversations/id/${convId}`)).status,
+    200,
+    "setup: cloud conversation was not saved",
+  );
+
+  script = { kind: "slow" };
+  const turn = post("/api/cloud/chat/stream", {
+    message: "second",
+    history: [{ role: "user", content: "first" }],
+    saveConv: convId,
+    convTitle: "Delete",
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const del = await fetch(`${BASE}/api/conversations/id/${convId}`, {
+    method: "DELETE",
+  });
+  assert.strictEqual(del.status, 200, "the delete itself failed");
+  await readEvents(await turn);
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.notStrictEqual(
+    (await fetch(`${BASE}/api/conversations/id/${convId}`)).status,
+    200,
+    "a cloud conversation deleted mid-turn came back when the turn finished",
   );
 });
