@@ -680,6 +680,35 @@ textarea {
   opacity: 0.6;
   margin-bottom: 7px;
 }
+.side-pi-state-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 14px;
+  margin-top: 9px;
+}
+.side-pi-state-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.side-pi-state-key {
+  font-size: calc(9px * var(--font-scale, 1));
+  letter-spacing: 1.2px;
+  font-weight: 700;
+  color: var(--text-inverse);
+  opacity: 0.5;
+}
+.side-pi-state-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(10px * var(--font-scale, 1));
+  letter-spacing: 0.5px;
+  color: var(--text-inverse);
+  opacity: 0.82;
+}
 .side-box {
   border: var(--border-width) solid var(--border-color);
 }

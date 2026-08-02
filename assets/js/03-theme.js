@@ -2670,16 +2670,28 @@ async function refreshPiStatus() {
     }
     const stateLine = document.getElementById("sidePiStateLine");
     if (stateLine) {
-      const bits = [];
-      bits.push(piStatusInfo?.isLocal === true ? "LOCAL" : "CLOUD");
-      if (piStatusInfo?.cost && piStatusInfo.cost !== "Local") {
-        bits.push(piStatusInfo.cost);
-      }
-      bits.push(piStatusInfo?.state || "IDLE");
-      if (piStatusInfo?.contextUsage?.percent != null) {
-        bits.push(`CTX ${piStatusInfo.contextUsage.percent}%`);
-      }
-      stateLine.textContent = bits.join(" · ");
+      const setStateValue = (key, value) => {
+        const target = stateLine.querySelector(`[data-pi-state="${key}"]`);
+        if (target) target.textContent = value;
+      };
+      const contextPercent = Number(piStatusInfo?.contextUsage?.percent);
+      setStateValue(
+        "runtime",
+        piStatusInfo?.isLocal === true ? "LOCAL" : "CLOUD",
+      );
+      setStateValue(
+        "cost",
+        piStatusInfo?.cost && piStatusInfo.cost !== "Local"
+          ? piStatusInfo.cost
+          : "—",
+      );
+      setStateValue("state", piStatusInfo?.state || "IDLE");
+      setStateValue(
+        "context",
+        Number.isFinite(contextPercent)
+          ? `${contextPercent.toFixed(1)}%`
+          : "--",
+      );
     }
     // Keep the shared model dropdown in sync with Pi's actual model.
     if (piStatusInfo?.provider && piStatusInfo?.model) {

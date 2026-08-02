@@ -374,15 +374,30 @@
           </select>
           <div
             id="sidePiStateLine"
-            style="
-              font-size: calc(10px * var(--font-scale, 1));
-              letter-spacing: 1px;
-              color: var(--text-inverse);
-              opacity: 0.7;
-              margin-top: 7px;
-            "
+            class="side-pi-state-grid"
+            role="status"
+            aria-live="polite"
           >
-            --
+            <div class="side-pi-state-item">
+              <span class="side-pi-state-key">RUNTIME</span>
+              <span class="side-pi-state-value" data-pi-state="runtime"
+                >--</span
+              >
+            </div>
+            <div class="side-pi-state-item">
+              <span class="side-pi-state-key">COST</span>
+              <span class="side-pi-state-value" data-pi-state="cost">--</span>
+            </div>
+            <div class="side-pi-state-item">
+              <span class="side-pi-state-key">STATE</span>
+              <span class="side-pi-state-value" data-pi-state="state">--</span>
+            </div>
+            <div class="side-pi-state-item">
+              <span class="side-pi-state-key">CONTEXT</span>
+              <span class="side-pi-state-value" data-pi-state="context"
+                >--</span
+              >
+            </div>
           </div>
         </div>
         <div class="side-sect">
