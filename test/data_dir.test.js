@@ -85,3 +85,60 @@ test("every module that stores data honours the override", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("no module builds its own ~/dive path behind data-dir.js", () => {
+  // Two settings files (coding-settings.json, web-search-settings.json) were
+  // built with their own path.join(os.homedir(), "dive", ...) and so ignored
+  // DIVE_DATA_DIR entirely. A single-line grep missed them because the call was
+  // wrapped across lines, which is why this checks the source rather than a
+  // one-line pattern.
+  const skip = new Set(["node_modules", ".git", "release", "assets", "test"]);
+  const files = [];
+  (function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".js")) files.push(full);
+    }
+  })(ROOT);
+
+  const pattern = /os\.homedir\(\)\s*,\s*\n?\s*"dive"/;
+  const offenders = files
+    .filter((f) => path.relative(ROOT, f) !== "data-dir.js")
+    .filter((f) => pattern.test(fs.readFileSync(f, "utf8")))
+    .map((f) => path.relative(ROOT, f));
+
+  assert.deepStrictEqual(
+    offenders,
+    [],
+    `these build their own data path instead of importing DATA_DIR: ${offenders.join(", ")}`,
+  );
+});
+
+test("the settings files that bypassed the override now honour it", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dive-datadir-"));
+  try {
+    const out = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `process.stdout.write(JSON.stringify({
+           coding: require("./skills/code.js").CODING_SETTINGS_FILE,
+           search: require("./skills/research.js").WEB_SEARCH_SETTINGS_FILE,
+         }));`,
+      ],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, DIVE_DATA_DIR: dir },
+      },
+    );
+    const got = JSON.parse(out);
+    const real = path.resolve(dir);
+    assert.strictEqual(got.coding, path.join(real, "coding-settings.json"));
+    assert.strictEqual(got.search, path.join(real, "web-search-settings.json"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

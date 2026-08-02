@@ -31,6 +31,7 @@ const {
   normalizeConfig,
   saveLibraryChatSettings,
   saveLibraryConfig,
+  searchLibrary,
 } = require("../library/store");
 const defaultConfig = require("../library/config.default.json");
 
@@ -278,4 +279,73 @@ test("an unknown mode falls back to ollama rather than enabling itself", async (
     false,
     "an unrecognised mode inherited an enabled mode's setting",
   );
+});
+
+test("a hostile search query cannot corrupt the database", async () => {
+  // End-to-end property only. Note what this does NOT prove: the search path
+  // tokenises the query before it reaches SQL, so these payloads never carry a
+  // quote into sqlLiteral. Disabling sqlLiteral's escaping leaves this test
+  // passing — the filename test below is the one that covers escaping.
+  saveLibraryConfig(baseConfig());
+  await indexLibrary({ config: loadLibraryConfig() });
+  const before = await getLibraryStatus();
+  assert.ok(before.chunks > 0, "nothing indexed, so the probe proves nothing");
+
+  for (const query of [
+    "magnetism'; DROP TABLE library_chunks; --",
+    "' OR 1=1 --",
+    "magnetism' UNION SELECT 1,2,3 --",
+    "magnetism'); DELETE FROM library_files; --",
+    'magnetism" OR "1"="1',
+  ]) {
+    const results = await searchLibrary(query, {
+      config: loadLibraryConfig(),
+      mode: "ollama",
+      limit: 3,
+    });
+    assert.ok(Array.isArray(results), `search returned no array for ${query}`);
+  }
+
+  const after = await getLibraryStatus();
+  assert.strictEqual(
+    after.chunks,
+    before.chunks,
+    "a search modified the database",
+  );
+  assert.strictEqual(after.files, before.files, "a search dropped files");
+});
+
+test("a filename containing a quote is indexed, not silently dropped", async () => {
+  // Library SQL is assembled as text for the sqlite3 CLI rather than bound
+  // through placeholders, so sqlLiteral is the only escaping there is. File
+  // paths reach it verbatim, which makes this the case that actually exercises
+  // it: with escaping removed the file fails to index at all.
+  const quoted = path.join(sourceDir, "it's a file'; DROP TABLE x; --.txt");
+  fs.writeFileSync(
+    quoted,
+    Array.from(
+      { length: 4 },
+      (_v, i) =>
+        `Part ${i + 1}\n\n${"Magnetism appears here with technical detail about fields. ".repeat(4)}`,
+    ).join("\n\n"),
+  );
+  try {
+    saveLibraryConfig(baseConfig());
+    await indexLibrary({ config: loadLibraryConfig() });
+    const status = await getLibraryStatus();
+    assert.ok(
+      status.files >= 3,
+      `the quoted filename was not indexed: ${status.files} files`,
+    );
+    const listed = await listIndexedLibraryFiles();
+    const names = (listed.files || listed || []).map((f) =>
+      String(f.path || f.title || f),
+    );
+    assert.ok(
+      names.some((n) => n.includes("it's a file")),
+      `the quoted filename is missing from the index: ${names.join(" | ")}`,
+    );
+  } finally {
+    fs.rmSync(quoted, { force: true });
+  }
 });

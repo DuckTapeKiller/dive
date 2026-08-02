@@ -51,11 +51,7 @@ async function executeShellCommand({ command, timeout_seconds, cwd }) {
   });
 }
 
-const CODING_SETTINGS_FILE = path.join(
-  os.homedir(),
-  "dive",
-  "coding-settings.json",
-);
+const CODING_SETTINGS_FILE = path.join(DATA_DIR, "coding-settings.json");
 
 const CODE_SEARCH_MAX_MATCHES = 200;
 

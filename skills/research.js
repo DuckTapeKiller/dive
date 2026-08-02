@@ -15,12 +15,12 @@
 // Moved out of skills.js unchanged.
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const http = require("http");
 const https = require("https");
 const zlib = require("zlib");
 const cheerio = require("cheerio");
+const { DATA_DIR } = require("../data-dir.js");
 const { TextDecoder } = require("util");
 const {
   MAX_REDIRECTS,
@@ -578,8 +578,7 @@ async function searchGemini(query, limit, apiKey) {
 // Dedicated search APIs configured in ~/dive/web-search-settings.json.
 // All optional: they only run when the user has saved a key/URL there.
 const WEB_SEARCH_SETTINGS_FILE = path.join(
-  os.homedir(),
-  "dive",
+  DATA_DIR,
   "web-search-settings.json",
 );
 

@@ -17,7 +17,6 @@
 // behaviour is not, and closing that needs an injectable HTTP layer.
 const assert = require("assert");
 const fs = require("fs");
-const http = require("http");
 const os = require("os");
 const path = require("path");
 const test = require("node:test");
