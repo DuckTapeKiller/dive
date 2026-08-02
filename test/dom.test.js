@@ -1168,6 +1168,73 @@ test("input skill toggles create a slash command button", async () => {
   assert.deepStrictEqual(errors, []);
 });
 
+test("the composer skill launcher never leaks across a mode switch", async () => {
+  // The reported bug: buttons enabled in llama.cpp stayed on screen after
+  // switching to Pi. The guard inside renderComposerSkillButtons was correct,
+  // but nothing repainted the shared #composerSkills container on a mode
+  // change, so the previous mode's DOM simply stayed put.
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const doc = dom.window.document;
+  const bar = doc.getElementById("composerSkills");
+  assert.ok(bar, "the composer skills container is missing");
+  const shown = () =>
+    [...bar.querySelectorAll(".composer-skill-button")].map((node) =>
+      node.getAttribute("data-skill"),
+    );
+
+  // Two Dive modes, each with a different skill enabled in the composer.
+  dom.window.setBuiltinSkillsConfigForMode("llamacpp", {
+    inputSkills: { book_search: true },
+  });
+  dom.window.setBuiltinSkillsConfigForMode("cloud", {
+    inputSkills: { wikipedia: true },
+  });
+
+  // 1-2. Enabled in llama.cpp, and its button appears.
+  doc.getElementById("btnLlamaCpp").click();
+  assert.deepStrictEqual(shown(), ["book_search"]);
+  assert.strictEqual(bar.getAttribute("aria-hidden"), "false");
+  assert.ok(bar.classList.contains("show"));
+
+  // 3-4. Switching to Pi clears the container completely.
+  doc.getElementById("btnPi").click();
+  assert.deepStrictEqual(shown(), [], "Pi still showed Dive skill shortcuts");
+  assert.strictEqual(bar.innerHTML, "", "#composerSkills was not emptied");
+  assert.strictEqual(
+    bar.classList.contains("show"),
+    false,
+    "#composerSkills kept its visible state in Pi",
+  );
+  assert.strictEqual(bar.getAttribute("aria-hidden"), "true");
+
+  // 5-6. Back to llama.cpp: its own skill returns, and only that one.
+  doc.getElementById("btnLlamaCpp").click();
+  assert.deepStrictEqual(shown(), ["book_search"]);
+  assert.strictEqual(bar.getAttribute("aria-hidden"), "false");
+
+  // 7. Straight to another Dive mode: its own skill, with nothing carried over.
+  doc.getElementById("btnCloud").click();
+  assert.deepStrictEqual(
+    shown(),
+    ["wikipedia"],
+    "the previous Dive mode's buttons leaked into this one",
+  );
+
+  // And back again, to catch state that only goes stale on the return trip.
+  doc.getElementById("btnLlamaCpp").click();
+  assert.deepStrictEqual(shown(), ["book_search"]);
+  doc.getElementById("btnPi").click();
+  assert.deepStrictEqual(shown(), []);
+  assert.strictEqual(bar.getAttribute("aria-hidden"), "true");
+
+  assert.deepStrictEqual(errors, []);
+});
+
 test("database enable checkbox is independent per mode", async () => {
   const { dom, errors } = createDom();
   await waitFor(
