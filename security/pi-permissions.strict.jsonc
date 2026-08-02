@@ -1,3 +1,17 @@
+// ============================================================================
+// NOT ACTIVE. NOTHING READS THIS FILE.
+//
+// It targets an older Pi permission extension that is no longer the mechanism
+// in use. The enforced policy is pi-sandbox, configured at:
+//     ~/.pi/agent/sandbox.json   (global)
+//     <project>/.pi/sandbox.json (project)
+// See SECURITY-HARDENING.md. Copying this file to
+// ~/.pi/agent/pi-permissions.jsonc grants no protection whatsoever.
+//
+// Kept only as a reference for the rules a policy should express. Treat every
+// "deny" below as aspirational, not enforced.
+// ============================================================================
+
 {
   // Copy to: ~/.pi/agent/pi-permissions.jsonc
   "defaultPolicy": {

@@ -321,9 +321,38 @@ function createPiDomain(deps) {
     return Boolean(getAllowedPiSessionPath(convProc, candidatePath));
   }
 
+  // A sandbox policy counts as active only if it exists AND does not switch
+  // itself off. Reporting on file existence alone told the user they were
+  // sandboxed when the policy said "enabled": false.
+  function sandboxPolicyActive(policyPath) {
+    if (!fs.existsSync(policyPath)) return false;
+    try {
+      const raw = fs
+        .readFileSync(policyPath, "utf8")
+        .replace(/^\s*\/\/.*$/gm, "");
+      const parsed = JSON.parse(raw);
+      return parsed?.enabled !== false;
+    } catch (_error) {
+      // Unparseable policy: the file is there, so report it rather than
+      // claiming the user has no sandbox at all.
+      return true;
+    }
+  }
+
   function getPiRuntimeInfo(settings = loadPiSettings()) {
     const resolvedWorkingDirectory = settings.workingDirectory || DATA_DIR;
-    const globalSandbox = path.join(os.homedir(), ".pi", "sandbox.json");
+    // pi-sandbox reads the global policy from ~/.pi/agent/sandbox.json and the
+    // project policy from <cwd>/.pi/sandbox.json (its README, "Add a config
+    // like this either to ~/.pi/agent/sandbox.json (global) or to
+    // .pi/sandbox.json (local)"). Dive previously checked ~/.pi/sandbox.json,
+    // which pi-sandbox does not read, so a correctly sandboxed setup was
+    // reported as unsandboxed.
+    const globalSandbox = path.join(
+      os.homedir(),
+      ".pi",
+      "agent",
+      "sandbox.json",
+    );
     const projectSandbox = path.join(
       resolvedWorkingDirectory,
       ".pi",
@@ -355,9 +384,9 @@ function createPiDomain(deps) {
       resolvedWorkingDirectory,
       sandbox: {
         globalPath: globalSandbox,
-        globalEnabled: fs.existsSync(globalSandbox),
+        globalEnabled: sandboxPolicyActive(globalSandbox),
         projectPath: projectSandbox,
-        projectEnabled: fs.existsSync(projectSandbox),
+        projectEnabled: sandboxPolicyActive(projectSandbox),
       },
     };
   }
