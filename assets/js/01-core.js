@@ -97,16 +97,9 @@ let mode = "llamacpp";
 // Registry of selectable chat modes. Each entry drives the top-left mode
 // switcher and the "Enabled Modes" settings checkboxes. New modes are
 // added here (and given their button in the .toggle block).
-// Registry order matches the topbar toggle: llama.cpp is the first mode,
-// so "First enabled" and normalizeEnabledModes resolve to it by default.
-const MODE_DEFS = [
-  { id: "llamacpp", label: "llama.cpp", btnId: "btnLlamaCpp" },
-  { id: "pi", label: "Pi", btnId: "btnPi" },
-  { id: "cloud", label: "Cloud", btnId: "btnCloud" },
-  { id: "lmstudio", label: "LM Studio", btnId: "btnLmStudio" },
-  { id: "ollama", label: "Ollama", btnId: "btnOllama" },
-];
-const DEFAULT_ENABLED_MODES = ["llamacpp", "pi", "cloud"];
+// MODE_DEFS and DEFAULT_ENABLED_MODES come from 00-modes.js, which loads
+// first. MODE_DEFS is in topbar order: llama.cpp is the first mode, so
+// "First enabled" and normalizeEnabledModes resolve to it by default.
 const ENABLED_MODES_STORAGE_KEY = "ollama-pi-chat-enabled-modes";
 const DEFAULT_MODE_STORAGE_KEY = "ollama-pi-chat-default-mode";
 let enabledModes = [...DEFAULT_ENABLED_MODES];
@@ -144,8 +137,6 @@ const modeSession = {
   lmstudio: createModeSession(),
   llamacpp: createModeSession(),
 };
-// Local OpenAI-compatible bespoke modes (server: /api/<id>/stream).
-const LOCAL_MODE_IDS = ["lmstudio", "llamacpp"];
 // Attachments are per-mode and independent: each mode keeps its own list
 // of pending files, so switching away and back to a mode keeps them, and
 // a file never bleeds into another mode. Multiple files accumulate — each
@@ -404,7 +395,7 @@ const CLOUD_DEFAULT_BASE_URLS = {
   mistral: "https://api.mistral.ai/v1",
   google: "https://generativelanguage.googleapis.com/v1beta/openai",
 };
-const SEARCH_ALGO_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
+const SEARCH_ALGO_MODE_KEYS = MODE_IDS;
 function normalizeSearchAlgorithmValues(raw, fallback) {
   return {
     rrfK: clampInteger(raw?.rrfK, fallback.rrfK, 1, 100),
@@ -552,7 +543,7 @@ let ollamaPromptOverrides = { dboff: "", dbon: "" };
 // was created in, and each mode has its own active prompt. Prompts apply to
 // the modes that use a system-prompt overlay (Ollama, Cloud + the local
 // modes). Nothing is shared between modes.
-const PROMPT_MODE_KEYS = ["ollama", "cloud", "lmstudio", "llamacpp"];
+const PROMPT_MODE_KEYS = DIVE_SKILL_MODE_IDS;
 function promptModeOf(p) {
   return PROMPT_MODE_KEYS.includes(p && p.mode) ? p.mode : "ollama";
 }
@@ -726,7 +717,7 @@ const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
   macos_control: false,
   task_plan: true,
 });
-const SKILL_MODE_IDS = ["ollama", "cloud", "lmstudio", "llamacpp"];
+const SKILL_MODE_IDS = DIVE_SKILL_MODE_IDS;
 const builtinSkillsConfigByMode = Object.fromEntries(
   SKILL_MODE_IDS.map((modeId) => [
     modeId,

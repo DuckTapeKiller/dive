@@ -2,6 +2,8 @@
 // DATA_DIR/prompts.json; the client injects their content into chats.
 const fs = require("fs");
 const path = require("path");
+const { lessonsFilePath } = require("../skills.js");
+const { DIVE_SKILL_MODE_IDS } = require("../assets/js/00-modes.js");
 
 module.exports = function createPromptsDomain(deps) {
   const { DATA_DIR, parseJsonBody } = deps;
@@ -50,13 +52,9 @@ module.exports = function createPromptsDomain(deps) {
     }
   }
 
-  // Lessons are strictly per-mode files under DATA_DIR/lessons.
-  const LESSON_MODES = ["ollama", "cloud", "lmstudio", "llamacpp"];
-
-  function lessonsFileForMode(mode) {
-    const key = LESSON_MODES.includes(mode) ? mode : "ollama";
-    return path.join(DATA_DIR, "lessons", `${key}-lessons.md`);
-  }
+  // Lessons are strictly per-mode files under DATA_DIR/lessons. The path and
+  // the unknown-mode fallback live in skills.js, which also writes them.
+  const lessonsFileForMode = (mode) => lessonsFilePath(DATA_DIR, mode);
 
   async function handleRequest(ctx) {
     const { req, urlPath, requestUrl, send } = ctx;
@@ -70,7 +68,7 @@ module.exports = function createPromptsDomain(deps) {
       } catch {
         text = "";
       }
-      send(200, { mode, text, path: file, modes: LESSON_MODES });
+      send(200, { mode, text, path: file, modes: DIVE_SKILL_MODE_IDS });
       return true;
     }
 

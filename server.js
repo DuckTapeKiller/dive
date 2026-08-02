@@ -19,6 +19,7 @@ const {
   saveCustomSkills: saveModeCustomSkills,
 } = require("./mode-state.js");
 const { isDatabaseSlashCommand } = require("./slash_commands");
+const { MODE_IDS, DEFAULT_ENABLED_MODES } = require("./assets/js/00-modes.js");
 const {
   redactText: redactTraceText,
   redactValue: redactTraceValue,
@@ -448,7 +449,7 @@ const DEFAULT_UI_FONTS = Object.freeze({
   llamacpp: "Marcellus, serif",
 });
 // Every mode that has its own persisted palette/font.
-const UI_SETTINGS_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
+const UI_SETTINGS_MODE_KEYS = MODE_IDS;
 const LEGACY_DEFAULT_UI_FONT = '"Space Mono", monospace';
 
 function createHttpError(statusCode, message) {
@@ -1320,21 +1321,9 @@ function defaultUiSettings() {
     fonts: {
       ...DEFAULT_UI_FONTS,
     },
-    fontScales: {
-      ollama: 1,
-      pi: 1,
-      cloud: 1,
-      lmstudio: 1,
-      llamacpp: 1,
-    },
-    thinkingExpanded: {
-      ollama: false,
-      pi: false,
-      cloud: false,
-      lmstudio: false,
-      llamacpp: false,
-    },
-    enabledModes: ["llamacpp", "pi", "cloud"],
+    fontScales: Object.fromEntries(MODE_IDS.map((id) => [id, 1])),
+    thinkingExpanded: Object.fromEntries(MODE_IDS.map((id) => [id, false])),
+    enabledModes: [...DEFAULT_ENABLED_MODES],
     defaultMode: "",
   };
 }
@@ -1432,6 +1421,9 @@ function loadUiSettingsWithMeta() {
         raw?.fonts && typeof raw.fonts === "object" && !Array.isArray(raw.fonts)
           ? raw.fonts
           : {};
+      // Frozen on purpose: these were the only modes that existed when the
+      // legacy default font was in use. This must NOT follow the mode registry
+      // — adding a mode later would break the migration.
       const isLegacyUntouchedFontSet = ["ollama", "pi", "cloud"].every(
         (modeName) =>
           !rawFonts[modeName] ||

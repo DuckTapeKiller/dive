@@ -1831,7 +1831,7 @@ function updateSettingsTabAvailability(state = {}) {
 // UI as well as on the server. The old single-key value is migrated to
 // every non-Pi mode once, preserving the previous behaviour without
 // making future edits global again.
-const MCP_MODE_IDS = ["ollama", "cloud", "lmstudio", "llamacpp"];
+const MCP_MODE_IDS = DIVE_SKILL_MODE_IDS;
 const MCP_CONFIG_STORAGE_KEY = "mcpConfigByMode";
 const mcpConfigByMode = Object.fromEntries(
   MCP_MODE_IDS.map((modeId) => [modeId, ""]),

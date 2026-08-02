@@ -7,6 +7,7 @@ const http = require("http");
 const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
+const { DIVE_SKILL_MODE_IDS } = require("./assets/js/00-modes.js");
 const os = require("os");
 const vm = require("vm");
 const { exec, execFile } = require("child_process");
@@ -4404,7 +4405,7 @@ async function executeBookSearch(
 // mode has its own file in DATA_DIR/lessons and never sees another mode's
 // lessons. Pi is excluded entirely — it has its own native context system
 // (~/.pi/agent/AGENTS.md).
-const LESSON_MODES = ["ollama", "cloud", "lmstudio", "llamacpp"];
+const LESSON_MODES = DIVE_SKILL_MODE_IDS;
 
 function lessonModeKey(mode) {
   return LESSON_MODES.includes(mode) ? mode : "ollama";
@@ -4663,6 +4664,7 @@ async function executeSkill(toolCall, context = {}) {
 }
 
 module.exports = {
+  lessonsFilePath,
   readLessons,
   migrateLegacyLessons,
   LESSON_MODES,

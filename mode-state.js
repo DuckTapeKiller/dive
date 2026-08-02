@@ -3,13 +3,13 @@
 const fs = require("fs");
 const path = require("path");
 const { randomUUID } = require("crypto");
+const { DIVE_SKILL_MODE_IDS } = require("./assets/js/00-modes.js");
 
 // Installed plugin definitions may be shared by every mode. Mutable skill
 // activation and custom-skill availability are deliberately stored separately
-// for each non-Pi runtime, however. Keep this list small and explicit:
-// accepting arbitrary mode names here would make it too easy for a new route to
-// accidentally create an unowned state bucket.
-const NON_PI_MODES = Object.freeze(["ollama", "cloud", "lmstudio", "llamacpp"]);
+// for each runtime that uses Dive's own skill loop, however — Pi is excluded,
+// so a route cannot accidentally create an unowned state bucket for it.
+const NON_PI_MODES = DIVE_SKILL_MODE_IDS;
 const NON_PI_MODE_SET = new Set(NON_PI_MODES);
 
 function isNonPiMode(mode) {

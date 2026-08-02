@@ -3,6 +3,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const zlib = require("zlib");
+const { MODE_IDS } = require("../assets/js/00-modes.js");
 const { execFile, spawn, spawnSync } = require("child_process");
 const {
   extractEpub,
@@ -28,7 +29,7 @@ const SEMANTIC_BRIDGE_TERM_LIMIT = 14;
 const SEMANTIC_DOMINANT_WEIGHT = 2.75;
 const STRICT_FTS_DEFAULT_WEIGHT = 3.0;
 const SOURCE_STRICT_FTS_DEFAULT_WEIGHT = 3.25;
-const SEARCH_MODE_KEYS = ["ollama", "pi", "cloud", "lmstudio", "llamacpp"];
+const SEARCH_MODE_KEYS = MODE_IDS;
 const SOURCE_SKIP_DIRS = new Set([
   ".git",
   ".obsidian",

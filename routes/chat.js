@@ -36,6 +36,7 @@ const {
   getPluginCommandSnapshot,
 } = require("../plugins.js");
 const { requireNonPiMode } = require("../mode-state.js");
+const { DIVE_SKILL_MODE_IDS } = require("../assets/js/00-modes.js");
 const { extractWebSources } = require("./web-sources.js");
 
 // Skills the exact-repeat loop guard must not block: agent sessions
@@ -1760,12 +1761,7 @@ module.exports = function createChatDomain(deps) {
   // request, and is never affected by these overrides. "Restore Default"
   // simply deletes the override file — the hardcoded constants are the
   // permanent fallback and are never modified.
-  const SYSTEM_PROMPT_OVERRIDE_MODES = [
-    "ollama",
-    "cloud",
-    "lmstudio",
-    "llamacpp",
-  ];
+  const SYSTEM_PROMPT_OVERRIDE_MODES = DIVE_SKILL_MODE_IDS;
   const SYSTEM_PROMPTS_DIR = path.join(DATA_DIR, "system-prompts");
 
   function systemPromptOverrideFile(modeName, databaseEnabled) {
