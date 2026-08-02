@@ -1455,3 +1455,63 @@ test("note code blocks wrap instead of scrolling sideways", () => {
     "the .hljs colour is what pre pairs with",
   );
 });
+
+test("a turn with no reasoning gets no thinking bubble at all", async () => {
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const w = dom.window;
+  const session = w.getActiveModeSession("pi");
+
+  // Pi answered without emitting a single reasoning token, and ran no tools.
+  session.history = [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "Pi answer" },
+  ];
+  w.renderSessionTranscript(session);
+
+  assert.strictEqual(
+    w.document.querySelectorAll(".thinking-wrap").length,
+    0,
+    "an empty thinking bubble was created for a turn with no reasoning",
+  );
+  assert.strictEqual(
+    w.document.querySelectorAll(".thinking-details").length,
+    0,
+    'a bordered "Thinking..." panel was rendered with nothing in it',
+  );
+  assert.doesNotMatch(
+    w.document.getElementById("chat").textContent,
+    /Thinking/,
+  );
+});
+
+test("a turn that did reason still shows its thinking panel", async () => {
+  // The other half of the rule: suppressing the empty case must not suppress
+  // the real one.
+  const { dom } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const w = dom.window;
+  const session = w.getActiveModeSession("pi");
+  session.history = [
+    { role: "user", content: "hello" },
+    {
+      role: "assistant",
+      content: "Pi answer",
+      thinking: "First I considered the options.",
+    },
+  ];
+  w.renderSessionTranscript(session);
+
+  const panel = w.document.querySelector(".thinking-wrap .thinking-details");
+  assert.ok(panel, "a turn with reasoning lost its thinking panel");
+  assert.strictEqual(panel.style.display, "block");
+  assert.match(panel.textContent, /First I considered the options/);
+});
