@@ -678,3 +678,69 @@ test("genuine institutional domains keep their authority", () => {
     assert.ok(score(url) > plain, `${url} was demoted to an unknown domain`);
   }
 });
+
+test("an article is not discarded for opening with an unlucky word", () => {
+  // The error check used to match a bare leading word, so a real article that
+  // began "Error analysis is..." or "Forbidden City is..." was thrown away as
+  // an error response and its evidence lost without a trace.
+  const article = (opening) =>
+    opening +
+    " " +
+    "This continues as ordinary encyclopedic prose. ".repeat(12);
+  for (const opening of [
+    "Error analysis is a branch of numerical methods.",
+    "Forbidden City is a palace complex in Beijing.",
+    "Failed states are a recurring topic in political science.",
+    "Failure modes of the design were studied at length.",
+    "Not found in the archive, the manuscript resurfaced in 1974.",
+    "Unavailable goods drove the wartime black market.",
+  ]) {
+    const result = validateReaderText(article(opening));
+    assert.strictEqual(
+      result.ok,
+      true,
+      `a genuine article was rejected (${opening}): ${result.error}`,
+    );
+  }
+});
+
+test("genuine error payloads are still refused", () => {
+  // The other half: loosening the pattern must not let reader errors through
+  // as evidence. Two routes reject them, and both matter.
+  //
+  // Short ones never reach the word check at all — the minimum-length rule
+  // catches them first.
+  for (const terse of [
+    "Access denied",
+    "Forbidden",
+    "Error 404",
+    "Not found.",
+  ]) {
+    const result = validateReaderText(terse);
+    assert.strictEqual(result.ok, false, `accepted as evidence: ${terse}`);
+  }
+
+  // Long ones are the real risk: an error page padded out with boilerplate is
+  // over the length threshold and has to be recognised by shape.
+  const boilerplate =
+    " If you believe you should have access, contact your administrator. ".repeat(
+      6,
+    );
+  for (const payload of [
+    "Error: could not fetch the page." + boilerplate,
+    "Error 404 Not Found." + boilerplate,
+    "Failed to fetch https://example.org/a." + boilerplate,
+    "Unable to load the document." + boilerplate,
+    "Access denied." + boilerplate,
+    "Forbidden - you do not have permission." + boilerplate,
+    "Service unavailable - try again later." + boilerplate,
+    "Error — upstream timeout." + boilerplate,
+  ]) {
+    const result = validateReaderText(payload);
+    assert.strictEqual(
+      result.ok,
+      false,
+      `an error payload was accepted as evidence: ${payload.slice(0, 60)}`,
+    );
+  }
+});

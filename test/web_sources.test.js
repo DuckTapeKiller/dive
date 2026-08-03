@@ -165,3 +165,32 @@ test("extracts numbered DuckDuckGo skill results", () => {
     { title: "Second result", url: "https://example.org/second" },
   ]);
 });
+
+test("the manifest survives an extra line between a title and its URL", () => {
+  // Archived sources carry an "Original URL:" line, and a future field would
+  // otherwise make every pill disappear without warning.
+  const sources = extractWebSources(
+    "deep_research",
+    {},
+    [
+      "### Verified source manifest",
+      "1. Archived Source",
+      "   Retrieved: 2019-04-02 via Wayback Machine",
+      "   URL: https://web.archive.org/web/2019/https://example.com/a",
+      "   Original URL: https://example.com/a",
+      "2. Plain Source",
+      "   URL: https://example.org/b",
+      "",
+      "### Evidence excerpts",
+      "3. Not a source",
+      "   URL: https://example.net/should-not-appear",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual(sources, [
+    {
+      title: "Archived Source",
+      url: "https://web.archive.org/web/2019/https://example.com/a",
+    },
+    { title: "Plain Source", url: "https://example.org/b" },
+  ]);
+});

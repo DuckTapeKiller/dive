@@ -7,8 +7,14 @@
 const CHALLENGE_PAGE_RE =
   /just a moment|enable javascript and cookies|verifying you are human|attention required|checking your browser|cf-chl-|performing security verification|are you a human|captcha required/i;
 
+// An error payload, not merely a page that opens with an unlucky word. The
+// bare-word version discarded genuine articles: "Error analysis is a branch of
+// numerical methods…" and "Forbidden City is a palace complex…" were both
+// thrown away as error responses. Require the shape an error actually has — a
+// colon or dash, an HTTP status, a "failed to <verb>", or the phrase standing
+// alone as the whole line.
 const READER_ERROR_RE =
-  /^(?:error|failed|failure|access denied|forbidden|unavailable|service unavailable)\b/i;
+  /^(?:(?:error|failure|unavailable|service unavailable)\s*(?:[:\-–—]|\d{3}\b)|(?:failed|unable)\s+to\s+(?:fetch|load|retrieve|read|open|access|connect|reach)|(?:access denied|forbidden|not found)\s*(?:[:\-–—.]|$))/i;
 const PAYWALL_PAGE_RE =
   /subscribe to continue|sign in to continue reading|register to read|you have reached your (?:free )?article limit|subscriber[- ]only|become a subscriber to read/i;
 

@@ -35,11 +35,24 @@ function extractDeepResearchManifest(text, add) {
     /^\s*#{1,6}\s+(?:verified\s+)?source\s+manifest\s*$/i.test(line),
   );
   if (marker < 0) return false;
-  for (let i = marker + 1; i + 1 < lines.length; i += 1) {
+  // A record is a numbered title followed by its URL. The URL is usually on the
+  // very next line, but the dossier also emits an "Original URL:" line for
+  // archived sources, and a future field would otherwise make every pill vanish
+  // silently. So scan forward to the record's first URL, and stop at the next
+  // record or the next heading — never past the manifest into page prose.
+  let pending = "";
+  for (let i = marker + 1; i < lines.length; i += 1) {
     if (/^\s*#{1,6}\s+/.test(lines[i])) break;
     const title = lines[i].match(/^\s*\d+\.\s+(.+?)\s*$/);
-    const url = lines[i + 1].match(/^\s*URL:\s*(https?:\/\/\S+)/i);
-    if (title && url) add(sourceTitleFromRecord(title[1]), url[1]);
+    if (title) {
+      pending = sourceTitleFromRecord(title[1]);
+      continue;
+    }
+    const url = lines[i].match(/^\s*URL:\s*(https?:\/\/\S+)/i);
+    if (pending && url) {
+      add(pending, url[1]);
+      pending = "";
+    }
   }
   return true;
 }
