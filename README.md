@@ -317,12 +317,38 @@ xattr -dr com.apple.quarantine /path/to/Dive.app
 
 ---
 
+## Documentation
+
+Full documentation lives in [`docs/`](docs/README.md).
+
+|                                          |                                                                         |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| [Architecture](docs/architecture.md)     | Processes, module map, how a message travels                            |
+| [Modes](docs/modes.md)                   | The five modes and exactly how they differ                              |
+| [HTTP API](docs/api.md)                  | Every endpoint                                                          |
+| [Skills](docs/skills.md)                 | All 27 built-in skills                                                  |
+| [Slash commands](docs/slash-commands.md) | Commands and the composer launcher                                      |
+| [Pi](docs/pi.md)                         | The Pi agent integration                                                |
+| [Library](docs/library.md)               | Indexing and retrieval                                                  |
+| [MCP](docs/mcp.md)                       | Model Context Protocol servers                                          |
+| [Plugins](docs/plugins.md)               | Drafts, approval, scoping — with [PLUGINS.md](PLUGINS.md) for authoring |
+| [Security](docs/security.md)             | Threat model and controls                                               |
+| [Data directory](docs/data-directory.md) | Every file Dive writes                                                  |
+| [Development](docs/development.md)       | Running, building, packaging                                            |
+| [Testing](docs/testing.md)               | Conventions, and the rule every test must pass                          |
+
 ## Developer Checks
 
 ```bash
-npm test           # 52 tests: server, DOM boot, EPUB pipeline
-npx eslint .       # lint
-npx prettier --check .
+npm test                  # 406 tests
+npm run lint              # eslint + whole-program frontend lint
+npm run format:check      # prettier
+```
+
+Use a scratch data directory so development never touches your real one:
+
+```bash
+DIVE_DATA_DIR=/tmp/dive-dev npm run dev:web
 ```
 
 License: MIT.
