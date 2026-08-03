@@ -1018,17 +1018,29 @@ async function executeSkill(toolCall, context = {}) {
   ) {
     return `Error: skill "${name}" is disabled for ${context.mode || "this"} mode.`;
   }
+  // No arguments at all is a legitimate call: several skills take none, and
+  // models routinely send "" or omit the field entirely for those.
+  const rawArgs = toolCall.function.arguments;
   let args = {};
-  try {
-    args = JSON.parse(toolCall.function.arguments);
-  } catch (error) {
-    // The model emitted arguments that are not valid JSON. Running the skill
-    // with {} makes it fail further down with an unrelated-looking message, so
-    // say plainly what happened.
-    console.warn(
-      `[skills] ${name}: could not parse tool arguments, running with none:`,
-      error.message,
-    );
+  if (rawArgs !== undefined && rawArgs !== null && String(rawArgs).trim()) {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch (error) {
+      // Arguments that are not valid JSON tell us nothing about what the model
+      // meant. Running with {} guesses, and the skill then fails somewhere
+      // further down with a message about the wrong thing — or worse, succeeds
+      // on defaults and answers a question nobody asked. Hand the model back an
+      // error it can act on instead.
+      //
+      // This is only about UNPARSEABLE arguments. Valid JSON that omits a
+      // field is left alone: models omit schema-required fields constantly,
+      // and the skills that care already supply their own defaults or return
+      // their own validation message.
+      return `Error: skill "${name}" received arguments that are not valid JSON (${error.message}). Call it again with a valid JSON object for its arguments.`;
+    }
+    if (args === null || typeof args !== "object" || Array.isArray(args)) {
+      return `Error: skill "${name}" received ${Array.isArray(args) ? "an array" : typeof args} as its arguments. Call it again with a JSON object.`;
+    }
   }
 
   switch (name) {

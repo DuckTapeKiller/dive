@@ -246,3 +246,71 @@ test("no skill throws on missing or empty arguments", async () => {
     );
   }
 });
+
+// ------------------------------------------------- tool-argument handling
+
+test("malformed tool arguments are refused, not silently run with none", async () => {
+  // The model emitted something that is not JSON. We know nothing about what it
+  // meant, so running with {} is a guess: the skill either fails somewhere
+  // unrelated, or succeeds on its defaults and answers a question nobody asked.
+  // Either way the user is not told. Hand the model an error it can act on.
+  for (const bad of [
+    "{not json",
+    "query: 'test'",
+    '{"query": }',
+    "undefined",
+    '{"a": 1',
+  ]) {
+    const out = await executeSkill(
+      { function: { name: "duckduckgo", arguments: bad } },
+      { dataDir, mode: "cloud" },
+    );
+    assert.match(
+      out,
+      /not valid JSON/i,
+      `${JSON.stringify(bad)} was accepted instead of refused: ${out.slice(0, 120)}`,
+    );
+    // The message has to name the skill, or the model cannot tell which call
+    // to correct when several ran in one turn.
+    assert.match(out, /duckduckgo/, out.slice(0, 120));
+  }
+});
+
+test("arguments that parse to a non-object are refused", async () => {
+  for (const bad of ['"just a string"', "42", "[1,2,3]", "null"]) {
+    const out = await executeSkill(
+      { function: { name: "duckduckgo", arguments: bad } },
+      { dataDir, mode: "cloud" },
+    );
+    assert.match(
+      out,
+      /^Error:/,
+      `${bad} was accepted as arguments: ${out.slice(0, 120)}`,
+    );
+  }
+});
+
+test("a skill that needs no arguments still runs with none", async () => {
+  // The other half: "" and an absent field are how models call a no-argument
+  // skill. Refusing those would break every one of them.
+  for (const empty of ["", "   ", "{}", undefined]) {
+    const out = await executeSkill(
+      { function: { name: "time_and_date", arguments: empty } },
+      { dataDir, mode: "cloud" },
+    );
+    assert.doesNotMatch(
+      out,
+      /not valid JSON/i,
+      `a no-argument call with ${JSON.stringify(empty)} was refused: ${out.slice(0, 120)}`,
+    );
+  }
+});
+
+test("valid JSON that omits a field keeps the skill's own defaults", async () => {
+  // deep_etymology declares "language" as schema-required, but defaults it to
+  // English because models omit required fields constantly. Argument validation
+  // must not turn that working call into an error.
+  const out = await run("deep_etymology", { word: "" }, { mode: "cloud" });
+  assert.doesNotMatch(out, /not valid JSON/i, out.slice(0, 140));
+  assert.strictEqual(typeof out, "string");
+});

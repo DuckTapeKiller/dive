@@ -10,6 +10,7 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { randomBytes, randomUUID } = require("crypto");
 const { StringDecoder } = require("string_decoder");
+const { isDatabaseSlashCommand } = require("../slash_commands.js");
 const { buildChatLibraryContext } = require("../library/store");
 const { extractWebSources } = require("./web-sources.js");
 const {
@@ -3079,6 +3080,7 @@ function createPiDomain(deps) {
         const promptQuestion = getCommandMessage(slashCommand, body.message);
         let promptMessage = promptQuestion;
         let libraryResults = [];
+        let libraryError = "";
         try {
           const libraryContext = await buildChatLibraryContext(
             promptQuestion,
@@ -3104,13 +3106,26 @@ function createPiDomain(deps) {
             );
           }
         } catch (error) {
-          // The streaming route reports this to the client as library_error.
-          // This route has no event channel, so at least record it: the answer
-          // is produced without the database grounding the user asked for.
+          // The streaming route reports this as a library_error event. This
+          // route has no event channel, so it goes in the response body: the
+          // two must not disagree about whether retrieval failed.
+          //
+          // When the user asked for the database explicitly, a normal-looking
+          // answer would be a lie — it would be ungrounded and indistinguishable
+          // from a grounded one. Fail instead. Ambient context is best-effort,
+          // so that continues, and says so.
           console.warn(
             "[pi] library context unavailable for this turn:",
             error,
           );
+          if (isDatabaseSlashCommand(slashCommand)) {
+            send(502, {
+              error: `Library search failed, so this answer would not be grounded in your database: ${error.message}`,
+              libraryError: error.message,
+            });
+            return true;
+          }
+          libraryError = error.message;
         }
         const piSettings = loadPiSettings();
         const convId = requirePiConversationId(body.saveConv);
@@ -3123,7 +3138,11 @@ function createPiDomain(deps) {
           }
         });
         const result = await waitForPiSessionStep(session);
-        send(200, { ...result, libraryResults });
+        send(200, {
+          ...result,
+          libraryResults,
+          ...(libraryError ? { libraryError } : {}),
+        });
       } catch (e) {
         if (req.destroyed) {
           console.log(
