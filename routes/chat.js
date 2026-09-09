@@ -136,6 +136,16 @@ module.exports = function createChatDomain(deps) {
     return context;
   }
 
+  // Images a skill produced this turn, waiting to be handed to the model.
+  //
+  // A tool result is a STRING — `content: String(result)` below, and the OpenAI
+  // schema has no image in a `tool` message — so a skill that takes a
+  // screenshot has no way to show it. The picture went to disk and the model
+  // was told a file path it could not open, which is the same as not having
+  // taken it. Skills push here instead, and the images are attached to a user
+  // message after the tool results, which is where a vision model can see them.
+  let pendingSkillImages = [];
+
   function skillExecutionContext(mode, modeContext, allowShellCommand) {
     return {
       dataDir: DATA_DIR,
@@ -146,6 +156,47 @@ module.exports = function createChatDomain(deps) {
       customSkills: modeContext.customSkills,
       pluginSkills: modeContext.pluginSkills,
       pluginCommands: modeContext.pluginCommands,
+      // The audit trail, handed to the skill rather than kept for the routes.
+      // A skill that acts on the world — clicking a page, typing into a form —
+      // belongs in security-events.jsonl for the same reason a permission
+      // prompt does, and it cannot write there without this.
+      appendSecurityEvent,
+      // How a skill hands the model something to LOOK at. Bounded, because an
+      // agent left to screenshot in a loop would otherwise fill the context
+      // with images.
+      // The shape matters: normalizeAttachmentImages() in server.js keeps only
+      // objects carrying BOTH dataBase64 and mimeType and silently drops
+      // anything else, so a bare base64 string here reaches the model as no
+      // image at all — which is exactly what happened the first time.
+      attachImage: (dataBase64, mimeType = "image/png", name = "") => {
+        if (typeof dataBase64 !== "string" || !dataBase64) return false;
+        if (typeof mimeType !== "string" || !mimeType) return false;
+        if (pendingSkillImages.length >= MAX_SKILL_IMAGES_PER_ROUND) {
+          return false;
+        }
+        pendingSkillImages.push({ dataBase64, mimeType, name });
+        return true;
+      },
+    };
+  }
+
+  // One screenshot is evidence; six are a context leak.
+  const MAX_SKILL_IMAGES_PER_ROUND = 2;
+
+  // Attach whatever the skills produced to a user message, and clear the queue.
+  // A `tool` message cannot carry an image, so it rides on a user turn placed
+  // straight after the tool results — the shape vision models actually accept.
+  function takePendingSkillImages() {
+    if (!pendingSkillImages.length) return null;
+    const images = pendingSkillImages;
+    pendingSkillImages = [];
+    return {
+      role: "user",
+      content:
+        images.length > 1
+          ? "Here are the screenshots the tool just captured."
+          : "Here is the screenshot the tool just captured.",
+      images,
     };
   }
 
@@ -762,6 +813,9 @@ module.exports = function createChatDomain(deps) {
               },
             ];
           }
+          // Anything a skill wants the model to SEE goes in after the results.
+          const imageTurn = takePendingSkillImages();
+          if (imageTurn) requestMessages = [...requestMessages, imageTurn];
           // Reset the accumulated text so the final reply is ONLY what the model
           // writes after the tool results; anything interim goes to thinking.
           moveInterimTextToThinking();

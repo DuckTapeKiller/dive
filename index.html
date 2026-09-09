@@ -532,6 +532,21 @@
               <path d="M9 8V2" />
             </svg>
           </button>
+          <button class="side-box side-nav-btn" id="sideBrowserBtn">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+              <path d="M2 12h20" />
+            </svg>
+          </button>
           <button class="side-box side-nav-btn" id="sideNotesBtn">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -664,6 +679,25 @@
               d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
             />
             <path d="M9 8V2" />
+          </svg>
+        </button>
+        <button
+          id="railBrowserBtn"
+          title="Agent browser"
+          aria-label="Agent browser"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+            <path d="M2 12h20" />
           </svg>
         </button>
         <button id="railNotesBtn" title="Notes" aria-label="Notes">
@@ -873,6 +907,170 @@
             placeholder="Note title"
             autocomplete="off"
           />
+        </div>
+      </div>
+
+      <div id="browserResizer" style="display: none"></div>
+      <!-- What the agent's browser is looking at. Read-only by design: the
+           panel can watch and it can close a session, but it cannot navigate.
+           Driving the browser belongs to browse_read/browse_act, where the
+           confirmation gate is — an endpoint here that could navigate would be
+           a way around that gate. -->
+      <div id="browserPanel">
+        <div id="browserHeader">
+          <span>AGENT BROWSER</span>
+          <div id="browserActions">
+            <button
+              id="browserExtBtn"
+              type="button"
+              title="Manage extensions"
+              aria-pressed="false"
+            >
+              EXTENSIONS
+            </button>
+            <button id="browserRefreshBtn" title="Refresh now">REFRESH</button>
+            <button id="browserCloseAllBtn" title="End every session">
+              END ALL
+            </button>
+            <button id="closeBrowserBtn">✕</button>
+          </div>
+        </div>
+        <div id="browserBody">
+          <!-- The address bar. The agent drives this browser through
+               browse_read/browse_act; this is how YOU drive it — to get past a
+               cookie wall, sign in, or just look at something yourself. -->
+          <div id="browserNav">
+            <button
+              id="browserBackBtn"
+              title="Back"
+              aria-label="Back"
+              type="button"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-chevron-left"
+                aria-hidden="true"
+              >
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+            </button>
+            <button
+              id="browserForwardBtn"
+              title="Forward"
+              aria-label="Forward"
+              type="button"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-chevron-right"
+                aria-hidden="true"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+            <button
+              id="browserReloadBtn"
+              title="Reload"
+              aria-label="Reload"
+              type="button"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="lucide lucide-rotate-cw"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+              </svg>
+            </button>
+            <button
+              id="browserBackToPageBtn"
+              type="button"
+              title="Back to the page"
+              hidden
+            >
+              BACK TO PAGE
+            </button>
+            <!-- While the element picker runs it consumes every click, links
+                 included, so without this there is no way out of it. -->
+            <button
+              id="browserStopPickerBtn"
+              type="button"
+              title="Cancel the element picker"
+              hidden
+            >
+              STOP PICKER
+            </button>
+            <input
+              id="browserAddress"
+              type="text"
+              placeholder="Type a URL and press Enter"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="browserGoBtn" title="Go" type="button">GO</button>
+          </div>
+          <!-- Extensions run third-party code inside the browser the agent
+               drives, so installing is always an explicit act here and never
+               something the model can ask for. -->
+          <div id="browserExtPanel" hidden>
+            <div class="setting-section">
+              <h3 class="setting-title">BROWSER EXTENSIONS</h3>
+              <div class="setting-help" style="margin-bottom: 8px">
+                Extensions run inside the browser the agent drives. Enabling one
+                gives that browser a profile on disk and takes effect the next
+                time it launches. Chromium 153 has no Manifest V2, so uBlock
+                Origin classic cannot run here — Lite is the Manifest V3 build.
+              </div>
+              <div id="browserExtList"></div>
+            </div>
+          </div>
+          <label id="browserTakeoverRow">
+            <input
+              type="checkbox"
+              id="browserTakeover"
+              class="brutalist-toggle"
+              checked
+            />
+            <span>TAKE OVER — click and type into the page</span>
+          </label>
+          <div id="browserStatus"></div>
+          <div id="browserTabs"></div>
+          <div id="browserViewport">
+            <img id="browserView" alt="The page the agent is viewing" />
+            <!-- The extension's own panel, floating OVER the page the way a
+                 real browser popup does. It must not replace the page: the
+                 whole point of "block an element" is picking one off the page
+                 you are looking at. -->
+            <div id="browserUiLayer" hidden>
+              <img id="browserUiView" alt="Extension panel" />
+              <button id="browserUiCloseBtn" type="button" title="Close">
+                ✕
+              </button>
+            </div>
+            <div id="browserEmpty">
+              The agent has no page open. Ask it to browse something.
+            </div>
+          </div>
+          <div id="browserUrl"></div>
         </div>
       </div>
 
@@ -3969,5 +4167,6 @@
     <script src="/assets/js/05-history.js"></script>
     <script src="/assets/js/06-pi.js"></script>
     <script src="/assets/js/07-chat.js"></script>
+    <script src="/assets/js/08-browser.js"></script>
   </body>
 </html>

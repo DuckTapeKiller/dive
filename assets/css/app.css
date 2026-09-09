@@ -615,7 +615,8 @@ textarea {
 #historyResizer,
 #notesResizer,
 #settingsResizer,
-#mcpResizer {
+#mcpResizer,
+#browserResizer {
   width: 5px;
   background: var(--bg-secondary);
   cursor: col-resize;
@@ -625,7 +626,8 @@ textarea {
 #historyResizer:hover,
 #notesResizer:hover,
 #settingsResizer:hover,
-#mcpResizer:hover {
+#mcpResizer:hover,
+#browserResizer:hover {
   background: var(--bg-inverse);
 }
 
@@ -1331,7 +1333,8 @@ textarea {
 
 /* SETTINGS & MCP PANELS */
 #settingsPanel,
-#mcpPanel {
+#mcpPanel,
+#browserPanel {
   width: 50vw;
   background: var(--bg-inverse);
   border-left: var(--border-width) solid var(--border-color);
@@ -1344,8 +1347,14 @@ textarea {
   overflow-y: auto;
 }
 #settingsPanel.open,
-#mcpPanel.open {
+#mcpPanel.open,
+#browserPanel.open {
   display: flex;
+}
+/* The viewport scrolls, not the panel: a tall screenshot must not push the
+   session tabs out of reach. */
+#browserPanel {
+  overflow: hidden;
 }
 /* Keep the settings header + tabs fixed; only the active panel scrolls. */
 #settingsPanel {
@@ -1356,7 +1365,8 @@ textarea {
   min-height: 0;
 }
 #settingsHeader,
-#mcpHeader {
+#mcpHeader,
+#browserHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1366,7 +1376,8 @@ textarea {
   transition: border-color 0.2s;
 }
 #settingsHeader span,
-#mcpHeader span {
+#mcpHeader span,
+#browserHeader span {
   color: var(--text-inverse);
   font-size: calc(11px * var(--font-scale, 1));
   font-weight: 700;
@@ -1375,7 +1386,11 @@ textarea {
 }
 #closeHistoryBtn,
 #closeSettingsBtn,
-#closeMcpBtn {
+#closeMcpBtn,
+#closeBrowserBtn,
+#browserExtBtn,
+#browserRefreshBtn,
+#browserCloseAllBtn {
   padding: 4px 10px;
   background: transparent;
   color: var(--text-inverse);
@@ -1389,9 +1404,16 @@ textarea {
     color 0.1s,
     border-color 0.2s;
 }
+#browserExtBtn:hover,
+#browserRefreshBtn:hover,
+#browserCloseAllBtn:hover {
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
 #closeHistoryBtn:hover,
 #closeSettingsBtn:hover,
-#closeMcpBtn:hover {
+#closeMcpBtn:hover,
+#closeBrowserBtn:hover {
   background: #ff4444;
   border-color: #ff4444;
   color: #fff;
@@ -3864,4 +3886,334 @@ a:hover {
   .gallery-preview-search {
     flex: 1 1 150px;
   }
+}
+
+/* AGENT BROWSER PANEL */
+#browserActions {
+  display: flex;
+  gap: 6px;
+}
+#browserBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.browser-status {
+  padding: 8px 14px;
+  color: var(--text-inverse);
+  font-size: calc(10px * var(--font-scale, 1));
+  letter-spacing: 0.5px;
+  opacity: 0.75;
+}
+.browser-status.warn {
+  opacity: 1;
+  color: #ffb14a;
+}
+#browserTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 8px;
+}
+.browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-inverse);
+  border: var(--border-width) solid var(--text-inverse);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+  max-width: 100%;
+}
+.browser-tab.active {
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
+.browser-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+/* The guard's refusal count, shown rather than logged: a page repeatedly
+   trying to reach a local address is worth noticing. */
+.browser-tab-blocked {
+  padding: 0 4px;
+  background: #ff4444;
+  color: #fff;
+}
+.browser-tab-close:hover {
+  color: #ff4444;
+}
+/* The capture is taken at this element's own size (see refreshBrowserView),
+   so the page fills the panel instead of sitting as a letterboxed strip along
+   the top. `block` rather than flex: a flex child would be centred in leftover
+   space during the moment between a resize and the next capture. */
+#browserViewport {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-top: var(--border-width) solid var(--text-inverse);
+  border-bottom: var(--border-width) solid var(--text-inverse);
+  display: block;
+  position: relative;
+}
+/* Hidden until a session actually has a page. An <img> with no src renders as
+   a broken-image placeholder, which flashed on every open before the first
+   poll came back. */
+#browserView {
+  display: none;
+  width: 100%;
+  height: 100%;
+  /* The capture is requested at the viewport's size, so this is normally 1:1.
+     `contain` only matters for the frame in flight while a resize is being
+     applied, where a stretched page would look worse than a brief bar. */
+  object-fit: contain;
+  object-position: top left;
+}
+#browserEmpty {
+  padding: 24px 14px;
+  color: var(--text-inverse);
+  font-size: calc(10px * var(--font-scale, 1));
+  opacity: 0.6;
+  text-align: center;
+}
+#browserUrl {
+  padding: 8px 14px;
+  color: var(--text-inverse);
+  font-size: calc(10px * var(--font-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/* Address bar and take-over controls. The agent drives this browser through
+   its skills; these are how the person drives it. */
+#browserNav {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px 6px;
+  align-items: center;
+}
+/* Icon buttons: sized for the glyph, not for a text label. */
+#browserNav button svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+#browserBackBtn,
+#browserForwardBtn,
+#browserReloadBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+}
+/* Only shown while an extension's own UI has taken over the view. */
+#browserBackToPageBtn,
+#browserStopPickerBtn {
+  white-space: nowrap;
+}
+/* The picker swallows every click while it runs, so its exit has to stand out
+   from the ordinary navigation controls beside it. */
+#browserStopPickerBtn {
+  background: #ff4444;
+  border-color: #ff4444;
+  color: #fff;
+}
+#browserStopPickerBtn:hover:not(:disabled) {
+  background: #fff;
+  color: #ff4444;
+}
+#browserNav button {
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-inverse);
+  border: var(--border-width) solid var(--text-inverse);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 700;
+  flex-shrink: 0;
+}
+#browserNav button:hover:not(:disabled) {
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
+#browserNav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+#browserAddress {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-inverse);
+  border: var(--border-width) solid var(--text-inverse);
+  font-family: inherit;
+  font-size: calc(11px * var(--font-scale, 1));
+}
+#browserAddress:focus {
+  outline: none;
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
+#browserTakeoverRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 6px;
+  color: var(--text-inverse);
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+/* While the user is driving, the page is the click target, not a picture. */
+#browserViewport.takeover {
+  outline: 2px solid #4ea3ff;
+  outline-offset: -2px;
+}
+/* A crosshair means "you are picking an element". Showing it whenever take-over
+   is on made the panel look like uBlock's picker was armed from the moment you
+   opened it, before choosing anything — so it is reserved for when the picker
+   really is running. Ordinary take-over just uses a pointer. */
+#browserViewport.takeover #browserView {
+  cursor: default;
+}
+#browserViewport.picking #browserView {
+  cursor: crosshair;
+}
+
+/* Extension manager. Built from the app's own settings idiom — .setting-section
+   for the block, .builtin-skill-row for each entry — rather than a private set
+   of classes that only look right by coincidence. */
+#browserExtPanel {
+  padding: 10px 14px;
+  border-bottom: var(--border-width) solid var(--text-inverse);
+  max-height: 40%;
+  overflow-y: auto;
+}
+#browserExtPanel .setting-title {
+  color: var(--text-inverse);
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin: 0 0 6px;
+}
+#browserExtPanel .setting-help {
+  color: var(--text-inverse);
+}
+#browserExtList .builtin-skill-row {
+  border-color: var(--text-inverse);
+  color: var(--text-inverse);
+  /* The skill row's own grid sizes its last column for a single small control.
+     Two buttons overflowed it and REMOVE fell off the edge, so the text column
+     is made the flexible one (minmax(0,…) lets it actually shrink) and the
+     control columns size to their contents. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+#browserExtList .builtin-skill-description {
+  color: var(--text-inverse);
+}
+#browserExtList .browser-ext-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* A very narrow panel stacks the buttons rather than clipping one. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+#browserExtList .browser-ext-actions button {
+  padding: 3px 7px;
+  background: transparent;
+  color: var(--text-inverse);
+  border: var(--border-width) solid var(--text-inverse);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(9px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+#browserExtList .browser-ext-actions button:hover:not(:disabled) {
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
+#browserExtList .browser-ext-actions button.danger:hover:not(:disabled) {
+  background: #ff4444;
+  border-color: #ff4444;
+  color: #fff;
+}
+#browserExtList .browser-ext-actions button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* EXTENSIONS is a toggle, not an action, so it shows its state the way the
+   app's other pressed controls do: filled rather than outlined. */
+#browserExtBtn[aria-pressed="true"] {
+  background: var(--text-inverse);
+  color: var(--bg-inverse);
+}
+
+/* The extension panel, floating over the live page. Anchored top-right like a
+   real toolbar popup, so the page stays visible and pickable underneath. */
+/* `hidden` only hides an element through the UA stylesheet's `display: none`,
+   and ANY explicit display in author CSS beats it. The rule below sets
+   `display: flex`, so setting .hidden = true did nothing at all and the panel
+   stayed parked in the corner — as a broken image, once its frame had gone. */
+#browserUiLayer[hidden] {
+  display: none !important;
+}
+#browserUiLayer {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: calc(100% - 16px);
+  max-height: calc(100% - 16px);
+}
+#browserUiView {
+  display: block;
+  /* Belt and braces: an <img> with no usable source must take up no room and
+     must never render its alt text as a floating box over the page. */
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  border: var(--border-width) solid var(--text-inverse);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+#browserUiCloseBtn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  background: var(--bg-inverse);
+  color: var(--text-inverse);
+  border: var(--border-width) solid var(--text-inverse);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+}
+#browserUiCloseBtn:hover {
+  background: #ff4444;
+  border-color: #ff4444;
+  color: #fff;
 }

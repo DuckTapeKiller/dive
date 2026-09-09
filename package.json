@@ -148,12 +148,14 @@
     "@hono/node-server": "^2.0.11"
   },
   "dependencies": {
+    "@ghostery/adblocker-playwright": "^2.18.2",
     "@highlightjs/cdn-assets": "^11.11.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cheerio": "^1.2.0",
     "dompurify": "^3.4.7",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
+    "playwright": "^1.63.0",
     "yauzl": "^3.3.2"
   }
 }

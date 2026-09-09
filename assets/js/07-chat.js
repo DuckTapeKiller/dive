@@ -1620,6 +1620,7 @@ function toggleNotes() {
     if (historyOpen) toggleHistory();
     if (settingsOpen) toggleSettings();
     if (mcpOpen) toggleMcp();
+    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     const { area } = getNotesElements();
@@ -1748,6 +1749,7 @@ function toggleSettings() {
     if (historyOpen) toggleHistory();
     if (notesOpen) toggleNotes();
     if (mcpOpen) toggleMcp();
+    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     closePromptEditor();
@@ -2057,6 +2059,7 @@ function toggleMcp() {
     if (historyOpen) toggleHistory();
     if (notesOpen) toggleNotes();
     if (settingsOpen) toggleSettings();
+    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     const configArea = document.getElementById("mcpConfigArea");

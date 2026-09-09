@@ -1177,6 +1177,10 @@ function defaultSkillsConfig() {
     run_python: true,
     macos_control: false,
     task_plan: true,
+    browse_read: true,
+    // Off by default, like shell_command and macos_control: it acts on the
+    // world, and the page it acts on is untrusted input.
+    browse_act: false,
   };
 }
 
@@ -2584,6 +2588,11 @@ const skillsDomain = require("./routes/skills")({
   initMcpServers,
   stopMcpServers,
 });
+const browserDomain = require("./routes/browser")({
+  parseJsonBody,
+  appendSecurityEvent,
+  DATA_DIR,
+});
 const libraryDomain = require("./routes/library")({
   DATA_DIR,
   parseJsonBody,
@@ -2869,6 +2878,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (
+    await browserDomain.handleRequest({ req, res, urlPath, requestUrl, send })
+  ) {
+    return;
+  }
+
   if (await skillsDomain.handleRequest({ req, urlPath, requestUrl, send })) {
     return;
   }
@@ -2894,6 +2909,14 @@ const server = http.createServer(async (req, res) => {
         "ollama_mode_entered",
         "cloud_mode_entered",
         "user_message_submitted",
+        // Ending an agent browser session discards whatever it had open,
+        // including a page the user signed into, so it belongs in the trail.
+        "browser_session_closed",
+        "browser_user_navigated",
+        "browser_extension_installed",
+        "browser_extension_enabled",
+        "browser_agent_acted",
+        "browser_agent_navigated",
       ]);
       if (!ALLOWED_SECURITY_EVENTS.has(body.event.trim())) {
         send(400, { error: "Unknown security event type" });
@@ -3082,6 +3105,12 @@ function gracefulShutdown(signal) {
     }
   }
   appEventClients.clear();
+
+  // Agent browser sessions are child processes of their own: without this a
+  // headless Chromium survives the server that started it.
+  browserDomain.closeAllSessions().catch((error) => {
+    console.error("Failed to close browser sessions:", error);
+  });
 
   // Force exit after 5 seconds, including if an MCP transport is stuck while
   // closing. Normal shutdown waits for every mode-local MCP generation first.
