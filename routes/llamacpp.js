@@ -23,6 +23,7 @@ const https = require("https");
 const { spawn } = require("child_process");
 const preset = require("./llamacpp-preset");
 const routers = require("./llamacpp-router-discovery");
+const projectors = require("./llamacpp-projector");
 const derived = require("./llamacpp-derived");
 
 module.exports = function createLlamaCppDomain(deps) {
@@ -67,6 +68,9 @@ module.exports = function createLlamaCppDomain(deps) {
     mlock: false,
     cacheTypeK: "f16",
     cacheTypeV: "f16",
+    // An explicit "this adapter belongs to this model", for the cases where
+    // the headers cannot say. Empty means "work it out from the evidence".
+    projector: "",
   };
   // Valid llama.cpp KV-cache quantization types (from `llama-server --help`).
   const CACHE_TYPES = ["f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "f32"];
@@ -87,6 +91,12 @@ module.exports = function createLlamaCppDomain(deps) {
       lastModel: "",
       lastEmbeddingModel: "",
       models: {},
+      // file -> the Hugging Face repo it was downloaded from. A model and a
+      // vision adapter published in the same repo belong together, and that is
+      // knowable at download time — so it is recorded rather than reconstructed
+      // afterwards from filenames. Files placed in the folder by hand simply
+      // have no entry, and are identified by their headers instead.
+      sources: {},
       // Router preset sync. Automatic and unconfigured: the preset file and
       // models folder are read back from the running router's own command
       // line, and a restart is a signal to that process (launchd's KeepAlive
@@ -123,6 +133,12 @@ module.exports = function createLlamaCppDomain(deps) {
       mlock: e.mlock === true,
       cacheTypeK: CACHE_TYPES.includes(e.cacheTypeK) ? e.cacheTypeK : "f16",
       cacheTypeV: CACHE_TYPES.includes(e.cacheTypeV) ? e.cacheTypeV : "f16",
+      projector:
+        typeof e.projector === "string" &&
+        e.projector.endsWith(".gguf") &&
+        e.projector === path.basename(e.projector)
+          ? e.projector
+          : "",
       embedding:
         typeof e.embedding === "boolean"
           ? e.embedding
@@ -155,6 +171,14 @@ module.exports = function createLlamaCppDomain(deps) {
       if (typeof raw.lastEmbeddingModel === "string") {
         const last = path.basename(raw.lastEmbeddingModel);
         if (last.endsWith(".gguf")) out.lastEmbeddingModel = last;
+      }
+      if (raw.sources && typeof raw.sources === "object") {
+        for (const [file, repo] of Object.entries(raw.sources)) {
+          if (!file.endsWith(".gguf") || file !== path.basename(file)) continue;
+          if (typeof repo === "string" && repo) {
+            out.sources[file] = repo.slice(0, 200);
+          }
+        }
       }
       if (raw.models && typeof raw.models === "object") {
         for (const [file, entry] of Object.entries(raw.models)) {
@@ -247,6 +271,7 @@ module.exports = function createLlamaCppDomain(deps) {
     return {
       ...MODEL_DEFAULTS,
       embedding: looksLikeEmbeddingModel(file),
+      projector: "",
       ...(cfg.models[file] || {}),
     };
   }
@@ -474,8 +499,23 @@ module.exports = function createLlamaCppDomain(deps) {
         ? meta["general.architecture"]
         : "";
     const ctxRaw = arch ? Number(meta?.[`${arch}.context_length`]) : 0;
+    // The two numbers that decide whether a projector belongs to a model: the
+    // embedding space a text model expects, and the one an adapter emits into.
+    // Both were read and then discarded, which left the pairing with nothing to
+    // go on but filenames — see llamacpp-projector.js.
+    const embedRaw = arch ? Number(meta?.[`${arch}.embedding_length`]) : 0;
+    const projRaw = Number(meta?.["clip.vision.projection_dim"]);
     const info = {
       arch,
+      // A projector declares itself: "mmproj" here, against "model". Read
+      // rather than guessed at from the filename.
+      type:
+        typeof meta?.["general.type"] === "string" ? meta["general.type"] : "",
+      // Which architecture family an adapter was built for, where it says.
+      projectorType:
+        typeof meta?.["clip.vision.projector_type"] === "string"
+          ? meta["clip.vision.projector_type"]
+          : "",
       modelName:
         typeof meta?.["general.name"] === "string" ? meta["general.name"] : "",
       sizeLabel:
@@ -486,6 +526,8 @@ module.exports = function createLlamaCppDomain(deps) {
         GGUF_FILE_TYPES[meta?.["general.file_type"]] ||
         quantFromFilename(path.basename(filePath)),
       maxCtx: Number.isFinite(ctxRaw) && ctxRaw > 0 ? ctxRaw : 0,
+      embedDim: Number.isFinite(embedRaw) && embedRaw > 0 ? embedRaw : 0,
+      projDim: Number.isFinite(projRaw) && projRaw > 0 ? projRaw : 0,
     };
     ggufMetaCache.set(filePath, {
       size: stat.size,
@@ -513,108 +555,14 @@ module.exports = function createLlamaCppDomain(deps) {
     return path.join(cfg.modelsDir, file);
   }
 
-  // Quant/format/plumbing tokens stripped before comparing a projector's name
-  // to a model's, so two unrelated q4 models don't look like a "family match".
-  const PROJECTOR_NOISE_TOKENS = new Set([
-    "mmproj",
-    "mm",
-    "proj",
-    "clip",
-    "vision",
-    "model",
-    "ggml",
-    "gguf",
-    "f16",
-    "f32",
-    "bf16",
-    "fp16",
-    "fp32",
-    "q2",
-    "q3",
-    "q4",
-    "q5",
-    "q6",
-    "q8",
-    "iq2",
-    "iq3",
-    "iq4",
-    "k",
-    "m",
-    "s",
-    "l",
-    "xl",
-    "xs",
-    "xxs",
-  ]);
-
-  function projectorFamilyTokens(name) {
-    return new Set(
-      path
-        .basename(name, ".gguf")
-        .toLowerCase()
-        .replace(/mmproj/g, " ")
-        .split(/[^a-z0-9]+/)
-        .filter((t) => t && !PROJECTOR_NOISE_TOKENS.has(t)),
-    );
-  }
-
-  // Vision models (Gemma 3, Qwen2-VL, LLaVA, …) split into a language GGUF plus
-  // a separate multimodal projector ("mmproj") GGUF. llama-server needs that
-  // projector passed with --mmproj or it rejects image input with
-  // "image input is not supported". Projector files carry
-  // general.architecture = "clip", so we can spot them by content regardless of
-  // how they're named, then pair one with the model being launched. Returns the
-  // projector's absolute path, or null when none applies.
+  // The projector for a model, as an absolute path, or null when none applies.
+  //
+  // This is the same answer the models list carries, deliberately: the launch
+  // path and the preset writer disagreeing about which adapter belongs to a
+  // model is how one of them ends up wrong. Both now read it from one place.
   function findProjector(cfg, modelFile) {
-    let entries;
-    try {
-      entries = fs.readdirSync(cfg.modelsDir);
-    } catch {
-      return null;
-    }
-    const projectors = [];
-    const chatModels = [];
-    for (const name of entries) {
-      if (!name.endsWith(".gguf")) continue;
-      const pm = name.match(GGUF_PART_RE);
-      if (pm && pm[1] !== "00001") continue; // non-first split parts aren't loadable
-      const full = path.join(cfg.modelsDir, name);
-      let stat;
-      try {
-        stat = fs.statSync(full);
-        if (!stat.isFile()) continue;
-      } catch {
-        continue;
-      }
-      if (ggufInfoFor(full, stat).arch === "clip") projectors.push(name);
-      else chatModels.push(name);
-    }
-    if (projectors.length === 0) return null;
-
-    // Prefer a projector that shares a model-family token with the model, so the
-    // right one is picked when several vision models share the folder.
-    const modelTokens = projectorFamilyTokens(modelFile);
-    let best = null;
-    let bestScore = 0;
-    for (const proj of projectors) {
-      let score = 0;
-      for (const t of projectorFamilyTokens(proj)) {
-        if (modelTokens.has(t)) score++;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        best = proj;
-      }
-    }
-    if (best) return path.join(cfg.modelsDir, best);
-
-    // No name overlap (e.g. a generic "mmproj-F16.gguf"): only pair it when the
-    // setup is unambiguous — one projector and one model — so a projector is
-    // never wrongly attached to an unrelated text-only model.
-    if (projectors.length === 1 && chatModels.length === 1) {
-      return path.join(cfg.modelsDir, projectors[0]);
-    }
-    return null;
+    const entry = scanModels(cfg).find((m) => m.file === modelFile);
+    return entry?.projector ? path.join(cfg.modelsDir, entry.projector) : null;
   }
 
   function scanModels(cfg) {
@@ -673,40 +621,9 @@ module.exports = function createLlamaCppDomain(deps) {
     }
     // Pair vision adapters (mmproj files, GGUF architecture "clip") with their
     // parent chat model so the UI can nest them instead of listing them as
-    // loadable models. Mirrors findProjector()'s matching over the already
-    // scanned set: shared family-name tokens first, then a single-model /
-    // single-projector fallback. Purely annotative — adds `projector` to a
-    // model and `isProjector`/`parentFile` to an adapter; no entry is removed.
-    const projectors = models.filter((m) => m.arch === "clip");
-    if (projectors.length) {
-      const chatModels = models.filter(
-        (m) => m.arch !== "clip" && !m.embedding,
-      );
-      for (const m of chatModels) {
-        const modelTokens = projectorFamilyTokens(m.file);
-        let best = null;
-        let bestScore = 0;
-        for (const p of projectors) {
-          let score = 0;
-          for (const t of projectorFamilyTokens(p.file)) {
-            if (modelTokens.has(t)) score++;
-          }
-          if (score > bestScore) {
-            bestScore = score;
-            best = p;
-          }
-        }
-        if (!best && projectors.length === 1 && chatModels.length === 1) {
-          best = projectors[0];
-        }
-        if (best) m.projector = best.file;
-      }
-      for (const p of projectors) {
-        p.isProjector = true;
-        const parent = chatModels.find((m) => m.projector === p.file);
-        p.parentFile = parent ? parent.file : null;
-      }
-    }
+    // loadable models. Purely annotative — adds `projector` to a model and
+    // `isProjector`/`parentFile` to an adapter; no entry is removed.
+    projectors.pairProjectors(models, { sources: cfg.sources });
     return models.sort((a, b) => a.file.localeCompare(b.file));
   }
 
@@ -1003,6 +920,9 @@ module.exports = function createLlamaCppDomain(deps) {
     "cacheTypeK",
     "cacheTypeV",
     "embedding",
+    // Pinning a different adapter changes --mmproj, which is argv: a running
+    // managed server cannot pick it up without being relaunched.
+    "projector",
   ];
 
   // Relaunches in flight, by slot: { file, run, pending }.
@@ -1655,6 +1575,20 @@ module.exports = function createLlamaCppDomain(deps) {
         await fetchToFile(url, out);
         if (!download.active) return; // cancelled mid-part
         fs.renameSync(download.tempPath, destPath);
+        // Where this file came from, recorded now because it cannot be
+        // recovered later. A model and the vision adapter published beside it
+        // in the same repo are a pair, and knowing that outright is what saves
+        // the pairing from having to be guessed at from filenames.
+        try {
+          const current = loadConfig();
+          current.sources[safeName] = repo;
+          saveConfig(current);
+        } catch (e) {
+          console.warn(
+            `[llamacpp] could not record the source of ${safeName}:`,
+            e.message || e,
+          );
+        }
         console.log(`[llamacpp] downloaded ${repo}/${safeName}`);
       }
       download.active = false;
@@ -1967,6 +1901,7 @@ module.exports = function createLlamaCppDomain(deps) {
           "cacheTypeK",
           "cacheTypeV",
           "embedding",
+          "projector",
         ]) {
           if (body?.[key] !== undefined) merged[key] = body[key];
         }
