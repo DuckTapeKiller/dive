@@ -505,3 +505,69 @@ test("empty page text does not produce an empty fence", () => {
   assert.strictEqual(browser.fencePageContent(""), "(no readable text)");
   assert.strictEqual(browser.fencePageContent(null), "(no readable text)");
 });
+
+// ---- A session that predates an extension ----
+//
+// Extensions load from the command line and nowhere else, so a browser started
+// before one was enabled cannot see it. Chrome answers a page of an extension
+// it has not loaded with net::ERR_ABORTED, which surfaced as a raw Playwright
+// call log in a 400. Two things stop that: the fingerprint that detects the
+// mismatch, and the message for the case where the relaunch still leaves none.
+
+test("the same extensions in a different order are not a change", () => {
+  assert.equal(
+    browser.extensionFingerprint(["/x/b", "/x/a"]),
+    browser.extensionFingerprint(["/x/a", "/x/b"]),
+  );
+});
+
+test("enabling one is a change the session has to be relaunched for", () => {
+  assert.notEqual(
+    browser.extensionFingerprint([]),
+    browser.extensionFingerprint(["/x/ublock_lite"]),
+  );
+});
+
+test("an extension missing from the session is said plainly, not as a net error", () => {
+  const message = browser.extensionNotLoaded(
+    { extensionCount: 0 },
+    { name: "uBlock Origin Lite" },
+  );
+  assert.match(message, /uBlock Origin Lite is not loaded/);
+  assert.doesNotMatch(message, /ERR_ABORTED|Call log/);
+});
+
+test("an extension the session did load raises nothing", () => {
+  assert.equal(
+    browser.extensionNotLoaded({ extensionCount: 1 }, { name: "uBlock" }),
+    "",
+  );
+});
+
+// ---- Selecting text ----
+//
+// The panel is a picture, so a selection has to be made in the real page and
+// the text sent back. The script that does it runs in the PAGE, so it is
+// source, not a function — and source that only DEFINES a function is
+// evaluated and thrown away: the first version returned undefined for every
+// drag, which looked exactly like "there is nothing to select here".
+
+test("the selection script invokes itself rather than only defining one", () => {
+  const source = browser.selectBetweenPoints(1, 2, 3, 4);
+  assert.match(source, /^\(\(\) => \{/);
+  assert.match(source, /\}\)\(\)$/);
+});
+
+test("the drag's coordinates reach the page", () => {
+  const source = browser.selectBetweenPoints(11, 22, 33, 44);
+  assert.match(source, /caretAt\(11, 22\)/);
+  assert.match(source, /caretAt\(33, 44\)/);
+});
+
+test("selecting sets a range and never drags the mouse", () => {
+  const source = browser.selectBetweenPoints(1, 2, 3, 4);
+  // A real drag is a gesture pages act on: drag-and-drop, reordering, pulling
+  // an image out. Reading text must not be able to do any of that.
+  assert.match(source, /addRange/);
+  assert.doesNotMatch(source, /mouse|dispatchEvent|click/);
+});

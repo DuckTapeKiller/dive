@@ -3976,6 +3976,15 @@ a:hover {
   object-fit: contain;
   object-position: top left;
 }
+/* Both surfaces are pictures of a page, and a picture is something the browser
+   lets you drag. Dragging across one to select text started an image
+   drag-and-drop instead: the pointer release never arrived, so nothing was
+   selected, and the screenshot was dropped on the chat's upload zone. */
+#browserView,
+#browserUiView {
+  -webkit-user-drag: none;
+  user-select: none;
+}
 #browserEmpty {
   padding: 24px 14px;
   color: var(--text-inverse);

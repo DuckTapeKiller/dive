@@ -483,6 +483,12 @@ function browserPointFor(event) {
 
 function browserViewClicked(event) {
   const { takeover } = getBrowserElements();
+  // A drag ends with a click event too. That one selected text; letting it
+  // through would also follow whatever link the drag started on.
+  if (browserDragged) {
+    browserDragged = false;
+    return;
+  }
   const point = browserPointFor(event);
   if (!point) return;
   // The extension panel is Dive's own control surface and is always clickable;
@@ -580,12 +586,176 @@ function browserViewMoved(event) {
   sendBrowserMove(point);
 }
 
+// ---- Selecting text ----
+//
+// The panel is a picture of the page, so the browser's own selection has
+// nothing to grab: the text is in Chromium, in another process. A drag across
+// the picture is sent over as a selection, and the text comes back with the
+// response — a selection sitting in Chromium is no use to the person reading
+// it here.
+//
+// Not behind TAKE OVER. Selecting is reading, and the server sets the selection
+// from caret positions rather than dragging a real mouse, so it cannot click,
+// drag or drop anything on the way.
+const BROWSER_DRAG_THRESHOLD_PX = 4;
+let browserDragStart = null;
+let browserDragged = false;
+
+// The frame a selection produces, requested with it. The screencast sends only
+// what the compositor repaints, and a selection change did not reliably count:
+// the text was selected and copied while the panel showed no highlight, which
+// reads as nothing having happened.
+function browserCaptureSize() {
+  const { viewport } = getBrowserElements();
+  return {
+    w: Math.round(viewport?.clientWidth || 0),
+    h: Math.round(viewport?.clientHeight || 0),
+  };
+}
+
+async function copyBrowserSelection(text, emptyMessage) {
+  const value = String(text || "");
+  if (!value.trim()) {
+    setBrowserStatus(emptyMessage, true);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    setBrowserStatus(`Copied ${value.length} characters.`);
+  } catch {
+    // The async clipboard can be refused — a denied permission, or a page that
+    // has lost focus by the time the selection comes back from the server —
+    // and the older copy command still works then. The rest of Dive falls back
+    // the same way.
+    if (copyTextWithCommand(value)) {
+      setBrowserStatus(`Copied ${value.length} characters.`);
+    } else {
+      // The selection was still made, and saying so beats appearing to do
+      // nothing.
+      setBrowserStatus("Selected, but the clipboard refused the write.", true);
+    }
+  }
+}
+
+function copyTextWithCommand(value) {
+  const scratch = document.createElement("textarea");
+  scratch.value = value;
+  scratch.setAttribute("readonly", "");
+  scratch.style.position = "fixed";
+  scratch.style.opacity = "0";
+  document.body.appendChild(scratch);
+  const previous = document.activeElement;
+  scratch.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  scratch.remove();
+  previous?.focus?.();
+  return copied;
+}
+
+function browserViewPointerDown(event) {
+  if (event.button !== 0) return;
+  const point = browserPointFor(event);
+  browserDragged = false;
+  browserDragStart = point
+    ? { ...point, clientX: event.clientX, clientY: event.clientY }
+    : null;
+  // The release has to come back here even when it happens off the picture,
+  // or the drag never finishes.
+  if (browserDragStart)
+    event.currentTarget?.setPointerCapture?.(event.pointerId);
+}
+
+function browserViewPointerMoved(event) {
+  if (!browserDragStart || browserDragged) return;
+  const moved =
+    Math.abs(event.clientX - browserDragStart.clientX) >
+      BROWSER_DRAG_THRESHOLD_PX ||
+    Math.abs(event.clientY - browserDragStart.clientY) >
+      BROWSER_DRAG_THRESHOLD_PX;
+  // Below the threshold this is a click with a shaky hand, not a drag.
+  if (moved) browserDragged = true;
+}
+
+// The browser abandoned the gesture. Left set, the next ordinary click would be
+// swallowed as the end of a drag that never happened.
+function browserViewPointerCancelled() {
+  browserDragStart = null;
+  browserDragged = false;
+}
+
+async function browserViewPointerUp(event) {
+  const start = browserDragStart;
+  browserDragStart = null;
+  if (!start || !browserDragged) return;
+  const end = browserPointFor(event);
+  // Released over the other surface, or off the picture entirely.
+  if (!end || end.target !== start.target) return;
+  const result = await browserUserRequest(
+    "/api/browser/interact",
+    {
+      type: "select",
+      target: start.target,
+      x: start.x,
+      y: start.y,
+      x2: end.x,
+      y2: end.y,
+      ...browserCaptureSize(),
+    },
+    "Browser select",
+    { light: true },
+  );
+  await copyBrowserSelection(
+    result?.selection,
+    "Nothing selectable under that drag.",
+  );
+}
+
+// Cmd/Ctrl+A then Cmd/Ctrl+C, for taking the whole page rather than aiming at
+// it with a drag.
+async function browserSelectAllOrCopy(key) {
+  const result = await browserUserRequest(
+    "/api/browser/interact",
+    { type: key === "a" ? "selectall" : "selection", ...browserCaptureSize() },
+    "Browser selection",
+    { light: true },
+  );
+  if (key === "a") {
+    const length = String(result?.selection || "").length;
+    setBrowserStatus(
+      length
+        ? `Selected the page — ${length} characters. Copy with Cmd+C.`
+        : "Nothing on this page to select.",
+      !length,
+    );
+    return;
+  }
+  await copyBrowserSelection(result?.selection, "Nothing is selected.");
+}
+
 // Keystrokes go to the page only while take-over is on and the address bar does
 // not have focus — otherwise typing a URL would also be typed into the page.
 function browserViewKeyed(event) {
   const { takeover, address } = getBrowserElements();
-  if (!browserPanelOpen || !takeover?.checked) return;
+  if (!browserPanelOpen) return;
   if (document.activeElement === address) return;
+  if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+    const key = event.key.toLowerCase();
+    if (key !== "a" && key !== "c") return;
+    if (!browserActiveSession) return;
+    // Only when nothing is selected in Dive's own interface, or this would
+    // take Cmd+C away from the conversation.
+    const local = window.getSelection?.();
+    if (key === "c" && local && !local.isCollapsed) return;
+    event.preventDefault();
+    browserSelectAllOrCopy(key);
+    return;
+  }
+  if (!takeover?.checked) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   const named = ["Enter", "Tab", "Backspace", "Escape", "ArrowUp", "ArrowDown"];
   if (named.includes(event.key)) {
@@ -994,10 +1164,10 @@ async function browserExtAction(path, payload) {
     const result = await postJson(path, payload, "Browser extensions");
     renderBrowserExtensions(result);
     if (result.restartRequired) {
-      setBrowserStatus(
-        "Saved. Close the open session for this to take effect.",
-        true,
-      );
+      // The browser reloads itself on the next thing you do with it, because
+      // extensions are fixed at launch and telling a person to go and restart
+      // a session is not an answer.
+      setBrowserStatus("Saved. The browser reloads to apply it.", true);
     }
   } catch (error) {
     setBrowserStatus(String(error.message || error).slice(0, 200), true);
@@ -1058,6 +1228,17 @@ function toggleBrowserExtensions() {
   on("browserView", "mousemove", browserViewMoved);
   on("browserUiView", "click", browserViewClicked);
   on("browserUiView", "mousemove", browserViewMoved);
+  for (const id of ["browserView", "browserUiView"]) {
+    on(id, "pointerdown", browserViewPointerDown);
+    // An <img> is draggable by default; a native image drag cancels the
+    // pointer stream and drops the screenshot on the chat's upload zone.
+    on(id, "dragstart", (event) => event.preventDefault());
+  }
+  // On the document, not the picture: a drag that ends outside it still has to
+  // finish, and one that never ends leaves the next click swallowed.
+  document.addEventListener("pointermove", browserViewPointerMoved);
+  document.addEventListener("pointerup", browserViewPointerUp);
+  document.addEventListener("pointercancel", browserViewPointerCancelled);
   on("browserUiCloseBtn", "click", () => dismissBrowserExtensionUi());
   on("browserStopPickerBtn", "click", () => stopBrowserPicker());
   // Not passive: the wheel must scroll the remote page, not the panel.

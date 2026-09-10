@@ -260,14 +260,42 @@ async function installRequestGuard(page, session) {
   });
 }
 
+// Which extensions a session was actually started with. Extensions are fixed
+// at launch — they load from the command line and nowhere else — so this is the
+// only honest answer to "is uBlock in this browser", and comparing it against
+// what is enabled now is what catches a session that predates the setting.
+function extensionFingerprint(paths) {
+  return [...paths].sort().join(",");
+}
+
 async function ensureSession(name, dataDir) {
   // Filters are loaded before the first page so the very first navigation is
   // already clean; a failure here leaves blocking off, never the browser down.
   await ensureAdblockEngine(dataDir).catch(() => null);
+  // Settled before an open session is handed back, because an open session may
+  // no longer match it.
+  const extensionPaths = dataDir
+    ? extensions.enabledExtensionPaths(dataDir)
+    : [];
+  const fingerprint = extensionFingerprint(extensionPaths);
   const existing = SESSIONS.get(name);
+  // Restored after a relaunch, so turning an extension on does not also throw
+  // away the page the user was reading.
+  let resumeUrl = "";
   if (existing) {
-    touch(existing);
-    return { session: existing };
+    // Without a data directory there is nothing to compare against, and an
+    // empty list would read as "extensions were turned off" and relaunch on
+    // every call.
+    if (!dataDir || existing.extensionFingerprint === fingerprint) {
+      touch(existing);
+      return { session: existing };
+    }
+    // Enabling an extension in a browser that is already running cannot work:
+    // it is not in that process, so its own pages fail with a bare
+    // net::ERR_ABORTED that reaches the user as a raw Playwright error. The
+    // browser is relaunched instead of asking the user to do it.
+    resumeUrl = existing.lastUrl || "";
+    await closeSession(name);
   }
   if (SESSIONS.size >= SESSION_MAX) {
     // Reclaim the least recently used rather than refusing: a model that opens
@@ -292,9 +320,6 @@ async function ensureSession(name, dataDir) {
   //
   // With none enabled the ordinary ephemeral browser is used: nothing left on
   // disk, and no reason to pay for the heavier build.
-  const extensionPaths = dataDir
-    ? extensions.enabledExtensionPaths(dataDir)
-    : [];
   let ownedBrowser = null;
   let context;
   try {
@@ -342,6 +367,7 @@ async function ensureSession(name, dataDir) {
     browser: ownedBrowser,
     context,
     extensionCount: extensionPaths.length,
+    extensionFingerprint: fingerprint,
     page: openPages[0] || (await context.newPage()),
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
@@ -371,6 +397,15 @@ async function ensureSession(name, dataDir) {
   });
   SESSIONS.set(name, session);
   startReaper();
+  if (resumeUrl) {
+    try {
+      await session.page.goto(resumeUrl, { waitUntil: "domcontentloaded" });
+      session.lastUrl = session.page.url();
+    } catch {
+      // The relaunch is the part that mattered. A page that will not load
+      // again is the user's to retry, not a reason to fail the session.
+    }
+  }
   return { session };
 }
 
@@ -839,6 +874,18 @@ async function userNavigate(name, url, dataDir) {
   }
 }
 
+// An extension can be installed and enabled and still not be in the browser
+// that is running — the launch already happened. Chrome answers a page of one
+// it has not loaded with net::ERR_ABORTED, which reached the user as a raw
+// Playwright call log. Said plainly instead.
+function extensionNotLoaded(session, match) {
+  if (session.extensionCount > 0) return "";
+  return (
+    `${match.name} is not loaded in this browser session. Close the browser ` +
+    `session and open it again to load it.`
+  );
+}
+
 // Open an extension's OWN settings page — chrome-extension://<id>/dashboard.html
 // and the like. Without this an extension manager can only switch a black box on
 // and off; uBlock is configured from its dashboard or it is not configured.
@@ -871,6 +918,8 @@ async function openExtensionPage(name, dataDir, extensionId, page = "") {
   // session has to exist anyway for the extension to be loaded at all.
   const { session, error } = await ensureSession(sessionName(name), dataDir);
   if (error) return { error };
+  const notLoaded = extensionNotLoaded(session, match);
+  if (notLoaded) return { error: notLoaded };
   try {
     // In its OWN page, like the popup. Navigating the session's page to the
     // dashboard replaced whatever the user was looking at and left no way back
@@ -911,9 +960,10 @@ async function openExtensionPage(name, dataDir, extensionId, page = "") {
 // is the popup rendered. It binds to the site and stays bound, because it keeps
 // the tab id it resolved at load.
 async function openExtensionPopup(name, dataDir, extensionId) {
-  const session = SESSIONS.get(sessionName(name));
-  if (!session) return { error: "That browser session is not open." };
-  if (!session.lastUrl) {
+  const key = sessionName(name);
+  const open = SESSIONS.get(key);
+  if (!open) return { error: "That browser session is not open." };
+  if (!open.lastUrl) {
     return { error: "Open a page first — the popup acts on the current site." };
   }
   const allowed = extensions
@@ -926,6 +976,13 @@ async function openExtensionPopup(name, dataDir, extensionId) {
   if (!match.popupUrl) {
     return { error: `${match.name} has no popup.` };
   }
+  // Enabled in settings is not the same as loaded in this browser. Going
+  // through ensureSession relaunches one that was started before the extension
+  // was turned on, which is otherwise a bare net::ERR_ABORTED on the popup.
+  const { session, error: sessionError } = await ensureSession(key, dataDir);
+  if (sessionError) return { error: sessionError };
+  const notLoaded = extensionNotLoaded(session, match);
+  if (notLoaded) return { error: notLoaded };
   try {
     await closeExtensionUi(name);
     const ui = await session.context.newPage();
@@ -1035,6 +1092,63 @@ async function userHistory(name, action) {
 // cookie wall or a login the agent cannot do for you. Coordinates arrive in the
 // page's own pixels because the panel captures at the page's viewport size, so
 // there is no scaling to undo here.
+// ---- Selecting text ----
+//
+// The panel is a picture of the page, so there is nothing in it to select: the
+// text is in Chromium, in another process. Dragging over it has to be turned
+// into a selection over there and the result handed back, or "select and copy"
+// cannot work at all.
+//
+// Deliberately NOT a real mouse drag. A drag with the button down is a gesture
+// pages act on — it starts a drag-and-drop, pulls an image out, reorders a
+// list. Setting the selection from the two caret positions can only ever
+// select, which is what makes this safe to allow without taking over.
+// Written as source rather than a function, and self-invoking with the numbers
+// baked in, because this does not run in this process: Playwright ships it into
+// the page, where `document` exists and Node's globals do not. The coordinates
+// are checked finite before they get here, so interpolating them is safe.
+const selectBetweenPoints = (x1, y1, x2, y2) => `(() => {
+  const caretAt = (x, y) => {
+    if (document.caretRangeFromPoint) {
+      return document.caretRangeFromPoint(x, y);
+    }
+    const position = document.caretPositionFromPoint
+      ? document.caretPositionFromPoint(x, y)
+      : null;
+    if (!position) return null;
+    const range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    return range;
+  };
+  const from = caretAt(${x1}, ${y1});
+  const to = caretAt(${x2}, ${y2});
+  if (!from || !to) return "";
+  const range = document.createRange();
+  range.setStart(from.startContainer, from.startOffset);
+  range.setEnd(to.startContainer, to.startOffset);
+  // Dragged right to left, or upwards: setEnd before the start collapses the
+  // range rather than throwing, so the boundaries go back the other way.
+  if (range.collapsed) {
+    range.setStart(to.startContainer, to.startOffset);
+    range.setEnd(from.startContainer, from.startOffset);
+  }
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return String(selection);
+})()`;
+
+const SELECT_ALL_TEXT = `(() => {
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  const range = document.createRange();
+  range.selectNodeContents(document.body);
+  selection.addRange(range);
+  return String(selection);
+})()`;
+
+const READ_SELECTION = `(() => String(window.getSelection() || ""))()`;
+
 async function userInteract(name, payload = {}) {
   const session = SESSIONS.get(sessionName(name));
   if (!session) return { error: "That browser session is not open." };
@@ -1042,6 +1156,9 @@ async function userInteract(name, payload = {}) {
   // caller says which, because only it knows where the pointer was.
   const ui = uiPage(session);
   const page = payload.target === "ui" && ui ? ui : viewPage(session);
+  // Null when the interaction was not about text, so an empty selection stays
+  // distinguishable from no selection at all.
+  let selectionText = null;
   try {
     touch(session);
     if (payload.type === "click") {
@@ -1081,19 +1198,34 @@ async function userInteract(name, payload = {}) {
           "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))",
         )
         .catch(() => {});
+    } else if (payload.type === "select") {
+      const box = [payload.x, payload.y, payload.x2, payload.y2].map(Number);
+      if (box.some((n) => !Number.isFinite(n))) {
+        return { error: "select needs x, y, x2 and y2." };
+      }
+      selectionText = await page.evaluate(selectBetweenPoints(...box));
+    } else if (payload.type === "selectall") {
+      selectionText = await page.evaluate(SELECT_ALL_TEXT);
+    } else if (payload.type === "selection") {
+      selectionText = await page.evaluate(READ_SELECTION);
     } else {
       return { error: `Unknown interaction "${payload.type}".` };
     }
     // A click can navigate; give the page a moment before the next capture.
-    // Scrolling never does, and waiting for a load state it already reached
-    // costs a round trip into the browser for nothing.
-    if (payload.type !== "scroll") {
+    // Nothing else here does — scrolling and selecting stay on the page — and
+    // waiting for a load state it already reached costs a round trip into the
+    // browser for nothing.
+    if (["click", "type", "key"].includes(payload.type)) {
       await page
         .waitForLoadState("domcontentloaded", { timeout: 3000 })
         .catch(() => {});
     }
     session.lastUrl = page.url();
     const result = { ok: true, url: session.lastUrl };
+    // The text itself travels back with the response: the panel has to put it
+    // on the real clipboard, and a selection living in Chromium's process is
+    // no use to anyone.
+    if (selectionText !== null) result.selection = selectionText;
     // The frame this interaction produced, returned with it. Scrolling used to
     // cost two strictly-sequential HTTP round trips — POST to move, GET to see
     // the result — and the second one is now unnecessary: the capture happens
@@ -1315,4 +1447,7 @@ module.exports = {
   TEXT_MAX_CHARS,
   // Exported for tests.
   SESSIONS,
+  extensionFingerprint,
+  extensionNotLoaded,
+  selectBetweenPoints,
 };

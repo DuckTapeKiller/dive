@@ -1055,13 +1055,17 @@
           <div id="browserStatus"></div>
           <div id="browserTabs"></div>
           <div id="browserViewport">
-            <img id="browserView" alt="The page the agent is viewing" />
+            <img
+              id="browserView"
+              alt="The page the agent is viewing"
+              draggable="false"
+            />
             <!-- The extension's own panel, floating OVER the page the way a
                  real browser popup does. It must not replace the page: the
                  whole point of "block an element" is picking one off the page
                  you are looking at. -->
             <div id="browserUiLayer" hidden>
-              <img id="browserUiView" alt="Extension panel" />
+              <img id="browserUiView" alt="Extension panel" draggable="false" />
               <button id="browserUiCloseBtn" type="button" title="Close">
                 ✕
               </button>
