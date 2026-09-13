@@ -81,6 +81,10 @@ const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 // Quality for the live view. Measured on the same frame: PNG 171 KB, JPEG 60
 // 50 KB, at the same encode time and no visible difference at panel size.
 const LIVE_VIEW_QUALITY = 60;
+// Longest a relaunched browser waits for its extensions to register their
+// content scripts again before the first page opens. uBlock Origin Lite took
+// about a second.
+const EXTENSION_SCRIPTS_WAIT_MS = 5000;
 
 // name -> { browser, context, page, createdAt, lastUsedAt, lastUrl, closing }
 const SESSIONS = new Map();
@@ -260,6 +264,63 @@ async function installRequestGuard(page, session) {
   });
 }
 
+// How many of these extensions run a background service worker. Only those can
+// register content scripts at run time, so only those are waited for.
+function serviceWorkerCount(extensionPaths) {
+  return extensionPaths.filter((dir) => {
+    try {
+      const manifest = JSON.parse(
+        fs.readFileSync(path.join(dir, "manifest.json"), "utf8"),
+      );
+      return Boolean(manifest?.background?.service_worker);
+    } catch {
+      return false;
+    }
+  }).length;
+}
+
+// Chromium drops an unpacked extension's registered content scripts every time
+// it loads it from the command line, and uBlock Origin Lite registers them
+// again about a second later. A page opened in that gap is not filtered at all,
+// which made filters saved with the element picker look lost after a restart:
+// they were still saved, and the first page loaded too early to get them.
+// Measured: opening a page straight after launch showed the blocked element;
+// waiting for the scripts first did not.
+async function waitForExtensionScripts(
+  context,
+  expectedWorkers,
+  { timeoutMs = EXTENSION_SCRIPTS_WAIT_MS, pollMs = 50 } = {},
+) {
+  if (!expectedWorkers) return;
+  const deadline = Date.now() + timeoutMs;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, pollMs));
+  let workers = [];
+  while (Date.now() < deadline) {
+    workers = context
+      .serviceWorkers()
+      .filter((worker) => worker.url().startsWith("chrome-extension://"));
+    if (workers.length >= expectedWorkers) break;
+    await pause();
+  }
+  await Promise.all(
+    workers.map(async (worker) => {
+      while (Date.now() < deadline) {
+        // -1 means no scripting API, or a worker that went away: either way
+        // there is nothing to wait for.
+        const count = await worker
+          .evaluate(async () => {
+            const scripting = globalThis.chrome?.scripting;
+            if (!scripting?.getRegisteredContentScripts) return -1;
+            return (await scripting.getRegisteredContentScripts()).length;
+          })
+          .catch(() => -1);
+        if (count !== 0) return;
+        await pause();
+      }
+    }),
+  );
+}
+
 // Which extensions a session was actually started with. Extensions are fixed
 // at launch — they load from the command line and nowhere else — so this is the
 // only honest answer to "is uBlock in this browser", and comparing it against
@@ -358,6 +419,9 @@ async function ensureSession(name, dataDir) {
   }
   context.setDefaultTimeout(ACTION_TIMEOUT_MS);
   context.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+  if (extensionPaths.length) {
+    await waitForExtensionScripts(context, serviceWorkerCount(extensionPaths));
+  }
   // A persistent context opens with a page already; reusing it avoids a stray
   // blank tab beside the one being driven.
   const openPages = context.pages();
@@ -1170,6 +1234,10 @@ async function userInteract(name, payload = {}) {
       await page.mouse.click(x, y);
     } else if (payload.type === "type") {
       await page.keyboard.type(String(payload.text ?? ""), { delay: 8 });
+    } else if (payload.type === "insert") {
+      // A paste: the whole text at once. Typed with the delay above, a long
+      // filter list would take seconds to arrive.
+      await page.keyboard.insertText(String(payload.text ?? ""));
     } else if (payload.type === "key") {
       await page.keyboard.press(String(payload.key || "Enter"));
     } else if (payload.type === "move") {
@@ -1187,6 +1255,14 @@ async function userInteract(name, payload = {}) {
       // already sending the frames it causes.
       return { ok: true, url: session.lastUrl };
     } else if (payload.type === "scroll") {
+      // A wheel scrolls whatever is under the pointer, so the pointer goes to
+      // where the wheel turned. Left where the last click put it, the wheel
+      // scrolled whatever happened to be there.
+      const x = Number(payload.x);
+      const y = Number(payload.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        await page.mouse.move(x, y);
+      }
       await page.mouse.wheel(0, Number(payload.deltaY) || 0);
       // mouse.wheel only dispatches the event; the scroll lands afterwards, so
       // without a settle the capture would show the pre-scroll frame. Two
@@ -1374,12 +1450,29 @@ async function pickerActive(session) {
   }
 }
 
+// Which uBlock tool the overlay is: "picker", "zapper" or "unpicker". The page
+// cannot tell, because the extension navigates the frame from its own world and
+// a site cannot read the address of a frame from another origin; Playwright
+// sees every frame's URL. It matters because the two main tools look alike and
+// are not: the picker saves a filter, the zapper removes an element only until
+// the page reloads.
+function overlayToolKind(page) {
+  for (const frame of page.frames()) {
+    const match = /\/(picker|zapper|unpicker)-ui\.html(?:[?#]|$)/.exec(
+      frame.url(),
+    );
+    if (match) return match[1];
+  }
+  return "";
+}
+
 // Refreshed alongside the listing rather than polled separately: it is one
 // evaluate against a page that is already open.
 async function refreshPickerState() {
   await Promise.all(
     [...SESSIONS.values()].map(async (s) => {
       s.pickerActive = await pickerActive(s);
+      s.pickerKind = s.pickerActive ? overlayToolKind(s.page) : "";
     }),
   );
 }
@@ -1414,6 +1507,9 @@ function listSessions() {
     // is now always the main view, with the extension drawn over it.
     extensionUi: Boolean(uiPage(s)),
     pickerActive: Boolean(s.pickerActive),
+    // "picker", "zapper" or "unpicker", so the panel can say which: only the
+    // picker's work is saved.
+    pickerKind: s.pickerKind || "",
   }));
 }
 
@@ -1450,4 +1546,7 @@ module.exports = {
   extensionFingerprint,
   extensionNotLoaded,
   selectBetweenPoints,
+  waitForExtensionScripts,
+  serviceWorkerCount,
+  overlayToolKind,
 };

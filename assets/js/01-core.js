@@ -744,6 +744,10 @@ const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
   run_python: true,
   macos_control: false,
   task_plan: true,
+  // Mirrors defaultSkillsConfig() in server.js: reading a page is on, acting
+  // on one is off until the user switches it on.
+  browse_read: true,
+  browse_act: false,
   inputSkills: Object.freeze({}),
 });
 const SKILL_MODE_IDS = DIVE_SKILL_MODE_IDS;
@@ -857,6 +861,14 @@ const ALL_BUILTIN_SKILLS_INFO = {
   web_scraper: {
     desc: "Reads and extracts text content from a given URL, using provenance-labelled Wayback Machine or archive.ph snapshots when the live page is unavailable.",
     example: '{"url": "https://example.com"}',
+  },
+  browse_read: {
+    desc: "Opens a page in a real browser and reads it, running the page's JavaScript, so it works on sites that only render in a browser. Lists links and fields, takes screenshots and keeps a session's cookies. You can watch it in the agent browser panel.",
+    example: '{"action": "open", "url": "https://example.com"}',
+  },
+  browse_act: {
+    desc: "Clicks, types, presses keys, selects options and scrolls on the page browse_read opened. Every action asks for your confirmation first. Off by default.",
+    example: '{"action": "click", "target": "Accept"}',
   },
   fact_check: {
     desc: "Fact-checks a specific claim against multiple sources.",

@@ -525,6 +525,161 @@ const candidateButtons = (div) => [
   ...div.querySelectorAll(".research-candidate-button"),
 ];
 
+// Every native tool needs a switch in Settings > TOOLS. The two browser tools
+// had none, which left browse_act switched off with no way to turn it on.
+// The browser panel with its network calls captured instead of made. Extension
+// UI (uBlock's popup and settings) is drawn over the page, and typing, pasting
+// and scrolling have to reach whichever of the two the user is working in.
+async function browserPanelDom({ keyTarget, takeover, uiOpen }) {
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const { document } = dom.window;
+  dom.window.sent = [];
+  dom.window.eval(`
+    browserUserRequest = async (path, payload) => {
+      window.sent.push(payload);
+      return {};
+    };
+    browserPanelOpen = true;
+    browserActiveSession = "user";
+    browserKeyTarget = ${JSON.stringify(keyTarget)};
+  `);
+  document.getElementById("browserUiLayer").hidden = !uiOpen;
+  document.getElementById("browserTakeover").checked = takeover;
+  const key = (target, value) =>
+    target.dispatchEvent(
+      new dom.window.KeyboardEvent("keydown", {
+        key: value,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  // Copied out of the page's realm so deepStrictEqual compares plain objects.
+  const sent = () => dom.window.sent.map((payload) => ({ ...payload }));
+  return { dom, errors, document, key, sent };
+}
+
+test("typing and pasting reach the extension panel after clicking it", async () => {
+  const { dom, errors, document, key, sent } = await browserPanelDom({
+    keyTarget: "ui",
+    takeover: false,
+    uiOpen: true,
+  });
+  key(document.body, "x");
+  key(document.body, "Delete");
+  const paste = new dom.window.Event("paste", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(paste, "clipboardData", {
+    value: { getData: () => "example.com##.ad" },
+  });
+  document.body.dispatchEvent(paste);
+
+  assert.deepStrictEqual(sent(), [
+    { type: "type", text: "x", target: "ui" },
+    { type: "key", key: "Delete", target: "ui" },
+    { type: "insert", text: "example.com##.ad", target: "ui" },
+  ]);
+  assert.strictEqual(paste.defaultPrevented, true);
+  assert.deepStrictEqual(errors, []);
+});
+
+test("with the extension panel closed, typing goes to the page and needs take-over", async () => {
+  const { document, key, sent } = await browserPanelDom({
+    keyTarget: "ui",
+    takeover: true,
+    uiOpen: false,
+  });
+  key(document.body, "y");
+  document.getElementById("browserTakeover").checked = false;
+  key(document.body, "z");
+  assert.deepStrictEqual(sent(), [{ type: "type", text: "y", target: "page" }]);
+});
+
+test("Dive's own text fields keep their keys while the browser panel is open", async () => {
+  const { document, key, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: true,
+    uiOpen: false,
+  });
+  const field = document.createElement("textarea");
+  document.body.append(field);
+  field.focus();
+  key(field, "x");
+  assert.deepStrictEqual(sent(), []);
+});
+
+test("clicking into the extension panel takes typing away from the address bar", async () => {
+  const { dom, document, key, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: false,
+    uiOpen: true,
+  });
+  dom.window.eval(`browserPointFor = () => ({ target: "ui", x: 10, y: 20 });`);
+  const address = document.getElementById("browserAddress");
+  address.focus();
+  document
+    .getElementById("browserUiView")
+    .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  key(document.body, "q");
+  assert.notStrictEqual(document.activeElement, address);
+  assert.deepStrictEqual(sent(), [
+    { type: "click", target: "ui", x: 10, y: 20 },
+    { type: "type", text: "q", target: "ui" },
+  ]);
+});
+
+test("the wheel scrolls the surface under the pointer", async () => {
+  const { dom, document, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: false,
+    uiOpen: true,
+  });
+  dom.window.eval(`browserPointFor = () => ({ target: "ui", x: 40, y: 300 });`);
+  document.getElementById("browserViewport").dispatchEvent(
+    new dom.window.WheelEvent("wheel", {
+      deltaY: 120,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await waitFor(() => dom.window.sent.length === 1);
+  const [scroll] = sent();
+  assert.strictEqual(scroll.type, "scroll");
+  assert.strictEqual(scroll.deltaY, 120);
+  assert.strictEqual(scroll.target, "ui");
+  assert.strictEqual(scroll.x, 40);
+  assert.strictEqual(scroll.y, 300);
+});
+
+test("every native tool has a switch in the NATIVE TOOLS list", async () => {
+  const { ALL_SKILLS } = require("../skills.js");
+  const { dom, errors } = createDom();
+  await waitFor(
+    () =>
+      dom.window.document.getElementById("app-version-label").textContent ===
+      "1.0.5",
+  );
+  const toggle = (name) =>
+    dom.window.document.querySelector(
+      `#builtinSkillsList .builtin-skill-toggle[data-skill="${name}"]`,
+    );
+  const missing = ALL_SKILLS.map((skill) => skill.function.name).filter(
+    (name) => !toggle(name),
+  );
+  assert.deepStrictEqual(missing, [], "native tools without a switch");
+  // With no saved settings yet, the window must show the server's defaults:
+  // reading pages is on, acting on them is off.
+  assert.strictEqual(toggle("browse_read").checked, true);
+  assert.strictEqual(toggle("browse_act").checked, false);
+  assert.deepStrictEqual(errors, []);
+});
+
 test("only the candidate name is inside the button, not the whole bullet", async () => {
   const { div, errors } = await renderInLlamaCpp(CANDIDATE_ANSWER);
   const buttons = candidateButtons(div);

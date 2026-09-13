@@ -33,7 +33,18 @@ let browserShowingExtensionUi = false;
 // The dimensions the current stream was started with. Frames arrive at that
 // size, so when the panel stops being that size the stream has to be reopened.
 let browserStreamSize = { width: 0, height: 0 };
-let browserPickerWasActive = false;
+// The uBlock tool the status line last described, so each is explained once.
+let browserToolShown = "";
+// What each uBlock tool does, said when it starts. The zapper and the picker
+// look the same on the page and do different things.
+const BROWSER_TOOL_HINTS = {
+  picker:
+    "Create a custom filter: move over the page to highlight, click to select, then Create. The filter is saved and survives a restart.",
+  zapper:
+    "Remove an element: click something to hide it until the page reloads. Nothing is saved. To block it for good, use Create a custom filter.",
+  unpicker:
+    "Remove a custom filter: choose a filter in the list to highlight what it hides, then click the trash can to remove it.",
+};
 
 const BROWSER_POLL_MS = 1200;
 // Wheel ticks arrive far faster than any round trip, so they are batched — but
@@ -245,6 +256,8 @@ function stopBrowserUiLayer() {
   }
   const { uiLayer, uiView } = getBrowserElements();
   if (uiLayer) uiLayer.hidden = true;
+  // With the panel gone there is only the page to type into.
+  browserKeyTarget = "page";
   // Cleared as well as hidden: a src left on a hidden element is still a
   // broken image waiting to reappear the moment anything unhides the layer.
   if (uiView) uiView.removeAttribute("src");
@@ -490,9 +503,16 @@ function browserViewClicked(event) {
   }
   const point = browserPointFor(event);
   if (!point) return;
+  // Typing follows the click: into the extension's panel after clicking it,
+  // into the page after clicking the page.
+  browserKeyTarget = point.target;
   // The extension panel is Dive's own control surface and is always clickable;
   // clicking INTO the page is what take-over gates.
   if (point.target === "page" && !takeover?.checked) return;
+  // A click into the browser takes the typing with it. Focus used to stay in
+  // Dive's address bar, which keeps its keys, so text meant for uBlock's filter
+  // editor went into the address bar instead.
+  if (isDiveTextField(document.activeElement)) document.activeElement.blur();
   browserUserRequest(
     "/api/browser/interact",
     { type: "click", ...point },
@@ -506,15 +526,22 @@ function browserViewClicked(event) {
 // flushed on a timer instead of one request per tick.
 let browserScrollPending = 0;
 let browserScrollTimer = null;
+// Where the wheel turned, so the scroll reaches the surface under it. Every
+// scroll used to go to the page, so an extension's settings drawn over it could
+// not be scrolled at all.
+let browserScrollPoint = null;
 
 function browserViewScrolled(event) {
   if (!browserPanelOpen || !browserActiveSession) return;
   event.preventDefault();
   browserScrollPending += event.deltaY;
+  browserScrollPoint = browserPointFor(event) || browserScrollPoint;
   if (browserScrollTimer) return;
   browserScrollTimer = window.setTimeout(() => {
     const deltaY = Math.round(browserScrollPending);
+    const point = browserScrollPoint;
     browserScrollPending = 0;
+    browserScrollPoint = null;
     browserScrollTimer = null;
     if (!deltaY) return;
     const { viewport } = getBrowserElements();
@@ -523,6 +550,7 @@ function browserViewScrolled(event) {
       {
         type: "scroll",
         deltaY,
+        ...point,
         // Only ask for a frame back when nothing is streaming one. With the
         // stream live the paint arrives on its own, and requesting a capture
         // here would encode the same frame a second time.
@@ -736,12 +764,39 @@ async function browserSelectAllOrCopy(key) {
   await copyBrowserSelection(result?.selection, "Nothing is selected.");
 }
 
+// Where typing goes: the surface last clicked. The extension's panel is drawn
+// over the page, and keys went to the page under it whatever had been clicked,
+// so nothing could be typed into uBlock's filter editor.
+let browserKeyTarget = "page";
+
+function browserKeyTargetNow() {
+  const { uiLayer } = getBrowserElements();
+  return browserKeyTarget === "ui" && uiLayer && !uiLayer.hidden
+    ? "ui"
+    : "page";
+}
+
+// Dive's own text fields keep their keys. Only the address bar was excluded,
+// so with take-over on, what was typed into the chat box went to the page.
+function isDiveTextField(el) {
+  if (!el || el === document.body) return false;
+  if (el.isContentEditable || el.tagName === "TEXTAREA") return true;
+  if (el.tagName !== "INPUT") return false;
+  return !/^(checkbox|radio|button|submit|reset|range|color|file)$/i.test(
+    el.type,
+  );
+}
+
 // Keystrokes go to the page only while take-over is on and the address bar does
 // not have focus — otherwise typing a URL would also be typed into the page.
+// The extension's panel needs no take-over: typing into it, like clicking it,
+// does nothing to the site.
 function browserViewKeyed(event) {
   const { takeover, address } = getBrowserElements();
   if (!browserPanelOpen) return;
   if (document.activeElement === address) return;
+  if (isDiveTextField(document.activeElement)) return;
+  const target = browserKeyTargetNow();
   if ((event.metaKey || event.ctrlKey) && !event.altKey) {
     const key = event.key.toLowerCase();
     if (key !== "a" && key !== "c") return;
@@ -751,17 +806,53 @@ function browserViewKeyed(event) {
     const local = window.getSelection?.();
     if (key === "c" && local && !local.isCollapsed) return;
     event.preventDefault();
+    if (target === "ui") {
+      // In the panel these belong to the panel: select-all selects in its
+      // editor, and copying takes what is selected there.
+      if (key === "a") {
+        browserUserRequest(
+          "/api/browser/interact",
+          { type: "key", key: "ControlOrMeta+A", target },
+          "Browser key",
+          { quiet: true },
+        );
+      } else {
+        browserUserRequest(
+          "/api/browser/interact",
+          { type: "selection", target },
+          "Browser selection",
+          { quiet: true },
+        ).then((result) =>
+          copyBrowserSelection(result?.selection, "Nothing is selected."),
+        );
+      }
+      return;
+    }
     browserSelectAllOrCopy(key);
     return;
   }
-  if (!takeover?.checked) return;
+  if (target === "page" && !takeover?.checked) return;
   if (event.metaKey || event.ctrlKey || event.altKey) return;
-  const named = ["Enter", "Tab", "Backspace", "Escape", "ArrowUp", "ArrowDown"];
+  const named = [
+    "Enter",
+    "Tab",
+    "Backspace",
+    "Delete",
+    "Escape",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+  ];
   if (named.includes(event.key)) {
     event.preventDefault();
     browserUserRequest(
       "/api/browser/interact",
-      { type: "key", key: event.key },
+      { type: "key", key: event.key, target },
       "Browser key",
     );
     return;
@@ -770,8 +861,26 @@ function browserViewKeyed(event) {
   event.preventDefault();
   browserUserRequest(
     "/api/browser/interact",
-    { type: "type", text: event.key },
+    { type: "type", text: event.key, target },
     "Browser type",
+  );
+}
+
+// A paste goes where typing would, as one insertion rather than key by key.
+function browserViewPasted(event) {
+  const { takeover, address } = getBrowserElements();
+  if (!browserPanelOpen || !browserActiveSession) return;
+  if (document.activeElement === address) return;
+  if (isDiveTextField(document.activeElement)) return;
+  const target = browserKeyTargetNow();
+  if (target === "page" && !takeover?.checked) return;
+  const text = event.clipboardData?.getData("text/plain") || "";
+  if (!text) return;
+  event.preventDefault();
+  browserUserRequest(
+    "/api/browser/interact",
+    { type: "insert", text, target },
+    "Browser paste",
   );
 }
 
@@ -827,22 +936,24 @@ async function refreshBrowserPanel({ capture = true } = {}) {
     if (stopBtn) stopBtn.hidden = !showing?.pickerActive;
     const { viewport } = getBrowserElements();
     viewport?.classList.toggle("picking", Boolean(showing?.pickerActive));
-    // Say what the picker is waiting for. It gives no sign of its own: the
-    // popup closes, the page comes back, and nothing indicates that the next
-    // click will select something rather than follow a link.
-    if (showing?.pickerActive && !browserPickerWasActive) {
+    // Say what the tool is waiting for. It gives no sign of its own: the popup
+    // closes, the page comes back, and nothing indicates that the next click
+    // will select something rather than follow a link. Which tool it is
+    // matters too: only the picker's filter is kept.
+    const tool = showing?.pickerActive ? showing.pickerKind || "picker" : "";
+    if (tool && tool !== browserToolShown) {
       const { takeover } = getBrowserElements();
       if (takeover && !takeover.checked) {
         takeover.checked = true;
         takeover.dispatchEvent(new Event("change"));
       }
       setBrowserStatus(
-        "Element picker: move over the page to highlight, click to select, then CREAR to block it.",
+        BROWSER_TOOL_HINTS[tool] || BROWSER_TOOL_HINTS.picker,
         false,
         30000,
       );
     }
-    browserPickerWasActive = Boolean(showing?.pickerActive);
+    browserToolShown = tool;
     // A popup that closed itself hands the view back to the page, and the
     // stream is bound to the target that just went away.
     if (browserShowingExtensionUi && !showing?.extensionUi) {
@@ -1069,10 +1180,12 @@ async function openBrowserExtensionPopup(id, name) {
     "Open extension popup",
   );
   if (result?.ok) {
+    // This used to point at "Remove an element", which is the zapper: nothing
+    // it removes is saved.
     setBrowserStatus(
-      `${name}: "Eliminar un elemento" to pick something on the page to block.`,
+      `${name}: "Create a custom filter" saves a block that survives a restart. "Remove an element" only hides something until the page reloads.`,
       false,
-      10000,
+      15000,
     );
     // The extensions list has done its job and is now just taking the space
     // you need to see the page. Picking an element off a 110px sliver is not
@@ -1249,6 +1362,7 @@ function toggleBrowserExtensions() {
     viewport?.classList.toggle("takeover", Boolean(takeover?.checked));
   });
   document.addEventListener("keydown", browserViewKeyed);
+  document.addEventListener("paste", browserViewPasted);
   wireBrowserResizer();
   // The stream is started with the viewport's dimensions, so anything that
   // changes them has to restart it or the frames keep arriving at the old

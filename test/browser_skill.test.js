@@ -571,3 +571,114 @@ test("selecting sets a range and never drags the mouse", () => {
   assert.match(source, /addRange/);
   assert.doesNotMatch(source, /mouse|dispatchEvent|click/);
 });
+
+// ---- After a relaunch ----
+//
+// Chromium drops an unpacked extension's registered content scripts each time
+// it loads it from the command line, and uBlock registers them again about a
+// second later. A page opened in that gap is not filtered, so filters saved
+// with the element picker looked lost after every restart.
+
+function fakeWorker(counts) {
+  const worker = {
+    calls: 0,
+    url: () => "chrome-extension://abc/background.js",
+    evaluate: async () => counts[Math.min(worker.calls++, counts.length - 1)],
+  };
+  return worker;
+}
+
+test("the first page waits until the extension's scripts are back", async () => {
+  const worker = fakeWorker([0, 0, 11]);
+  await browser.waitForExtensionScripts({ serviceWorkers: () => [worker] }, 1, {
+    timeoutMs: 2000,
+    pollMs: 1,
+  });
+  assert.equal(worker.calls, 3);
+});
+
+test("an extension without the scripting API is not waited for", async () => {
+  const worker = fakeWorker([-1]);
+  await browser.waitForExtensionScripts({ serviceWorkers: () => [worker] }, 1, {
+    timeoutMs: 2000,
+    pollMs: 1,
+  });
+  assert.equal(worker.calls, 1);
+});
+
+test("an extension that never registers anything costs a bounded wait", async () => {
+  const worker = fakeWorker([0]);
+  const started = Date.now();
+  await browser.waitForExtensionScripts({ serviceWorkers: () => [worker] }, 1, {
+    timeoutMs: 50,
+    pollMs: 5,
+  });
+  assert.ok(Date.now() - started < 1000);
+});
+
+test("with no extension worker to wait for, nothing is asked", async () => {
+  let asked = 0;
+  const context = {
+    serviceWorkers: () => {
+      asked += 1;
+      return [];
+    },
+  };
+  await browser.waitForExtensionScripts(context, 0, { timeoutMs: 2000 });
+  assert.equal(asked, 0);
+});
+
+test("only extensions with a background service worker are counted", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dive-ext-sw-"));
+  const write = (name, manifest) => {
+    fs.mkdirSync(path.join(root, name));
+    fs.writeFileSync(
+      path.join(root, name, "manifest.json"),
+      JSON.stringify(manifest),
+    );
+    return path.join(root, name);
+  };
+  try {
+    const withWorker = write("a", { background: { service_worker: "bg.js" } });
+    const without = write("b", { name: "no background" });
+    assert.equal(
+      browser.serviceWorkerCount([withWorker, without, path.join(root, "c")]),
+      1,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- Which uBlock tool is on the page ----
+//
+// The zapper and the element picker look the same from the page: an iframe
+// under <html>. They do different things: the picker saves a filter, the zapper
+// removes an element until the page reloads. The panel told you to press CREAR
+// for both, and a zapped element came back every time.
+
+function fakePage(urls) {
+  return { frames: () => urls.map((u) => ({ url: () => u })) };
+}
+
+test("the zapper is told apart from the picker", () => {
+  assert.equal(
+    browser.overlayToolKind(
+      fakePage(["https://example.com/", "chrome-extension://x/zapper-ui.html"]),
+    ),
+    "zapper",
+  );
+  assert.equal(
+    browser.overlayToolKind(fakePage(["chrome-extension://x/picker-ui.html"])),
+    "picker",
+  );
+});
+
+test("a page with no uBlock tool open reports none", () => {
+  assert.equal(
+    browser.overlayToolKind(
+      fakePage(["https://example.com/picker-ui.html.js"]),
+    ),
+    "",
+  );
+});
