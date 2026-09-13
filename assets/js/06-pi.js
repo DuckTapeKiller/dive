@@ -36,7 +36,7 @@ async function saveBookSearchConfigUi() {
   } catch (e) {
     await appAlert(
       e.message || "Failed to save book search settings.",
-      "Skills",
+      "Tools",
     );
   }
 }

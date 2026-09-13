@@ -5,7 +5,7 @@ HTTP server on `127.0.0.1`, and that server both serves the interface and talks
 to whichever model backend you have selected. Conversations, settings, indexed
 documents and attachments live in a directory on your machine.
 
-Version 5.0.6.
+Version 5.0.8.
 
 ## Start here
 
@@ -18,15 +18,16 @@ Version 5.0.6.
 
 ## Reference
 
-| Document                               | What it covers                             |
-| -------------------------------------- | ------------------------------------------ |
-| [api.md](api.md)                       | Every HTTP endpoint                        |
-| [skills.md](skills.md)                 | All 27 built-in skills and their arguments |
-| [slash-commands.md](slash-commands.md) | Slash commands and the composer launcher   |
-| [pi.md](pi.md)                         | The Pi agent integration                   |
-| [library.md](library.md)               | The local document library and retrieval   |
-| [mcp.md](mcp.md)                       | Model Context Protocol servers             |
-| [plugins.md](plugins.md)               | Writing and installing plugins             |
+| Document                               | What it covers                               |
+| -------------------------------------- | -------------------------------------------- |
+| [api.md](api.md)                       | Every HTTP endpoint                          |
+| [tools.md](tools.md)                   | All 29 native tools and their arguments      |
+| [skills.md](skills.md)                 | Agent Skills: `SKILL.md` instruction folders |
+| [slash-commands.md](slash-commands.md) | Slash commands and the composer launcher     |
+| [pi.md](pi.md)                         | The Pi agent integration                     |
+| [library.md](library.md)               | The local document library and retrieval     |
+| [mcp.md](mcp.md)                       | Model Context Protocol servers               |
+| [plugins.md](plugins.md)               | Writing and installing plugins               |
 
 ## Operations
 

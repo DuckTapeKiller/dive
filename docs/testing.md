@@ -1,7 +1,7 @@
 # Testing
 
 ```bash
-npm test        # 406 tests across 40 files
+npm test        # 503 tests across 44 files
 ```
 
 Plain `node:test`. No framework, no mocking library, no snapshots.
@@ -104,7 +104,7 @@ attachment loss; and the frontend renderer.
 
 ## What is not
 
-- Real network calls. Skills hitting live upstreams are covered for argument
+- Real network calls. Tools hitting live upstreams are covered for argument
   handling and guards, not for their responses.
 - Real models. Every backend is faked at the wire format.
 - Anything visual. See above.

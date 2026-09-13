@@ -243,7 +243,7 @@ function mkSingleSystemCheck(file, parent) {
   holder.style.cssText =
     "display: flex; align-items: center; gap: 4px; font-size: calc(9px * var(--font-scale, 1));";
   holder.title =
-    "Send the assistant policy, database context and skills policy as ONE system message instead of three. " +
+    "Send the assistant policy, database context and tools policy as ONE system message instead of three. " +
     "Only needed for models whose chat template refuses a system message that is not the first one — " +
     'they fail with "System message must be at the beginning". Leave off otherwise: separate messages are followed more reliably.';
   const input = document.createElement("input");

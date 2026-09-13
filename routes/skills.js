@@ -8,6 +8,12 @@ const path = require("path");
 const { PLUGINS_DIR, listPlugins, loadPlugins } = require("../plugins.js");
 const { requireNonPiMode } = require("../mode-state.js");
 const { INPUT_SKILL_NAMES } = require("../slash_commands.js");
+const {
+  describeAgentSkills,
+  saveConfiguredSkillPaths,
+  scanAgentSkills,
+  skillConfigKey,
+} = require("../agent-skills.js");
 
 module.exports = function createSkillsDomain(deps) {
   const {
@@ -124,6 +130,50 @@ module.exports = function createSkillsDomain(deps) {
           fs.rmSync(draftDir, { recursive: true, force: true });
           send(200, { ok: true, deleted: name });
         }
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
+    // Agent Skills: SKILL.md folders in the format Claude Code, pi and other
+    // agents share. Listed per mode, because each skill's on/off state is.
+    if (req.method === "GET" && urlPath === "/api/agent-skills") {
+      try {
+        const mode = requestMode(ctx);
+        send(200, { mode, ...describeAgentSkills(loadSkillsConfig(mode)) });
+      } catch (e) {
+        send(e.statusCode || 400, { error: e.message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && urlPath === "/api/agent-skills/reload") {
+      try {
+        const body = await parseJsonBody(req);
+        const mode = requestMode(ctx, body);
+        send(200, {
+          ok: true,
+          mode,
+          ...describeAgentSkills(loadSkillsConfig(mode), { force: true }),
+        });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
+    // Extra folders to scan, shared by every mode (skill-paths.json).
+    if (req.method === "POST" && urlPath === "/api/agent-skills/paths") {
+      try {
+        const body = await parseJsonBody(req);
+        const mode = requestMode(ctx, body);
+        saveConfiguredSkillPaths(body?.paths);
+        send(200, {
+          ok: true,
+          mode,
+          ...describeAgentSkills(loadSkillsConfig(mode), { force: true }),
+        });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }
@@ -314,6 +364,9 @@ module.exports = function createSkillsDomain(deps) {
         for (const plugin of listPlugins()) {
           for (const skillName of plugin.skills)
             VALID_SKILL_KEYS.add(skillName);
+        }
+        for (const skill of scanAgentSkills().skills) {
+          VALID_SKILL_KEYS.add(skillConfigKey(skill.name));
         }
         const filtered = Object.fromEntries(
           Object.entries(submittedSettings).filter(([k]) =>

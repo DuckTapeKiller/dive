@@ -150,7 +150,53 @@ function requiredInput(input, commandName) {
   return text;
 }
 
-function buildForcedSkillToolCall(command) {
+function isStringSchema(property) {
+  if (!property || typeof property !== "object") return false;
+  return (
+    property.type === "string" ||
+    (Array.isArray(property.type) && property.type.includes("string"))
+  );
+}
+
+// A plugin command hands the text typed after it to ONE argument of the plugin
+// skill's JSON schema:
+//   1. its only required string property, when exactly one is required;
+//   2. otherwise its first string property, in declaration order;
+//   3. otherwise a property named "input".
+// Rule 2 is there because real plugins declare several optional strings with
+// the main one first: the humaniser plugin's `text` before `voice_sample`.
+// With nothing typed the skill gets no arguments, unless the chosen argument is
+// required, in which case the command is refused.
+function pluginSlashCommandArguments(pluginSkill, input, commandName) {
+  const schema = pluginSkill?.def?.function?.parameters;
+  const properties =
+    schema?.properties &&
+    typeof schema.properties === "object" &&
+    !Array.isArray(schema.properties)
+      ? schema.properties
+      : {};
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  const stringNames = Object.keys(properties).filter((name) =>
+    isStringSchema(properties[name]),
+  );
+  const requiredStrings = stringNames.filter((name) => required.includes(name));
+  const target =
+    requiredStrings.length === 1
+      ? requiredStrings[0]
+      : stringNames[0] || "input";
+  if (!input) {
+    if (required.includes(target)) {
+      throw new Error(`/${commandName} requires ${target}.`);
+    }
+    return {};
+  }
+  return { [target]: input };
+}
+
+// `pluginSkills` is the calling mode's plugin skill snapshot
+// (plugins.getPluginSkillSnapshot, filtered by that mode's skills config). A
+// plugin command is only ever resolved against it, never the global registry.
+function buildForcedSkillToolCall(command, pluginSkills = null) {
   if (!command || command.type !== "skill") {
     throw new Error("A skill slash command is required.");
   }
@@ -240,8 +286,18 @@ function buildForcedSkillToolCall(command) {
         throw new Error(`/${command.name} requires a JSON media selection.`);
       }
       break;
-    default:
-      throw new Error(`Unsupported slash command: /${command.name}`);
+    default: {
+      const pluginSkill = Array.isArray(pluginSkills)
+        ? pluginSkills.find(
+            (skill) => skill && skill.name === command.skillName,
+          )
+        : null;
+      if (!pluginSkill) {
+        throw new Error(`Unsupported slash command: /${command.name}`);
+      }
+      args = pluginSlashCommandArguments(pluginSkill, input, command.name);
+      break;
+    }
   }
 
   return {

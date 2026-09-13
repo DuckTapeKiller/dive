@@ -48,19 +48,19 @@ let state = {
 };
 
 function validateSkill(raw, pluginName) {
-  if (!raw || typeof raw !== "object") return "skill entry is not an object";
+  if (!raw || typeof raw !== "object") return "tool entry is not an object";
   if (typeof raw.name !== "string" || !SKILL_NAME_RE.test(raw.name)) {
-    return `invalid skill name "${raw.name}" (letters, digits, underscores)`;
+    return `invalid tool name "${raw.name}" (letters, digits, underscores)`;
   }
   if (typeof raw.description !== "string" || !raw.description.trim()) {
-    return `skill "${raw.name}" is missing a description`;
+    return `tool "${raw.name}" is missing a description`;
   }
   if (typeof raw.execute !== "function") {
-    return `skill "${raw.name}" is missing an execute() function`;
+    return `tool "${raw.name}" is missing an execute() function`;
   }
   if (state.skills.has(raw.name)) {
     const owner = state.skills.get(raw.name).pluginName;
-    return `skill "${raw.name}" already registered by plugin "${owner}"`;
+    return `tool "${raw.name}" already registered by plugin "${owner}"`;
   }
   void pluginName;
   return null;
@@ -300,7 +300,7 @@ async function executePluginSkill(name, args, context = {}) {
       ? result
       : JSON.stringify(result, null, 2);
   } catch (e) {
-    return `Plugin Skill Error (${name}, from plugin "${skill.pluginName}"): ${e.message || e}`;
+    return `Plugin Tool Error (${name}, from plugin "${skill.pluginName}"): ${e.message || e}`;
   }
 }
 

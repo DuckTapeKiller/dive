@@ -514,24 +514,6 @@
               <line x1="16" x2="16" y1="18" y2="22" />
             </svg>
           </button>
-          <button class="side-box side-nav-btn" id="sideMcpBtn">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 22v-5" />
-              <path d="M15 8V2" />
-              <path
-                d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
-              />
-              <path d="M9 8V2" />
-            </svg>
-          </button>
           <button class="side-box side-nav-btn" id="sideBrowserBtn">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -663,24 +645,6 @@
             <line x1="16" x2="16" y1="18" y2="22" />
           </svg>
         </button>
-        <button id="railMcpBtn" title="MCP Servers" aria-label="MCP">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M12 22v-5" />
-            <path d="M15 8V2" />
-            <path
-              d="M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z"
-            />
-            <path d="M9 8V2" />
-          </svg>
-        </button>
         <button
           id="railBrowserBtn"
           title="Agent browser"
@@ -748,7 +712,7 @@
               rows="1"
               placeholder="Type a message..."
             ></textarea>
-            <div id="composerSkills" aria-label="Quick skill commands"></div>
+            <div id="composerSkills" aria-label="Quick tool commands"></div>
             <div id="composerTools">
               <button
                 id="uploadBtn"
@@ -1078,79 +1042,6 @@
         </div>
       </div>
 
-      <div id="mcpResizer" style="display: none"></div>
-      <div id="mcpPanel">
-        <div id="mcpHeader">
-          <span>MCP PLUGINS</span>
-          <button id="closeMcpBtn">✕</button>
-        </div>
-        <div id="mcpBody">
-          <div class="setting-section">
-            <h3 class="setting-title">MCP SERVERS CONFIGURATION</h3>
-            <div class="setting-help" style="margin-bottom: 8px">
-              Configure external Model Context Protocol servers (like Postgres,
-              GitHub, etc.) in JSON format to grant the active non-Pi mode
-              access to external tools. Each mode keeps its own clients.
-            </div>
-            <textarea
-              id="mcpConfigArea"
-              placeholder='{\n  "mcpServers": {\n    "sqlite": {\n      "command": "uvx",\n      "args": ["mcp-server-sqlite", "--db-path", "~/test.db"]\n    }\n  }\n}'
-              style="
-                width: 100%;
-                height: 350px;
-                background: var(--bg-inverse);
-                color: var(--text-inverse);
-                border: var(--border-width) solid var(--text-inverse);
-                font-family: var(--ui-font);
-                font-size: calc(11px * var(--font-scale, 1));
-                padding: 10px;
-                resize: vertical;
-                outline: none;
-                white-space: pre;
-                border-radius: 0;
-              "
-            ></textarea>
-            <div
-              id="mcpActiveList"
-              style="margin-top: 15px; display: flex; gap: 8px; flex-wrap: wrap"
-            ></div>
-            <div
-              style="
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-top: 10px;
-              "
-            >
-              <div style="display: flex; gap: 8px">
-                <button
-                  id="saveMcpBtn"
-                  class="mcp-action-btn"
-                  style="width: auto"
-                >
-                  SAVE & RESTART SERVERS
-                </button>
-                <button
-                  id="purgeMcpBtn"
-                  class="mcp-action-btn"
-                  style="width: auto; border-color: #ff4444; color: #ff4444"
-                >
-                  DELETE DOWNLOADS
-                </button>
-              </div>
-              <div
-                id="mcpStatus"
-                style="
-                  font-size: calc(10px * var(--font-scale, 1));
-                  color: var(--text-inverse);
-                  font-weight: bold;
-                "
-              ></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div id="settingsResizer" style="display: none"></div>
       <div id="settingsPanel">
         <div id="settingsHeader">
@@ -1206,6 +1097,16 @@
             <button
               type="button"
               class="settings-tab"
+              data-settings-tab="tools"
+              role="tab"
+              aria-selected="false"
+              aria-controls="settingsTabTools"
+            >
+              TOOLS
+            </button>
+            <button
+              type="button"
+              class="settings-tab"
               data-settings-tab="skills"
               role="tab"
               aria-selected="false"
@@ -1247,6 +1148,12 @@
             id="settingsTabPrompts"
             class="settings-tab-panel"
             data-settings-panel="prompts"
+            role="tabpanel"
+          ></div>
+          <div
+            id="settingsTabTools"
+            class="settings-tab-panel"
+            data-settings-panel="tools"
             role="tabpanel"
           ></div>
           <div
@@ -1313,9 +1220,9 @@
               </label>
             </div>
             <div class="setting-help">
-              Send skills and MCP tools as structured function schemas — far
-              more reliable with tool-trained models (Gemma, Qwen, Hermes, Llama
-              3). Disable to force the legacy XML skill-call prompt.
+              Send Dive's tools and MCP tools as structured function schemas —
+              far more reliable with tool-trained models (Gemma, Qwen, Hermes,
+              Llama 3). Disable to force the legacy XML tool-call prompt.
             </div>
             <div class="setting-row-inline">
               <label style="font-size: calc(10px * var(--font-scale, 1))">
@@ -1478,9 +1385,9 @@
               </label>
             </div>
             <div class="setting-help">
-              Send skills and MCP tools as structured function schemas (requires
-              llama-server started with --jinja). If the server rejects them,
-              the request falls back to the XML skill prompt.
+              Send Dive's tools and MCP tools as structured function schemas
+              (requires llama-server started with --jinja). If the server
+              rejects them, the request falls back to the XML tool prompt.
             </div>
             <div class="setting-row-inline">
               <label style="font-size: calc(10px * var(--font-scale, 1))">
@@ -1828,9 +1735,9 @@
               </label>
             </div>
             <div class="setting-help">
-              Send skills and MCP tools as structured function schemas — far
-              more reliable with tool-trained models (Gemma, Qwen, Llama 3).
-              Disable to force the legacy XML skill-call prompt.
+              Send Dive's tools and MCP tools as structured function schemas —
+              far more reliable with tool-trained models (Gemma, Qwen, Llama 3).
+              Disable to force the legacy XML tool-call prompt.
             </div>
             <div class="setting-row-inline">
               <label style="font-size: calc(10px * var(--font-scale, 1))">
@@ -3636,10 +3543,9 @@
             </select>
             <div class="setting-help">
               Selecting a prompt REPLACES the entire default system prompt for
-              this mode — including its language and style rules. Skills and
-              tool instructions are added separately and are never affected.
-              When Database Context is ON, the Database prompt below is used
-              instead.
+              this mode — including its language and style rules. Tool and skill
+              instructions are added separately and are never affected. When
+              Database Context is ON, the Database prompt below is used instead.
             </div>
             <div style="margin-top: 8px">
               <button id="refactored_btn_8" class="settings-action-btn">
@@ -3725,8 +3631,8 @@
             <div class="setting-help">
               The exact base system prompts this mode sends to the model,
               depending on the Database Context toggle. Edit and save to
-              override; Restore Default reverts to the built-in text. Skills and
-              tool instructions are appended automatically and cannot be edited
+              override; Restore Default reverts to the built-in text. Tool and
+              skill instructions are appended automatically and cannot be edited
               here. Lessons you have taught the model are appended to both.
             </div>
             <label style="margin-top: 10px">DATABASE DISABLED</label>
@@ -3798,14 +3704,15 @@
           </div>
 
           <div id="builtinSkillsGroup" class="setting-group">
-            <label>BUILT-IN SKILLS</label>
+            <label>NATIVE TOOLS</label>
             <div class="setting-help">
-              Enable or disable built-in skills. Ollama and Cloud models can
-              trigger enabled skills automatically; slash commands force a
-              specific skill. Shell Command requires explicit interactive
-              confirmation even when enabled. The INPUT toggle exposes a
-              slash-command shortcut above the composer without changing whether
-              the skill is enabled; it is saved separately for each mode.
+              Native tools come with Dive. Tools are actions the model can take,
+              such as searching the web or running a command. The model calls
+              enabled tools on its own; slash commands force a specific tool.
+              Shell Command requires explicit interactive confirmation even when
+              enabled. The INPUT toggle exposes a slash-command shortcut above
+              the composer without changing whether the tool is enabled; it is
+              saved separately for each mode.
             </div>
             <div id="builtinSkillsList" class="builtin-skills-list">
               <!-- Populated dynamically via JS -->
@@ -3813,12 +3720,13 @@
           </div>
 
           <div id="pluginsGroup" class="setting-group">
-            <label>PLUGINS</label>
+            <label>EXTERNAL TOOLS</label>
             <div class="setting-help">
-              Drop plugin folders into the plugins directory to add new skills
-              and slash commands. Plugins are plain Node.js modules with full
-              local access: only install code you trust. A broken plugin is
-              listed with its error and never affects the rest of the app.
+              Tools you install yourself. Drop plugin folders into the plugins
+              directory to add new tools and slash commands. Plugins are plain
+              Node.js modules with full local access: only install code you
+              trust. A broken plugin is listed with its error and never affects
+              the rest of the app.
             </div>
             <div
               class="setting-help"
@@ -3830,7 +3738,7 @@
               class="settings-action-btn"
               style="margin-top: 6px"
             >
-              RELOAD PLUGINS
+              RELOAD EXTERNAL TOOLS
             </button>
             <div
               id="pluginsList"
@@ -3844,23 +3752,78 @@
             <div id="pluginDraftsWrap" style="display: none; margin-top: 10px">
               <label>DRAFTS AWAITING YOUR APPROVAL</label>
               <div class="setting-help">
-                Plugins drafted by the model. They are NOT active. Review the
-                code, then approve or delete. Approving moves the plugin into
-                the plugins directory and enables it.
+                External tools drafted by the model. They are NOT active. Review
+                the code, then approve or delete. Approving moves the plugin
+                into the plugins directory and enables it.
               </div>
               <div id="pluginDraftsList"></div>
             </div>
+          </div>
+
+          <div id="agentSkillsGroup" class="setting-group">
+            <label>AGENT SKILLS</label>
+            <div class="setting-help">
+              Skills are written instructions the model follows for a particular
+              task. A skill runs no code itself; the actions it asks for are
+              done with the tools in the TOOLS tab. Skills are folders with a
+              SKILL.md file, the format Claude Code, pi and other agents use.
+              The model sees each enabled skill's name and description, and
+              loads the full instructions when a request matches. You can also
+              start a message with /skill:name followed by your text. The
+              switches apply to this mode only.
+            </div>
+            <div
+              class="setting-help"
+              id="agentSkillsRootsHint"
+              style="user-select: text"
+            ></div>
+            <div class="setting-help" style="margin-top: 8px">
+              Extra folders to scan, one per line (for example
+              ~/.claude/skills). Shared by every mode.
+            </div>
+            <textarea
+              id="agentSkillsPaths"
+              rows="3"
+              style="width: 100%; margin-top: 6px; resize: vertical"
+              spellcheck="false"
+              aria-label="Extra Agent Skills folders, one per line"
+            ></textarea>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button
+                id="agentSkillsSavePathsBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                SAVE FOLDERS
+              </button>
+              <button
+                id="agentSkillsReloadBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                RELOAD SKILLS
+              </button>
+            </div>
+            <div
+              id="agentSkillsList"
+              style="
+                display: flex;
+                flex-direction: column;
+                gap: 0;
+                margin-top: 8px;
+              "
+            ></div>
           </div>
 
           <div id="lessonsGroup" class="setting-group">
             <label id="lessonsLabel">LESSONS</label>
             <div class="setting-help">
               Standing instructions the model has learned (via the
-              remember_lesson skill or /remember) or that you write here
-              yourself — one lesson per line. Every non-empty line is added to
-              the system prompt of this mode's chats. Lessons are strictly
-              per-mode (~/dive/lessons) and never shared between modes; Pi is
-              excluded — it uses its own AGENTS.md context system.
+              remember_lesson tool or /remember) or that you write here yourself
+              — one lesson per line. Every non-empty line is added to the system
+              prompt of this mode's chats. Lessons are strictly per-mode
+              (~/dive/lessons) and never shared between modes; Pi is excluded —
+              it uses its own AGENTS.md context system.
             </div>
             <textarea
               id="lessonsTextarea"
@@ -3878,17 +3841,17 @@
           </div>
 
           <div id="customSkillsGroup" class="setting-group">
-            <label>MANAGE CUSTOM SKILLS</label>
+            <label>MANAGE CUSTOM TOOLS</label>
             <div class="setting-help">
-              Define tools for local skill execution. Shell and JavaScript
-              skills remain local and require the app's safety checks.
+              Define your own tools as a shell command or a piece of JavaScript.
+              They run locally and go through the app's safety checks.
             </div>
             <button
               id="refactored_btn_11"
               class="settings-action-btn"
               style="margin-top: 6px"
             >
-              ADD NEW SKILL
+              ADD NEW TOOL
             </button>
             <div
               id="customSkillsEditor"
@@ -3903,7 +3866,7 @@
               <input
                 id="skillName"
                 type="text"
-                placeholder="Skill Name (e.g. fetch_weather)"
+                placeholder="Tool Name (e.g. fetch_weather)"
               />
               <input id="skillDesc" type="text" placeholder="Description" />
               <select id="skillType">
@@ -3934,12 +3897,62 @@
             </div>
             <div id="customSkillsList" style="margin-top: 10px"></div>
           </div>
+          <div id="mcpSettingsGroup" class="setting-group">
+            <label>MCP SERVERS</label>
+            <div class="setting-help">
+              Configure external Model Context Protocol servers (like Postgres,
+              GitHub, etc.) in JSON format to grant the active mode access to
+              their tools. Each mode keeps its own clients.
+            </div>
+            <textarea
+              id="mcpConfigArea"
+              rows="12"
+              placeholder='{\n  "mcpServers": {\n    "sqlite": {\n      "command": "uvx",\n      "args": ["mcp-server-sqlite", "--db-path", "~/test.db"]\n    }\n  }\n}'
+              style="
+                width: 100%;
+                margin-top: 8px;
+                resize: vertical;
+                white-space: pre;
+              "
+              spellcheck="false"
+              aria-label="MCP servers configuration (JSON)"
+            ></textarea>
+            <div
+              id="mcpActiveList"
+              style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap"
+            ></div>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button
+                id="saveMcpBtn"
+                class="settings-action-btn"
+                style="flex: 1"
+              >
+                SAVE & RESTART SERVERS
+              </button>
+              <button
+                id="purgeMcpBtn"
+                class="settings-action-btn"
+                style="flex: 1; border-color: #ff4444; color: #ff4444"
+              >
+                DELETE DOWNLOADS
+              </button>
+            </div>
+            <div
+              id="mcpStatus"
+              style="
+                margin-top: 6px;
+                font-size: calc(10px * var(--font-scale, 1));
+                color: var(--text-inverse);
+                font-weight: bold;
+              "
+            ></div>
+          </div>
           <div id="bookSearchConfigGroup" class="setting-group">
             <label>BOOK SEARCH PROVIDERS</label>
             <div class="setting-help">
               Open Library, Google Books, Goodreads and StoryGraph work with no
               setup. Optional keys below unlock the remaining providers; the
-              Calibre fields point the skill at a local calibre-server.
+              Calibre fields point the tool at a local calibre-server.
             </div>
             <label style="font-size: calc(10px * var(--font-scale, 1))"
               >GOOGLE BOOKS API KEY (optional)</label

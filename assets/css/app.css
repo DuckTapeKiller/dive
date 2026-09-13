@@ -359,13 +359,6 @@ textarea {
   background-color: var(--bg-inverse);
   border: var(--border-width) solid var(--border-color);
 }
-/* MCP tools are Ollama-only in this app. */
-[data-mode="pi"] #sideMcpBtn,
-[data-mode="cloud"] #sideMcpBtn,
-[data-mode="pi"] #railMcpBtn,
-[data-mode="cloud"] #railMcpBtn {
-  display: none !important;
-}
 #windowDragBar {
   height: 32px;
   background: var(--bg-inverse);
@@ -615,7 +608,6 @@ textarea {
 #historyResizer,
 #notesResizer,
 #settingsResizer,
-#mcpResizer,
 #browserResizer {
   width: 5px;
   background: var(--bg-secondary);
@@ -626,7 +618,6 @@ textarea {
 #historyResizer:hover,
 #notesResizer:hover,
 #settingsResizer:hover,
-#mcpResizer:hover,
 #browserResizer:hover {
   background: var(--bg-inverse);
 }
@@ -1331,9 +1322,8 @@ textarea {
   transition: color 0.2s;
 }
 
-/* SETTINGS & MCP PANELS */
+/* SETTINGS & BROWSER PANELS */
 #settingsPanel,
-#mcpPanel,
 #browserPanel {
   width: 50vw;
   background: var(--bg-inverse);
@@ -1347,7 +1337,6 @@ textarea {
   overflow-y: auto;
 }
 #settingsPanel.open,
-#mcpPanel.open,
 #browserPanel.open {
   display: flex;
 }
@@ -1365,7 +1354,6 @@ textarea {
   min-height: 0;
 }
 #settingsHeader,
-#mcpHeader,
 #browserHeader {
   display: flex;
   align-items: center;
@@ -1376,7 +1364,6 @@ textarea {
   transition: border-color 0.2s;
 }
 #settingsHeader span,
-#mcpHeader span,
 #browserHeader span {
   color: var(--text-inverse);
   font-size: calc(11px * var(--font-scale, 1));
@@ -1386,7 +1373,6 @@ textarea {
 }
 #closeHistoryBtn,
 #closeSettingsBtn,
-#closeMcpBtn,
 #closeBrowserBtn,
 #browserExtBtn,
 #browserRefreshBtn,
@@ -1412,7 +1398,6 @@ textarea {
 }
 #closeHistoryBtn:hover,
 #closeSettingsBtn:hover,
-#closeMcpBtn:hover,
 #closeBrowserBtn:hover {
   background: #ff4444;
   border-color: #ff4444;
@@ -1423,8 +1408,7 @@ textarea {
   align-items: center;
   gap: 8px;
 }
-#settingsBody,
-#mcpBody {
+#settingsBody {
   flex: 1;
   padding: 14px;
   display: flex;
@@ -2041,8 +2025,7 @@ input[type="checkbox"].brutalist-toggle:checked::after {
   }
 }
 
-.settings-action-btn,
-.mcp-action-btn {
+.settings-action-btn {
   padding: 5px 10px;
   background: var(--flat-fill);
   color: var(--text-inverse);
@@ -2058,18 +2041,15 @@ input[type="checkbox"].brutalist-toggle:checked::after {
   width: 100%;
   text-align: center;
 }
-.settings-action-btn:hover,
-.mcp-action-btn:hover {
+.settings-action-btn:hover {
   background: var(--text-inverse);
   color: var(--bg-inverse);
 }
-.settings-action-btn:disabled,
-.mcp-action-btn:disabled {
+.settings-action-btn:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
-.settings-action-btn:disabled:hover,
-.mcp-action-btn:disabled:hover {
+.settings-action-btn:disabled:hover {
   background: transparent;
   color: var(--text-inverse);
 }

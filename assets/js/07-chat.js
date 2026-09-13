@@ -1619,7 +1619,6 @@ function toggleNotes() {
   if (notesOpen) {
     if (historyOpen) toggleHistory();
     if (settingsOpen) toggleSettings();
-    if (mcpOpen) toggleMcp();
     if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
@@ -1748,12 +1747,12 @@ function toggleSettings() {
   if (settingsOpen) {
     if (historyOpen) toggleHistory();
     if (notesOpen) toggleNotes();
-    if (mcpOpen) toggleMcp();
     if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     closePromptEditor();
     refreshDiagnostics();
+    refreshMcpPanelForMode();
     // Lessons are per-mode: every open must rebind the Lessons editor
     // to the CURRENT mode and load that mode's file (boot-time loading
     // alone left it stale).
@@ -1796,18 +1795,24 @@ function organizeSettingsTabs() {
     "llamaCppSettingsGroup",
   ]);
   appendSettingsGroups("settingsTabDatabase", ["databaseSettingsGroup"]);
+  // Lessons are standing instructions appended to the system prompt, so they
+  // sit with the prompts.
   appendSettingsGroups("settingsTabPrompts", [
     "promptSettingsGroup",
     "promptManageGroup",
     "systemPromptsGroup",
+    "lessonsGroup",
   ]);
-  appendSettingsGroups("settingsTabSkills", [
+  // TOOLS holds what the model can call; SKILLS holds the SKILL.md
+  // instructions it can read. The group ids keep their older "skill" names.
+  appendSettingsGroups("settingsTabTools", [
     "builtinSkillsGroup",
     "pluginsGroup",
-    "lessonsGroup",
     "customSkillsGroup",
     "bookSearchConfigGroup",
+    "mcpSettingsGroup",
   ]);
+  appendSettingsGroups("settingsTabSkills", ["agentSkillsGroup"]);
   appendSettingsGroups("settingsTabLlamaModels", ["llamaCppModelsGroup"]);
 
   const settingsBody = document.getElementById("settingsBody");
@@ -1821,6 +1826,7 @@ function switchSettingsTab(tabName) {
     "modes",
     "database",
     "prompts",
+    "tools",
     "skills",
     "llamamodels",
   ];
@@ -1855,9 +1861,13 @@ function updateSettingsTabAvailability(state = {}) {
   const isLlamaCppMode =
     typeof state === "object" && state.isLlamaCppMode === true;
   const promptsVisible = isOllamaMode || isCloudMode || isLocalMode;
+  // Pi brings its own tools and skills, so both tabs belong to Dive's modes.
   const skillsVisible = isOllamaMode || isCloudMode || isLocalMode;
   const promptsTab = document.querySelector(
     '.settings-tab[data-settings-tab="prompts"]',
+  );
+  const toolsTab = document.querySelector(
+    '.settings-tab[data-settings-tab="tools"]',
   );
   const skillsTab = document.querySelector(
     '.settings-tab[data-settings-tab="skills"]',
@@ -1866,13 +1876,15 @@ function updateSettingsTabAvailability(state = {}) {
     '.settings-tab[data-settings-tab="llamamodels"]',
   );
   if (promptsTab) promptsTab.style.display = promptsVisible ? "" : "none";
+  if (toolsTab) toolsTab.style.display = skillsVisible ? "" : "none";
   if (skillsTab) skillsTab.style.display = skillsVisible ? "" : "none";
   if (llamaModelsTab) {
     llamaModelsTab.style.display = isLlamaCppMode ? "" : "none";
   }
   if (
     (activeSettingsTab === "prompts" && !promptsVisible) ||
-    (activeSettingsTab === "skills" && !skillsVisible) ||
+    ((activeSettingsTab === "tools" || activeSettingsTab === "skills") &&
+      !skillsVisible) ||
     (activeSettingsTab === "llamamodels" && !isLlamaCppMode)
   ) {
     switchSettingsTab("main");
@@ -1989,12 +2001,17 @@ function setMcpConfigForMode(modeId, raw) {
   persistMcpConfigStorage();
 }
 
+// The MCP editor lives in Settings > Tools, so a re-render must not wipe what
+// the user is typing: the text is reloaded only when the mode changes.
 function refreshMcpPanelForMode() {
-  if (!mcpOpen || mode === "pi") return;
+  if (!MCP_MODE_IDS.includes(mode)) return;
   const configArea = document.getElementById("mcpConfigArea");
   if (!configArea) return;
   const raw = activeMcpConfig();
-  configArea.value = raw;
+  if (configArea.dataset.mode !== mode) {
+    configArea.value = raw;
+    configArea.dataset.mode = mode;
+  }
   renderMcpList(raw);
 }
 
@@ -2047,28 +2064,6 @@ function renderMcpList(
     }
   } catch (e) {
     // invalid json, just ignore
-  }
-}
-
-function toggleMcp() {
-  if (mode === "pi") return;
-  mcpOpen = !mcpOpen;
-  const panel = document.getElementById("mcpPanel");
-  const resizerEl = document.getElementById("mcpResizer");
-  if (mcpOpen) {
-    if (historyOpen) toggleHistory();
-    if (notesOpen) toggleNotes();
-    if (settingsOpen) toggleSettings();
-    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
-    panel.classList.add("open");
-    resizerEl.style.display = "block";
-    const configArea = document.getElementById("mcpConfigArea");
-    const saved = activeMcpConfig();
-    configArea.value = saved;
-    renderMcpList(saved);
-  } else {
-    panel.classList.remove("open");
-    resizerEl.style.display = "none";
   }
 }
 
@@ -2200,10 +2195,6 @@ const settingsResizer = document.getElementById("settingsResizer");
 const settingsPanel = document.getElementById("settingsPanel");
 let isSettingsResizing = false;
 
-const mcpResizer = document.getElementById("mcpResizer");
-const mcpPanelEl = document.getElementById("mcpPanel");
-let isMcpResizing = false;
-
 const historyResizer = document.getElementById("historyResizer");
 const historyPanelEl = document.getElementById("historyPanel");
 let isHistoryResizing = false;
@@ -2242,13 +2233,6 @@ settingsResizer.addEventListener("mousedown", (e) => {
   document.body.style.userSelect = "none";
 });
 
-mcpResizer.addEventListener("mousedown", (e) => {
-  if (!mcpOpen) return;
-  isMcpResizing = true;
-  document.body.style.cursor = "col-resize";
-  document.body.style.userSelect = "none";
-});
-
 document.addEventListener("mousemove", (e) => {
   const main = document.getElementById("main");
   const mainRect = main.getBoundingClientRect();
@@ -2261,11 +2245,6 @@ document.addEventListener("mousemove", (e) => {
     const newWidth = mainRect.right - e.clientX;
     if (newWidth > 200 && newWidth < mainRect.width - 200) {
       settingsPanel.style.width = newWidth + "px";
-    }
-  } else if (isMcpResizing) {
-    const newWidth = mainRect.right - e.clientX;
-    if (newWidth > 300 && newWidth < mainRect.width - 200) {
-      mcpPanelEl.style.width = newWidth + "px";
     }
   } else if (isHistoryResizing) {
     // History is docked on the LEFT, so its width grows to the right.
@@ -2286,13 +2265,11 @@ document.addEventListener("mouseup", () => {
   if (
     isResizing ||
     isSettingsResizing ||
-    isMcpResizing ||
     isHistoryResizing ||
     isSidePanelResizing
   ) {
     isResizing = false;
     isSettingsResizing = false;
-    isMcpResizing = false;
     isHistoryResizing = false;
     isSidePanelResizing = false;
     document.body.style.cursor = "";
@@ -2783,13 +2760,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     input_notesTitle.addEventListener("keydown", function (event) {
       if (event.key === "Enter") input_notesTitle.blur();
-    });
-  }
-
-  const btn_closeMcpBtn = document.getElementById("closeMcpBtn");
-  if (btn_closeMcpBtn) {
-    btn_closeMcpBtn.addEventListener("click", function (event) {
-      toggleMcp();
     });
   }
 

@@ -1,8 +1,8 @@
 # Dive Plugins
 
-Dive loads plugins from `~/dive/plugins`. A plugin adds **skills** (tools any
+Dive loads plugins from `~/dive/plugins`. A plugin adds **tools** (functions any
 non-Pi model can call) and optional **slash commands**, with no changes to the
-app itself. Manage them under Settings > Skills > Plugins.
+app itself. Settings lists them under Tools > External tools.
 
 ## Trust model
 
@@ -37,6 +37,8 @@ Two forms are accepted:
 
 ```js
 module.exports = {
+  // The tools this plugin adds. The key is called `skills`, an older name
+  // for tools that Dive keeps so existing plugins go on working.
   skills: [
     {
       // Tool name the model calls: letters, digits, underscores.
@@ -56,7 +58,7 @@ module.exports = {
       // on any skill that downloads, writes files, or runs external
       // binaries.
       requiresConfirmation: true,
-      // Optional: per-skill execution timeout in milliseconds.
+      // Optional: per-tool execution timeout in milliseconds.
       // Default 60000 (60 s), clamped to 1 s – 60 min.
       timeoutMs: 15 * 60 * 1000,
       // Return a string (or any JSON-serializable value). Errors are caught
@@ -66,19 +68,23 @@ module.exports = {
       },
     },
   ],
-  // Optional: /myskill in the chat input forces the skill.
+  // Optional: /myskill in the chat input forces the tool.
   commands: { myskill: "my_skill" },
 };
 ```
 
 ## Rules
 
-- Skill names must be unique across the app; a clash with another plugin is
+- Tool names must be unique across the app; a clash with another plugin is
   reported as a plugin error.
 - Plugin slash commands never override built-in commands.
-- Every plugin skill gets an enable/disable toggle in Settings > Skills,
-  like the built-in skills.
-- Press RELOAD PLUGINS in Settings after adding or editing a plugin
+- A slash command passes the text typed after it to one argument: the only
+  required string property if exactly one is required, otherwise the first
+  string property in `properties`, otherwise `input`. Declare the main argument
+  first.
+- Every plugin tool gets an enable/disable toggle in Settings > Tools,
+  like the native tools.
+- Press RELOAD EXTERNAL TOOLS in Settings after adding or editing a plugin
   (plugins are also loaded fresh on every app start).
 - `execute(args, context)` receives `context.dataDir` (the `~/dive` data
   directory) among other fields; treat everything else as internal.
@@ -87,4 +93,4 @@ module.exports = {
 
 A working example ships in `~/dive/plugins/example-dice` the first time you
 look at it — roll dice with `/roll` or by asking the model to roll dice.
-Copy the folder, rename things, and you have a new skill.
+Copy the folder, rename things, and you have a new tool.

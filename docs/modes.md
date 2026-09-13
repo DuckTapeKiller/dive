@@ -5,13 +5,13 @@ Dive has five chat modes. They are defined in exactly one place —
 from that registry. If you are adding a mode, that file is the only list to
 change.
 
-| Mode      | id         | Backend                         | Dive skills | Enabled by default |
-| --------- | ---------- | ------------------------------- | ----------- | ------------------ |
-| llama.cpp | `llamacpp` | Local server, OpenAI-compatible | yes         | yes                |
-| Pi        | `pi`       | External `pi` agent over RPC    | **no**      | yes                |
-| Cloud     | `cloud`    | OpenAI or Anthropic             | yes         | yes                |
-| LM Studio | `lmstudio` | Local server, OpenAI-compatible | yes         | no                 |
-| Ollama    | `ollama`   | Local Ollama, NDJSON            | yes         | no                 |
+| Mode      | id         | Backend                         | Dive tools | Enabled by default |
+| --------- | ---------- | ------------------------------- | ---------- | ------------------ |
+| llama.cpp | `llamacpp` | Local server, OpenAI-compatible | yes        | yes                |
+| Pi        | `pi`       | External `pi` agent over RPC    | **no**     | yes                |
+| Cloud     | `cloud`    | OpenAI or Anthropic             | yes        | yes                |
+| LM Studio | `lmstudio` | Local server, OpenAI-compatible | yes        | no                 |
+| Ollama    | `ollama`   | Local Ollama, NDJSON            | yes        | no                 |
 
 Two orderings exist and they are not the same:
 
@@ -27,7 +27,7 @@ Nearly everything. Each mode keeps its own:
 
 - conversation history and current conversation
 - model selection and system prompt
-- enabled skills, and which skills appear in the composer
+- enabled tools and skills, and which tools appear in the composer
 - MCP servers and their status
 - library search settings
 - palette, font and font scale
@@ -47,10 +47,11 @@ own tools, its own permission system and its own session files. Dive is a client
 
 That means:
 
-- **Pi does not get Dive's skills.** `diveSkills: false`. It has its own.
+- **Pi does not get Dive's tools or skills.** `diveSkills: false`. It has its
+  own.
 - **Pi does not get Dive's MCP servers.** `requireNonPiMode` guards those routes.
-- **The composer skill launcher never appears in Pi.** `renderComposerSkillButtons`
-  clears the bar when the mode is not a Dive-skills mode.
+- **The composer tool launcher never appears in Pi.** `renderComposerSkillButtons`
+  clears the bar when the mode is not a Dive-tools mode.
 - Pi has its own settings, its own sandbox policy, and its own status panel.
 
 This asymmetry is deliberate. Making Pi "uniform" with the other modes would mean
@@ -87,9 +88,9 @@ lets the test suite point Cloud at a local mock instead of a real API.
 An external `pi --mode rpc` process, one per conversation, communicating in JSONL
 over stdin and stdout. See [pi.md](pi.md).
 
-## Skills and tool calling
+## Tool calling
 
-Modes with `diveSkills: true` offer Dive's skills to the model two ways:
+Modes with `diveSkills: true` offer Dive's tools to the model two ways:
 
 - **Native tool calling** where the backend supports it.
 - **XML fallback** otherwise: the model emits

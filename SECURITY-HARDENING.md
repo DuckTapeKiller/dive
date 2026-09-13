@@ -15,7 +15,7 @@ This checklist maps to the top 10 hardening goals and tells you what is implemen
    - tool execution start events
    - session cleanup and timeout reasons
 6. Root execution is blocked (`server.js` exits if started as root).
-7. Built-in and custom shell skills require explicit interactive confirmation before execution.
+7. Built-in and custom shell tools require explicit interactive confirmation before execution.
 
 ## Must Be Applied In Real Pi Runtime
 

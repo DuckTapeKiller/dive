@@ -2745,7 +2745,13 @@ function modeVisibilityRules() {
     [byId("llamaCppModelsGroup"), ["llamacpp"]],
     [byId("builtinSkillsGroup"), DIVE_SKILL_MODE_IDS],
     [byId("customSkillsGroup"), DIVE_SKILL_MODE_IDS],
+    [byId("agentSkillsGroup"), DIVE_SKILL_MODE_IDS],
     [byId("bookSearchConfigGroup"), DIVE_SKILL_MODE_IDS],
+    // Cloud and Pi never showed the MCP editor; that is unchanged.
+    [
+      byId("mcpSettingsGroup"),
+      DIVE_SKILL_MODE_IDS.filter((id) => id !== "cloud"),
+    ],
     [promptSettingsGroup, PROMPT_MODE_KEYS],
     [promptManageGroup, PROMPT_MODE_KEYS],
   ];
@@ -2844,6 +2850,7 @@ function renderMode(m) {
     renderBuiltinSkillsList();
     renderCustomSkillsList();
     renderPluginsList();
+    renderAgentSkillsList();
     if (
       typeof loadModeSkillsState === "function" &&
       !skillStateLoadedByMode[m]
@@ -2856,6 +2863,7 @@ function renderMode(m) {
             renderBuiltinSkillsList();
             renderCustomSkillsList();
             renderPluginsList();
+            renderAgentSkillsList();
           }
         })
         .catch(uiRefreshFailed("mode skills state"));
@@ -2865,13 +2873,7 @@ function renderMode(m) {
   // A pending permission request belongs to whichever mode raised it, and
   // every mode can raise one — the button follows the request, not the mode.
   piPermissionBtn.style.display = activePiPermissionRequest ? "" : "none";
-  if (isPiMode && mcpOpen) {
-    toggleMcp();
-  } else if (
-    !isPiMode &&
-    mcpOpen &&
-    typeof refreshMcpPanelForMode === "function"
-  ) {
+  if (!isPiMode && typeof refreshMcpPanelForMode === "function") {
     refreshMcpPanelForMode();
   }
   document.getElementById("uploadBtn").style.display = "";

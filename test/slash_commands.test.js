@@ -82,3 +82,147 @@ test("builds calculator and notes commands", () => {
     content: "remember this",
   });
 });
+
+// The mode's plugin skill snapshot, shaped like plugins.getPluginSkillSnapshot()
+// entries. The schema is the real ~/dive/plugins/humaniser skill's.
+const HUMANISER_SNAPSHOT = [
+  {
+    name: "humanise",
+    pluginName: "humaniser",
+    def: {
+      type: "function",
+      function: {
+        name: "humanise",
+        description: "Returns the Humaniser editing guide.",
+        parameters: {
+          type: "object",
+          properties: {
+            text: { type: "string", description: "The text to humanise." },
+            voice_sample: { type: "string", description: "Writing sample." },
+          },
+        },
+      },
+    },
+  },
+];
+
+test("a plugin slash command becomes a tool call with the typed text", () => {
+  const command = parseSlashCommand("/humanise Make this sound human.", {
+    humanise: "humanise",
+  });
+  assert.strictEqual(isSkillSlashCommand(command), true);
+  const toolCall = buildForcedSkillToolCall(command, HUMANISER_SNAPSHOT);
+  assert.strictEqual(toolCall.function.name, "humanise");
+  assert.deepStrictEqual(JSON.parse(toolCall.function.arguments), {
+    text: "Make this sound human.",
+  });
+});
+
+function pluginSnapshot(name, parameters) {
+  return [
+    {
+      name,
+      pluginName: "test-plugin",
+      def: {
+        type: "function",
+        function: { name, description: "Test skill.", parameters },
+      },
+    },
+  ];
+}
+
+test("a plugin command fills the only required string before earlier optional ones", () => {
+  const snapshot = pluginSnapshot("read_aloud", {
+    type: "object",
+    properties: { voice: { type: "string" }, path: { type: "string" } },
+    required: ["path"],
+  });
+  const commands = { read: "read_aloud" };
+  const toolCall = buildForcedSkillToolCall(
+    parseSlashCommand("/read ~/notes.md", commands),
+    snapshot,
+  );
+  assert.deepStrictEqual(JSON.parse(toolCall.function.arguments), {
+    path: "~/notes.md",
+  });
+  assert.throws(
+    () =>
+      buildForcedSkillToolCall(parseSlashCommand("/read", commands), snapshot),
+    /\/read requires path\./,
+  );
+});
+
+test("a plugin command with no string argument passes the text as input", () => {
+  const snapshot = pluginSnapshot("dice_roll", {
+    type: "object",
+    properties: { rolls: { type: "number" }, sides: { type: "number" } },
+  });
+  const commands = { roll: "dice_roll" };
+  const typed = buildForcedSkillToolCall(
+    parseSlashCommand("/roll 2d6", commands),
+    snapshot,
+  );
+  assert.deepStrictEqual(JSON.parse(typed.function.arguments), {
+    input: "2d6",
+  });
+  const bare = buildForcedSkillToolCall(
+    parseSlashCommand("/roll", commands),
+    snapshot,
+  );
+  assert.deepStrictEqual(JSON.parse(bare.function.arguments), {});
+  const humaniserBare = buildForcedSkillToolCall(
+    parseSlashCommand("/humanise", { humanise: "humanise" }),
+    HUMANISER_SNAPSHOT,
+  );
+  assert.deepStrictEqual(
+    JSON.parse(humaniserBare.function.arguments),
+    {},
+    "an optional argument left empty sends no arguments",
+  );
+  const nullable = pluginSnapshot("note", {
+    type: "object",
+    properties: {
+      count: { type: "number" },
+      body: { type: ["string", "null"] },
+    },
+  });
+  const note = buildForcedSkillToolCall(
+    parseSlashCommand("/note hello", { note: "note" }),
+    nullable,
+  );
+  assert.deepStrictEqual(JSON.parse(note.function.arguments), {
+    body: "hello",
+  });
+});
+
+test("a plugin command resolves only from the calling mode's snapshot", () => {
+  const command = parseSlashCommand("/humanise hello", {
+    humanise: "humanise",
+  });
+  assert.throws(
+    () => buildForcedSkillToolCall(command),
+    /Unsupported slash command: \/humanise/,
+  );
+  assert.throws(
+    () => buildForcedSkillToolCall(command, []),
+    /Unsupported slash command: \/humanise/,
+  );
+  assert.throws(
+    () =>
+      buildForcedSkillToolCall(
+        command,
+        pluginSnapshot("other_skill", { type: "object", properties: {} }),
+      ),
+    /Unsupported slash command: \/humanise/,
+  );
+});
+
+test("built-in commands keep their own argument mapping", () => {
+  const calc = buildForcedSkillToolCall(
+    parseSlashCommand("/calc 2+2"),
+    HUMANISER_SNAPSHOT,
+  );
+  assert.deepStrictEqual(JSON.parse(calc.function.arguments), {
+    expression: "2+2",
+  });
+});

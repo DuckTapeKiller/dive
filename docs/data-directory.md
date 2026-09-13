@@ -29,8 +29,9 @@ const {
 ├── notes/                    notes panel
 ├── plugins/                  live plugins (loaded)
 ├── plugin-drafts/            proposed plugins (never loaded)
+├── skills/                   Agent Skills (SKILL.md folders)
 ├── system-prompts/           saved system prompts
-├── workspace/                skill working directory
+├── workspace/                tool working directory
 ├── llamacpp-models/          downloaded local models
 ├── ollama/                   Ollama-specific state
 ├── lessons/                  per-mode remembered lessons
@@ -46,8 +47,9 @@ const {
 ├── library-config.json       indexed sources and search settings
 ├── library-index-job.json    indexing progress
 ├── library-index-errors.jsonl per-file indexing failures
-├── coding-settings.json      code skill settings
+├── coding-settings.json      code tool settings
 ├── allowed-dirs.json         filesystem sandbox roots
+├── skill-paths.json          extra Agent Skills folders
 ├── sandbox.json              sandbox policy
 ├── book-search.json          book search providers
 ├── web-search-settings.json  web search backends
@@ -60,7 +62,7 @@ const {
 ## Files worth knowing about
 
 **`allowed-dirs.json`** — the filesystem sandbox roots. This is the file you edit
-to let file skills reach a project directory. Nothing else grants that access.
+to let file tools reach a project directory. Nothing else grants that access.
 
 **`deleted-tombstones.json`** — deleted conversation ids with timestamps. Stops a
 still-running turn from resurrecting a conversation you deleted. Entries expire
@@ -75,7 +77,8 @@ Approving moves a draft into `plugins/`, and only then does its code run.
 
 ## Settings by scope
 
-**Per mode:** enabled skills, composer launcher skills, model, system prompt, MCP
+**Per mode:** enabled tools and skills, composer launcher tools, model, system
+prompt, MCP
 servers, library search, palette, font, font scale.
 
 **Global:** data directory, server port, cloud provider keys, Pi settings,
@@ -83,7 +86,7 @@ library sources and index, allowed directories, book and web search providers.
 
 Per-mode settings are read through the active mode's bucket on demand rather than
 copied into aliases. Aliases had to be re-pointed on every mode change, and
-forgetting to do so is what left stale skill lists on screen.
+forgetting to do so is what left stale tool lists on screen.
 
 ## Server port
 

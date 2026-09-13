@@ -5,7 +5,6 @@ function toggleHistory() {
   if (historyOpen) {
     if (settingsOpen) toggleSettings();
     if (notesOpen) toggleNotes();
-    if (mcpOpen) toggleMcp();
     if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     if (resizerEl) resizerEl.style.display = "block";
@@ -375,8 +374,6 @@ function wireSidePanel() {
   on("railHistoryBtn", "click", () => toggleHistory());
   on("sideSettingsBtn", "click", () => toggleSettings());
   on("railSettingsBtn", "click", () => toggleSettings());
-  on("sideMcpBtn", "click", () => toggleMcp());
-  on("railMcpBtn", "click", () => toggleMcp());
   on("sideNotesBtn", "click", () => toggleNotes());
   on("railNotesBtn", "click", () => toggleNotes());
   on("sidePiThinkSelect", "change", () => {
@@ -3121,6 +3118,7 @@ async function loadModeSkillsState(modeId) {
         renderBuiltinSkillsList();
         renderCustomSkillsList();
         renderPluginsList();
+        renderAgentSkillsList();
       }
     } catch (error) {
       console.error(`Could not load ${activeMode} skills state`, error);
@@ -3158,7 +3156,8 @@ function renderPluginsList() {
   }
   const plugins = payload?.plugins || [];
   if (!plugins.length) {
-    list.innerHTML = '<div class="setting-help">No plugins installed.</div>';
+    list.innerHTML =
+      '<div class="setting-help">No external tools installed.</div>';
     return;
   }
   const esc = (s) =>
@@ -3220,9 +3219,183 @@ async function loadPluginsUi() {
     loadedPluginsPayload = null;
   }
   renderPluginsList();
+  loadAgentSkillsUi().catch(uiRefreshFailed("Agent Skills"));
   loadLessonsUi().catch(uiRefreshFailed("lessons"));
   loadPluginDraftsUi().catch(uiRefreshFailed("plugin drafts"));
   loadSystemPromptsUi().catch(uiRefreshFailed("system prompts"));
+}
+
+// ---- AGENT SKILLS (Settings > Skills) ----
+// SKILL.md folders in the format Claude Code and pi use. The skills and their
+// warnings come from the server; each skill's switch is a "skill:<name>" key
+// in this mode's skills config, so it paints from the same per-mode bucket as
+// the built-in and plugin switches. The extra folders are shared by all modes.
+let loadedAgentSkillsPayload = null;
+let agentSkillsLoadToken = 0;
+
+function wireAgentSkillsControls() {
+  const reloadBtn = document.getElementById("agentSkillsReloadBtn");
+  if (reloadBtn && !reloadBtn.dataset.wired) {
+    reloadBtn.dataset.wired = "1";
+    reloadBtn.addEventListener("click", () => {
+      loadAgentSkillsUi({ reload: true }).catch(
+        uiRefreshFailed("Agent Skills reload"),
+      );
+    });
+  }
+  const saveBtn = document.getElementById("agentSkillsSavePathsBtn");
+  if (saveBtn && !saveBtn.dataset.wired) {
+    saveBtn.dataset.wired = "1";
+    saveBtn.addEventListener("click", () => {
+      saveAgentSkillPaths().catch(uiRefreshFailed("Agent Skills folders"));
+    });
+  }
+  const pathsEl = document.getElementById("agentSkillsPaths");
+  if (pathsEl && !pathsEl.dataset.wired) {
+    pathsEl.dataset.wired = "1";
+    // An unsaved edit must survive a background refresh of the list.
+    pathsEl.addEventListener("input", () => {
+      pathsEl.dataset.dirty = "1";
+    });
+  }
+}
+
+async function loadAgentSkillsUi(options = {}) {
+  wireAgentSkillsControls();
+  if (!DIVE_SKILL_MODE_IDS.includes(mode)) return;
+  const forMode = skillModeId();
+  const token = ++agentSkillsLoadToken;
+  try {
+    const res = options.reload
+      ? await fetch(apiUrl("/api/agent-skills/reload"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: forMode }),
+        })
+      : await fetch(
+          apiUrl(`/api/agent-skills?mode=${encodeURIComponent(forMode)}`),
+        );
+    // A server without the Agent Skills endpoints (an older build left running
+    // against new assets) has none to list; that is not an application error.
+    if (res.status === 404) {
+      if (token !== agentSkillsLoadToken) return;
+      loadedAgentSkillsPayload = { paths: [], roots: [], skills: [] };
+      renderAgentSkillsList();
+      return;
+    }
+    const payload = await readJsonResponse(res, "Load Agent Skills");
+    if (token !== agentSkillsLoadToken) return;
+    loadedAgentSkillsPayload = payload;
+    const pathsEl = document.getElementById("agentSkillsPaths");
+    if (pathsEl && !pathsEl.dataset.dirty) {
+      pathsEl.value = (payload?.paths || []).join("\n");
+    }
+  } catch (error) {
+    console.error("Could not load Agent Skills", error);
+    if (token === agentSkillsLoadToken) loadedAgentSkillsPayload = null;
+  }
+  renderAgentSkillsList();
+}
+
+async function saveAgentSkillPaths() {
+  const pathsEl = document.getElementById("agentSkillsPaths");
+  if (!pathsEl) return;
+  const paths = pathsEl.value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  try {
+    const res = await fetch(apiUrl("/api/agent-skills/paths"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: skillModeId(), paths }),
+    });
+    const payload = await readJsonResponse(res, "Save Agent Skills folders");
+    loadedAgentSkillsPayload = payload;
+    delete pathsEl.dataset.dirty;
+    pathsEl.value = (payload?.paths || []).join("\n");
+  } catch (error) {
+    console.error("Could not save Agent Skills folders", error);
+    await appAlert(
+      `Failed to save the skill folders: ${error.message}`,
+      "Skills",
+    );
+  }
+  renderAgentSkillsList();
+}
+
+function renderAgentSkillsList() {
+  const list = document.getElementById("agentSkillsList");
+  const hint = document.getElementById("agentSkillsRootsHint");
+  if (!list) return;
+  const payload = loadedAgentSkillsPayload;
+  const esc = (s) =>
+    String(s ?? "").replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
+  if (hint) {
+    const roots = (payload?.roots || []).map(
+      (root) => `${root.path}${root.exists ? "" : " (not found)"}`,
+    );
+    hint.textContent = roots.length
+      ? `Scanned folders: ${roots.join(" | ")}`
+      : "";
+  }
+  if (!payload) {
+    list.innerHTML =
+      '<div class="setting-help">Agent Skills could not be loaded.</div>';
+    return;
+  }
+  const skills = payload.skills || [];
+  const loadedLocations = new Set(skills.map((skill) => skill.location));
+  let html = skills.length
+    ? ""
+    : '<div class="setting-help">No Agent Skills found. Put skill folders in one of the folders above, or add a folder.</div>';
+  const small = "font-size: calc(11px * var(--font-scale, 1));";
+  for (const skill of skills) {
+    const key = `skill:${skill.name}`;
+    const enabled = activeBuiltinSkills()[key] !== false;
+    const manualOnly = skill.modelInvocable
+      ? ""
+      : " | only when you type the command";
+    const warnings = (skill.warnings || [])
+      .map(
+        (warning) =>
+          `<div style="${small} margin-top: 4px; opacity: 0.75;">Warning: ${esc(warning)}</div>`,
+      )
+      .join("");
+    html += `
+            <div style="background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                <strong>${esc(skill.name)}</strong>
+                <input type="checkbox" class="brutalist-toggle builtin-skill-toggle" data-skill="${esc(key)}" aria-label="Enable ${esc(skill.name)}" title="Enable ${esc(skill.name)}" ${enabled ? "checked" : ""}>
+              </div>
+              <div style="${small} opacity: 0.8; margin-top: 4px; white-space: pre-line;">${esc(skill.description)}</div>
+              <div style="${small} opacity: 0.6; margin-top: 4px; user-select: text; overflow-wrap: anywhere;">/skill:${esc(skill.name)} | ${esc(skill.location)}${esc(manualOnly)}</div>
+              ${warnings}
+            </div>
+          `;
+  }
+  // Warnings on loaded skills are shown in their rows; everything else (files
+  // that did not load, shadowed duplicates, missing folders) is listed here.
+  for (const item of payload.diagnostics || []) {
+    if (item.level !== "error" && loadedLocations.has(item.location)) continue;
+    const label = item.level === "error" ? "Not loaded" : "Warning";
+    const color =
+      item.level === "error"
+        ? "color: var(--error-color, #b33);"
+        : "opacity: 0.75;";
+    html += `<div style="${small} margin-top: 6px; ${color} user-select: text; overflow-wrap: anywhere;">${label}: ${esc(item.location)}: ${esc(item.message)}</div>`;
+  }
+  list.innerHTML = html;
 }
 
 // ---- EDITABLE SYSTEM PROMPTS (Settings > Prompt) ----
@@ -3593,7 +3766,7 @@ async function toggleInputSkill(skillName, shown) {
   } catch (error) {
     console.error(`Could not save ${activeMode} input skill config`, error);
     setBuiltinSkillsConfigForMode(activeMode, previous);
-    await appAlert("Failed to save input skill setting.", "Skills");
+    await appAlert("Failed to save the INPUT setting.", "Tools");
   }
   renderBuiltinSkillsList();
 }
@@ -3608,6 +3781,7 @@ async function toggleBuiltinSkill(skillName, enabled) {
   setBuiltinSkillsConfigForMode(activeMode, next);
   renderBuiltinSkillsList();
   renderPluginsList();
+  renderAgentSkillsList();
   try {
     const res = await fetch(apiUrl("/api/ollama/skills/settings"), {
       method: "POST",
@@ -3624,10 +3798,14 @@ async function toggleBuiltinSkill(skillName, enabled) {
   } catch (error) {
     console.error(`Could not save ${activeMode} skills config`, error);
     setBuiltinSkillsConfigForMode(activeMode, previous);
-    await appAlert("Failed to save skill setting.", "Skills");
+    await appAlert(
+      "Failed to save this setting.",
+      skillName.startsWith("skill:") ? "Skills" : "Tools",
+    );
   }
   renderBuiltinSkillsList();
   renderPluginsList();
+  renderAgentSkillsList();
 }
 
 function renderBuiltinSkillsList() {
@@ -3635,7 +3813,7 @@ function renderBuiltinSkillsList() {
   if (!list) return;
   let html = `
     <div class="builtin-skills-header" aria-hidden="true">
-      <span>SKILL</span>
+      <span>TOOL</span>
       <span>ENABLED</span>
       <span>INPUT</span>
     </div>
@@ -4568,7 +4746,7 @@ async function saveCustomSkill() {
   const code = document.getElementById("skillCode").value.trim();
 
   if (!name || !description || !code) {
-    await appAlert("All fields are required.", "Skills");
+    await appAlert("All fields are required.", "Tools");
     return;
   }
 
@@ -4588,7 +4766,7 @@ async function saveCustomSkill() {
     } else {
       setCustomSkillsForMode(activeMode, previous);
       renderCustomSkillsList();
-      await appAlert("Failed to save custom skill.", "Skills");
+      await appAlert("Failed to save custom tool.", "Tools");
     }
   } catch (e) {
     console.error(e);
@@ -4597,7 +4775,7 @@ async function saveCustomSkill() {
 
 async function deleteCustomSkill(idx) {
   if (
-    !(await appConfirm("Delete this custom skill?", "Skills", {
+    !(await appConfirm("Delete this custom tool?", "Tools", {
       confirmLabel: "Delete",
       danger: true,
     }))
@@ -4618,7 +4796,7 @@ async function deleteCustomSkill(idx) {
     if (!res.ok) {
       setCustomSkillsForMode(activeMode, previous);
       renderCustomSkillsList();
-      await appAlert("Failed to delete custom skill.", "Skills");
+      await appAlert("Failed to delete custom tool.", "Tools");
     }
   } catch (e) {
     console.error(e);

@@ -128,7 +128,7 @@ test("Mode snapshots isolate built-in and custom skill availability", async () =
 
   assert.equal(
     await call({ mode: "ollama", customSkills: [], skillsConfig: {} }),
-    "Unknown skill: mode_only_skill",
+    "Unknown tool: mode_only_skill",
   );
   assert.equal(
     await call({
@@ -178,7 +178,7 @@ test("Mode snapshots isolate installed plugin activation", async () => {
       },
       { mode: "cloud", pluginSkills, skillsConfig: {} },
     );
-  assert.equal(await call([]), "Unknown skill: snapshot_plugin_skill");
+  assert.equal(await call([]), "Unknown tool: snapshot_plugin_skill");
   assert.equal(await call([pluginSkill]), "plugin result");
 });
 

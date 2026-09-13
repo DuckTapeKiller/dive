@@ -258,6 +258,17 @@ function createFetchStub() {
     ) {
       return jsonResponse({ ok: true });
     }
+    if (path.startsWith("/api/agent-skills")) {
+      return jsonResponse({
+        mode: "ollama",
+        directory: "/tmp/dive/skills",
+        pathsFile: "/tmp/dive/skill-paths.json",
+        paths: [],
+        roots: [],
+        skills: [],
+        diagnostics: [],
+      });
+    }
     return jsonResponse({ error: `Unhandled test URL: ${path}` }, 404);
   };
 }
@@ -388,10 +399,11 @@ test("frontend boots without network fetch crashes", async () => {
       .value,
     "5",
   );
-  // MAIN, MODES, DATABASE, PROMPTS, SKILLS + the llama.cpp-only MODELS tab.
+  // MAIN, MODES, DATABASE, PROMPTS, TOOLS, SKILLS + the llama.cpp-only MODELS
+  // tab.
   assert.strictEqual(
     dom.window.document.querySelectorAll(".settings-tab").length,
-    6,
+    7,
   );
   assert.strictEqual(
     dom.window.document.getElementById("ollamaFontGroup").parentElement.id,
@@ -416,7 +428,28 @@ test("frontend boots without network fetch crashes", async () => {
   );
   assert.strictEqual(
     dom.window.document.getElementById("builtinSkillsGroup").parentElement.id,
+    "settingsTabTools",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("customSkillsGroup").parentElement.id,
+    "settingsTabTools",
+  );
+  // MCP servers sit at the bottom of the TOOLS tab; the side panel has no MCP
+  // button of its own.
+  const toolsGroupIds = [
+    ...dom.window.document.getElementById("settingsTabTools").children,
+  ].map((node) => node.id);
+  assert.strictEqual(toolsGroupIds.at(-1), "mcpSettingsGroup");
+  assert.strictEqual(dom.window.document.getElementById("railMcpBtn"), null);
+  assert.strictEqual(dom.window.document.getElementById("sideMcpBtn"), null);
+  // Skills (SKILL.md instructions) get a tab of their own, apart from tools.
+  assert.strictEqual(
+    dom.window.document.getElementById("agentSkillsGroup").parentElement.id,
     "settingsTabSkills",
+  );
+  assert.strictEqual(
+    dom.window.document.getElementById("lessonsGroup").parentElement.id,
+    "settingsTabPrompts",
   );
   assert.strictEqual(
     dom.window.document.querySelectorAll(
@@ -970,6 +1003,11 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
     "none",
   );
   assert.strictEqual(
+    dom.window.document.querySelector('[data-settings-tab="tools"]').style
+      .display,
+    "none",
+  );
+  assert.strictEqual(
     dom.window.document.querySelector('[data-settings-tab="skills"]').style
       .display,
     "none",
@@ -995,6 +1033,11 @@ test("mode switch shows skills in Cloud but keeps Pi isolated", async () => {
   );
   assert.strictEqual(
     dom.window.document.getElementById("customSkillsGroup").style.display,
+    "",
+  );
+  assert.strictEqual(
+    dom.window.document.querySelector('[data-settings-tab="tools"]').style
+      .display,
     "",
   );
   assert.strictEqual(
@@ -1106,7 +1149,7 @@ test("input skill toggles create a slash command button", async () => {
     [
       ...dom.window.document.querySelectorAll(".builtin-skills-header span"),
     ].map((node) => node.textContent),
-    ["SKILL", "ENABLED", "INPUT"],
+    ["TOOL", "ENABLED", "INPUT"],
   );
   // Nothing is offered until the user asks for it. Without this, a broken
   // visibility gate that shows every skill would still satisfy the assertions

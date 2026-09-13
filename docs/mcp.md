@@ -1,14 +1,15 @@
 # MCP servers
 
 Dive can connect to Model Context Protocol servers and offer their tools to the
-model alongside its own skills. Implemented in [`mcp.js`](../mcp.js).
+model alongside its own tools. Implemented in [`mcp.js`](../mcp.js).
 
 **Not available in Pi mode.** Pi has its own tool system; `requireNonPiMode`
 guards these routes.
 
 ## Configuration
 
-Through `/api/mcp/config`. Server definitions are installed **globally**, but
+At the bottom of Settings > Tools (not shown in Cloud or Pi mode), saved through
+`/api/mcp/config`. Server definitions are installed **globally**, but
 every running client belongs to exactly one mode. Enabling a server for Cloud
 does not start it for llama.cpp.
 

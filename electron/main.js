@@ -205,6 +205,11 @@ function syncRuntimeFiles(runtimeDir) {
     { required: true },
   );
   copyIfExists(
+    path.join(appRoot, "agent-skills.js"),
+    path.join(runtimeDir, "agent-skills.js"),
+    { required: true },
+  );
+  copyIfExists(
     path.join(appRoot, "slash_commands.js"),
     path.join(runtimeDir, "slash_commands.js"),
     {

@@ -1,153 +1,68 @@
 # Skills
 
-Skills are functions the model can call during a turn. Dive ships 27, defined in
-[`skills.js`](../skills.js) as `ALL_SKILLS` and implemented across `skills/`.
+Skills are folders with a `SKILL.md` file, the
+[open format](https://agentskills.io) that Claude Code, pi and other agents use.
+They hold instructions, not code: Dive never runs anything in them by itself. A
+skill tells the model how to do a task; the actions it asks for are done with
+tools, documented in [tools.md](tools.md).
 
-Skills are available in every mode with `diveSkills: true` — that is, every mode
-except Pi, which brings its own tools.
+Defined in [`agent-skills.js`](../agent-skills.js). Every mode except Pi uses
+them; Pi mode loads pi's own skills. They are managed in Settings > Skills.
 
-## Reference
+## Where Dive looks
 
-Required arguments are in **bold**.
+| Folder              | Notes                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `~/dive/skills/`    | Dive's own folder                                                                       |
+| `~/.agents/skills/` | The cross-client folder, which pi also reads                                            |
+| Extra folders       | Added in Settings > Skills and stored in `skill-paths.json`, such as `~/.claude/skills` |
 
-### Research and reference
+A skill folder may sit inside grouping folders up to five levels deep. Symlinks
+are followed, so one copy of a skill can serve every agent. `.git`,
+`node_modules` and hidden folders are skipped. An extra folder may also be a
+single skill folder. When two skills share a name, the first folder in the
+table wins and the other is reported as not loaded.
 
-| Skill             | Arguments                                             | Notes                                |
-| ----------------- | ----------------------------------------------------- | ------------------------------------ |
-| `wikipedia`       | **query**, language                                   | Article lookup                       |
-| `britannica`      | **query**                                             | Independent editorial source         |
-| `larousse`        | **query**                                             | French editorial encyclopedia        |
-| `scholarpedia`    | **query**                                             | Peer-reviewed specialist articles    |
-| `wiktionary`      | **word**, language                                    | Dictionary definitions               |
-| `deep_etymology`  | **word**, **language**                                | Origins, cognates, false friends     |
-| `book_search`     | **query**, language, provider                         | Books by title or ISBN               |
-| `duckduckgo`      | **query**, max_results                                | Quick web search                     |
-| `deep_research`   | query, queries, max_sources, academic                 | Full evidence pipeline — see below   |
-| `academic_search` | **query**, year_from, year_to, max_results, providers | Scholarly search                     |
-| `fetch_paper`     | **url_or_doi**, save                                  | Retrieve a paper, optionally to disk |
-| `fact_check`      | **claim**, language                                   | Check a specific claim               |
-| `web_scraper`     | **url**                                               | Extract the readable text of a page  |
+## Parsing
 
-### Working memory
+The frontmatter is parsed with `yaml`, the library pi uses. Following the
+[integration guide](https://agentskills.io/integrate-skills), problems that
+other clients tolerate are warnings and the skill still loads: a name that
+breaks the naming rules or does not match its folder, a description over 1024
+characters, unquoted values that contain colons. A skill is skipped, with the
+reason shown in Settings, when its description is missing, its frontmatter
+cannot be parsed, or its name contains spaces or colons.
+`disable-model-invocation: true` keeps a skill out of the model's list, but
+`/skill:<name>` still works.
 
-| Skill             | Arguments                                      | Notes                                     |
-| ----------------- | ---------------------------------------------- | ----------------------------------------- |
-| `local_notes`     | **action**, content                            | Read and write the notes panel            |
-| `remember_lesson` | **lesson**                                     | Append to the calling mode's lessons file |
-| `task_plan`       | **action**, steps, plan_id, step, status, note | Multi-step plan tracking                  |
+## How the model uses them
 
-### Utility
+Enabled skills are listed by name and description in the system prompt, and
+the model gets one extra tool:
 
-| Skill           | Arguments                                                             | Notes                                     |
-| --------------- | --------------------------------------------------------------------- | ----------------------------------------- |
-| `calculator`    | **expression**                                                        | Arithmetic                                |
-| `time_and_date` | timezone                                                              | Current time; takes no required arguments |
-| `http_request`  | **url**, method, headers, body, timeout_ms, follow_redirects, session | Arbitrary HTTP, SSRF-guarded              |
+| Tool             | Arguments                | Notes                                                                                                |
+| ---------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `activate_skill` | **name**, `file`, `part` | Returns the `SKILL.md` body without frontmatter, the skill folder and its bundled files, or one file |
 
-### Code and system
+`file` must be a relative path inside the skill folder. Paths that climb out of
+it, symlinks that point outside it, binary files and files over 2 MB are
+refused. Content over 100,000 characters is split into parts at line breaks, and
+the result says how to ask for the next part.
 
-These are the dangerous ones. See [security.md](security.md).
+The tool and the list are offered only when at least one skill is enabled for
+the mode, and never on Database Context turns. A skill's body is read on each
+activation, so an edit applies to the next message; the list is rescanned at
+most every two seconds.
 
-| Skill             | Arguments                                                           | Notes                            |
-| ----------------- | ------------------------------------------------------------------- | -------------------------------- |
-| `shell_command`   | **command**, timeout_seconds, cwd                                   | Requires confirmation            |
-| `run_code`        | **code**, timeout_ms                                                | JavaScript                       |
-| `run_python`      | **code**, timeout_seconds                                           | Python                           |
-| `file_operations` | **action**, path, content, pattern                                  | Sandboxed to allowed directories |
-| `code_search`     | **action**, path, pattern, glob, start_line, end_line, max_results  | Read-only search                 |
-| `git_tools`       | **action**, repo, ref, path_filter, count, start_line, end_line     | Read-only git                    |
-| `macos_control`   | **action**, script, target, app, title, message, filter, pid, force | Disabled by default              |
+## Typing /skill:name
 
-### Extension
-
-| Skill            | Arguments                           | Notes                         |
-| ---------------- | ----------------------------------- | ----------------------------- |
-| `propose_plugin` | **name**, **description**, **code** | Writes a draft; never runs it |
-
-## Argument handling
-
-Two failure modes are treated very differently, and the distinction matters.
-
-**Arguments that are not valid JSON are refused.** The skill does not run. The
-model receives an error naming the skill so it can correct the call. Running with
-`{}` would be a guess: the skill either fails somewhere unrelated, or succeeds on
-its defaults and answers a question nobody asked — and the user is told neither.
-
-**Valid JSON that omits a field is left alone.** Models omit schema-required
-fields constantly. `deep_etymology` declares `language` as required and defaults
-it to English precisely because of that. Skills that care supply their own
-defaults or return their own validation message. Enforcing declared schemas
-generically would turn working calls into errors.
-
-Empty or absent arguments are fine — that is how a no-argument skill like
-`time_and_date` gets called.
+`/skill:<name> your text` puts the skill's instructions into the message,
+followed by `User: your text`, as pi does. Earlier `/skill:` turns are expanded
+again on every request, so follow-up messages keep the instructions; the saved
+conversation keeps what you typed. An unknown or disabled name ends the turn
+with an error. See [slash-commands.md](slash-commands.md).
 
 ## Enabling and disabling
 
-Per mode, through `/api/ollama/skills/settings?mode=<mode>`. A disabled skill
-returns an error if called rather than executing.
-
-A subset can also be surfaced as buttons in the composer — see
-[slash-commands.md](slash-commands.md). The allowlist for that deliberately
-excludes `shell_command`, `file_operations` and `propose_plugin`.
-
-## deep_research
-
-The largest skill by far, and not simply a bigger web search. It runs an evidence
-pipeline:
-
-1. **Orientation** — establish the subject, using Wikipedia, Britannica,
-   Larousse, Scholarpedia, or Store norske leksikon.
-2. **Angles** — several distinct research directions rather than one query.
-3. **Discovery** — web and scholarly search, independently.
-4. **Ranking** — authority, title and context matches, source type.
-5. **Validation** — reject what is not evidence.
-6. **Reading** — fetch the surviving candidates concurrently.
-7. **Deduplication** — collapse syndicated copies.
-8. **Diversity** — prefer distinct domains over repeats of one.
-9. **Dossier** — a structured brief for the model.
-
-### What it refuses
-
-CAPTCHA and bot-protection pages, raw HTML returned as article text, empty or
-very short pages, error payloads, paywalls and login walls, duplicated or
-syndicated evidence, and Grokipedia (blocked by host label on every fetch
-helper, so subdomains and mirrors cannot slip through).
-
-It does not pad an answer with weak sources. Fewer verified sources beat an
-inflated count.
-
-### Authority scoring
-
-Domains are matched by **suffix**, never substring. This is not pedantry:
-substring matching gave `nih.gov.evil-mirror.com` exactly the same authority as
-`nih.gov`, and `cheap-university-essays.biz` the authority of an institution.
-Since authority decides what gets read and cited, a registered look-alike could
-walk into the dossier. `test/research_quality.test.js` pins this.
-
-### Archive recovery
-
-Unreachable pages are retried through the Wayback Machine, then archive.ph.
-Archived evidence is labelled with the service, archived URL, original URL and
-capture date, and is treated as historical rather than current.
-
-### Disambiguation
-
-When several people or topics match, the model is asked to emit exactly:
-
-```markdown
-## Possible matches
-
-- **Exact candidate name** — short identifying descriptor
-```
-
-The interface turns **only the bolded name** into a clickable button; the
-descriptor stays as text. Clicking runs `/deep_research <name>` through the
-normal slash-command path. Parsing is scoped to a recognised heading followed
-directly by a list, and the name must open its list item — a bold run used
-mid-sentence is not a candidate.
-
-## Writing your own
-
-Two routes: custom skills through `/api/custom-skills`, or a plugin. See
-[plugins.md](plugins.md).
+Each skill has a switch per mode in Settings > Skills, saved in that mode's
+settings as `skill:<name>`. New skills start enabled.

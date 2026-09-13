@@ -93,7 +93,6 @@ function toggleBrowserPanel() {
     if (typeof historyOpen !== "undefined" && historyOpen) toggleHistory();
     if (typeof notesOpen !== "undefined" && notesOpen) toggleNotes();
     if (typeof settingsOpen !== "undefined" && settingsOpen) toggleSettings();
-    if (typeof mcpOpen !== "undefined" && mcpOpen) toggleMcp();
     panel.classList.add("open");
     if (resizer) resizer.style.display = "block";
     refreshBrowserPanel();

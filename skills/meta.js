@@ -52,7 +52,7 @@ async function executeRememberLesson(args, dataDir, mode) {
     return `Already remembered for ${modeKey}: "${lesson}"`;
   }
   fs.writeFileSync(file, current.trimEnd() + "\n" + entry + "\n", "utf8");
-  return `Remembered for ${modeKey} mode: "${lesson}" — this now applies to every future ${modeKey} conversation (each mode keeps its own independent lessons). The user can edit or remove lessons in Settings > Skills > Lessons.`;
+  return `Remembered for ${modeKey} mode: "${lesson}" — this now applies to every future ${modeKey} conversation (each mode keeps its own independent lessons). The user can edit or remove lessons in Settings > Prompts > Lessons.`;
 }
 
 async function executeProposePlugin(args, dataDir) {
@@ -90,7 +90,7 @@ async function executeProposePlugin(args, dataDir) {
     ),
   );
   fs.writeFileSync(path.join(draftDir, "index.js"), code, "utf8");
-  return `Draft plugin "${name}" saved. It is NOT active. Tell the user to review and approve it under Settings > Skills > Plugins > Drafts.`;
+  return `Draft plugin "${name}" saved. It is NOT active. Tell the user to review and approve it under Settings > Tools > External tools > Drafts.`;
 }
 
 module.exports = {

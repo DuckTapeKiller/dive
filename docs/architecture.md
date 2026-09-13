@@ -16,7 +16,7 @@
 │  · serves index.html, assets/, fonts/                   │
 │  · owns conversations, settings, attachments            │
 │  · delegates to route modules per domain                │
-│  · talks to model backends; executes skills             │
+│  · talks to model backends; executes tools              │
 └───────────────┬─────────────────────────────────────────┘
                 │ HTTP + NDJSON / SSE
 ┌───────────────▼─────────────────────────────────────────┐
@@ -69,8 +69,8 @@ the server survives independently of the window.
 | `mode-state.js`     | Per-mode helpers, including `requireNonPiMode`                  |
 | `redact.js`         | `redactText`, `redactValue`, `boundedValue` for logs and traces |
 | `pi-paths.js`       | Validates the Pi command path and working directory             |
-| `slash_commands.js` | Slash command table and forced-skill construction               |
-| `skills.js`         | Skill registry, dispatch, argument handling                     |
+| `slash_commands.js` | Slash command table and forced tool-call construction           |
+| `skills.js`         | Tool registry, dispatch, argument handling                      |
 | `plugins.js`        | Plugin discovery and loading                                    |
 | `mcp.js`            | MCP client sessions, leases, generations                        |
 
@@ -82,10 +82,10 @@ bridge and its SSE channel), `library.js`, `llamacpp.js`,
 Each exports a factory that takes its dependencies, which is what makes them
 testable without a live server.
 
-### Skills (`skills/`)
+### Tools (`skills/`)
 
 `research.js`, `research-quality.js`, `code.js`, `sandbox.js`, `meta.js`,
-`utility.js`. See [skills.md](skills.md).
+`utility.js`. See [tools.md](tools.md).
 
 ### Server helpers (`server/`)
 
@@ -98,7 +98,7 @@ Loaded in numeric order by `index.html` into **one global scope**:
 | File                 | Lines | Responsibility                                       |
 | -------------------- | ----- | ---------------------------------------------------- |
 | `00-modes.js`        | 103   | The mode registry — the only list of modes           |
-| `01-core.js`         | 1,293 | State, per-mode skill config, shared helpers         |
+| `01-core.js`         | 1,293 | State, per-mode tool config, shared helpers          |
 | `02-notes.js`        | 822   | Notes panel                                          |
 | `03-theme.js`        | 3,833 | Theme, `setMode`/`renderMode`, stream readers        |
 | `04-local-models.js` | 1,771 | llama.cpp and LM Studio management                   |
@@ -122,9 +122,9 @@ catches undefined references across files that per-file linting cannot see.
 3. The mode's branch calls its endpoint — `/api/chat/stream`,
    `/api/llamacpp/stream`, `/api/lmstudio/stream`, `/api/cloud/chat/stream`, or
    `/api/pi/stream`.
-4. The server builds the prompt, adds skills if the mode has them, adds library
-   context if enabled, and streams from the backend.
-5. If the model calls a skill, the server executes it, emits `tool_start` and
+4. The server builds the prompt, adds tools and skills if the mode has them,
+   adds library context if enabled, and streams from the backend.
+5. If the model calls a tool, the server executes it, emits `tool_start` and
    `tool_end`, feeds the result back, and continues.
 6. The response streams to the client as NDJSON, one JSON object per line.
 7. On `done`, the conversation is written to disk — unless it was deleted

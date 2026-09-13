@@ -15,7 +15,7 @@ remote surface. Exposing that port to a network gives away everything below.
 
 ### SSRF guard
 
-Every outbound fetch a skill makes goes through `assertUrlAllowed`
+Every outbound fetch a tool makes goes through `assertUrlAllowed`
 ([`skills/sandbox.js`](../skills/sandbox.js)). It:
 
 - rejects non-`http`/`https` schemes
@@ -35,7 +35,7 @@ All four fetch helpers — `fetchJson`, `fetchText`, `fetchHtml`,
 
 ### Filesystem sandbox
 
-File skills resolve paths through `resolveAllowedPath`. Access is confined to a
+File tools resolve paths through `resolveAllowedPath`. Access is confined to a
 set of roots; anything outside is refused with a message naming the roots. You
 extend it deliberately by editing `~/dive/allowed-dirs.json`.
 
@@ -46,7 +46,7 @@ is enforced against the declared `Content-Length` before a byte is read.
 ### Confirmation gates
 
 `skillRequiresShellConfirmation` forces a prompt for `shell_command`, any
-custom skill of type `shell`, and any plugin skill that asks for confirmation.
+custom tool of type `shell`, and any plugin tool that asks for confirmation.
 
 The composer launcher deliberately excludes `shell_command`, `file_operations`
 and `propose_plugin` — a one-click button is the wrong affordance for those. The
@@ -83,8 +83,8 @@ dropping data. Pi events are additionally capped at 256 KB each.
 
 ### Mode isolation
 
-Per-mode configuration is not decorative. A skill enabled in Cloud is not enabled
-in llama.cpp, MCP servers are per mode, and `requireNonPiMode` keeps Dive's skill
+Per-mode configuration is not decorative. A tool enabled in Cloud is not enabled
+in llama.cpp, MCP servers are per mode, and `requireNonPiMode` keeps Dive's tool
 and MCP routes away from Pi entirely.
 
 ### Deletion

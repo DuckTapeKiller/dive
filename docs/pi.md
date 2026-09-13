@@ -5,7 +5,7 @@ speaks JSONL over stdin and stdout. Pi brings its own tools, its own permission
 system and its own session files; Dive is a client.
 
 Nothing in this document applies to the other four modes, and nothing about
-Dive's skills applies to Pi.
+Dive's tools or skills settings applies to Pi.
 
 ## Process model
 
@@ -113,9 +113,10 @@ icon before the model had said anything.
 
 ## What Pi does not get
 
-- Dive's skills (`diveSkills: false`)
+- Dive's tools and its Agent Skills settings (`diveSkills: false`). Pi loads
+  its own skills, including those in `~/.agents/skills`.
 - Dive's MCP servers (`requireNonPiMode` guards those routes)
-- The composer skill launcher
+- The composer tool launcher
 
 Do not "unify" these. Pi already has tools; running two tool systems in one turn
 would mean two things claiming the same turn.

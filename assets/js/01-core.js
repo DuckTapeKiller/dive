@@ -181,7 +181,6 @@ let activeNoteName = "";
 let notesListCache = [];
 let settingsOpen = false;
 let activeSettingsTab = "main";
-let mcpOpen = false;
 let isDark = false;
 let ollamaPalette = "nordic";
 let piPalette = "orange";
@@ -799,11 +798,11 @@ function setCustomSkillsForMode(modeId, skills) {
 
 const ALL_BUILTIN_SKILLS_INFO = {
   remember_lesson: {
-    desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply only to future chats of the CURRENT mode (each mode keeps its own) and are editable under Lessons below.",
+    desc: "Lets the model permanently save lessons and preferences you teach it (also via /remember). Lessons apply only to future chats of the CURRENT mode (each mode keeps its own) and are editable under Prompts > Lessons.",
     example: '{"lesson": "Always use British spelling."}',
   },
   propose_plugin: {
-    desc: "Lets the model DRAFT new plugins (skills) for this app. Drafts are inert until you approve them under Plugins > Drafts. Off by default.",
+    desc: "Lets the model DRAFT new plugins (tools) for this app. Drafts are inert until you approve them under External tools > Drafts. Off by default.",
     example: '{"name": "weather-lookup"}',
   },
   wikipedia: {
@@ -998,13 +997,13 @@ If the user asks you to translate a text, return ONLY the translation in the req
 
 For any factual, encyclopedic, biographical, definitional, historical, or current-information question, use the tools below (Wikipedia, Britannica, Larousse, Store norske leksikon, Scholarpedia, Wiktionary, web search, etc.) rather than relying on your own training data, which is often outdated or inaccurate. Reserve your own knowledge for reasoning, explanation, writing, and language help. Never invent facts, citations, sources, dates, or page references; if no tool covers something and you cannot verify it, say so plainly.
 
-### SKILLS & TOOL USAGE
-You have access to external tools (skills) to fetch authoritative, real-time information or perform actions.
+### TOOL USAGE
+You have access to external tools to fetch authoritative, real-time information or perform actions.
 Call a tool whenever the question is better answered by a lookup than by memory — factual claims, definitions, people, places, events, recent or current information, calculations, or any external action the user requests.`;
 
 const DB_OFF_TOOL_TAIL_HEAD = `**HOW TO CALL A TOOL:**
 To trigger a tool, output an XML block in this exact format:
-<call:skill_name>{"arg": "value"}</call>
+<call:tool_name>{"arg": "value"}</call>
 The system will intercept this block, execute the tool, and provide you the results.
 
 ONLY the tools listed above exist and are enabled. Any tool NOT in that list is disabled — never call it. If a tool result says a tool is disabled, do not call it again; use an enabled one.`;
@@ -1063,7 +1062,7 @@ function getOllamaBasePolicyPrompt(promptOverlay) {
   const activeCustom = activeCustomSkills();
   if (activeCustom.length > 0) {
     customSkillsText =
-      "\n\n### USER DEFINED CUSTOM SKILLS\nYou ALSO have access to the following custom skills defined by the user:\n";
+      "\n\n### USER DEFINED CUSTOM TOOLS\nYou ALSO have access to the following custom tools defined by the user:\n";
     activeCustom.forEach((skill, i) => {
       customSkillsText += `${i + idx}. **${skill.name}**: ${skill.description}\n`;
       customSkillsText += `   - *How to call:* <call:${skill.name}>{}</call>\n`;

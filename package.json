@@ -1,6 +1,6 @@
 {
   "name": "dive-desktop",
-  "version": "5.0.7",
+  "version": "5.0.8",
   "private": true,
   "engines": {
     "node": ">=20.0.0"
@@ -64,6 +64,7 @@
       "pi-paths.js",
       "data-dir.js",
       "plugins.js",
+      "agent-skills.js",
       "index.html",
       "font_faces.css",
       "prompts.json",
@@ -92,6 +93,7 @@
       "pi-paths.js",
       "data-dir.js",
       "plugins.js",
+      "agent-skills.js",
       "prompts.json",
       "font_faces.css",
       "LICENSE",
@@ -156,6 +158,7 @@
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
     "playwright": "^1.63.0",
+    "yaml": "^2.9.0",
     "yauzl": "^3.3.2"
   }
 }

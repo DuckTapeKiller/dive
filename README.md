@@ -4,7 +4,7 @@
 
 ## A Local-First Chat & Agent Interface for LM Studio, Ollama, Pi, llama.cpp, and Cloud Models
 
-**Version 5.0.6**
+**Version 5.0.8**
 
 Dive is a local-first desktop app (and web UI) with a flat, brutalist interface for working with local AI backends, terminal-grade agents, and — optionally — your own cloud API keys. The server and app run entirely on your machine; local modes need no internet at all.
 
@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
 
 ## Interface
 
-- **Side panel** (collapsible to an icon rail): shared model dropdown with refresh, Pi thinking-level control and live state, the per-mode **Database toggle** with a pulsing index-activity light and completion percentage, the last five conversations, and History / Settings / MCP / Notes buttons.
+- **Side panel** (collapsible to an icon rail): shared model dropdown with refresh, Pi thinking-level control and live state, the per-mode **Database toggle** with a pulsing index-activity light and completion percentage, the last five conversations, and History / Settings / Notes buttons.
 - **Top bar**: mode switcher, system-prompt selector, clear-chat, light/dark toggle.
 - **Chat**: streaming responses; reasoning models get a collapsible **Thinking** box; agent runs show a **step timeline**, **live tool-progress panels** (web searches, subagent fleets update in place, like a terminal), an **Execution Trace**, retrieved **Passages**, and clickable **source pills** for every web source a skill used.
 - **History keeps everything**: interrupted and failed turns are preserved (with their thinking and traces), checkpointed to disk continuously, and survive clearing the chat or restarting the app. All panels are resizable.
@@ -41,20 +41,27 @@ https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
 
 ---
 
-## Tool Calling & Skills
+## Tools & Skills
 
-Ollama, LM Studio, and llama.cpp support **native tool calling (OpenAI schema)** with an automatic XML fallback for models that ignore `tools`. Cloud mode supports the same skills. **Agent Mode** (per mode) enables plan-first prompting with a configurable tool budget.
+Dive keeps two things apart. **Tools** are actions the model can take: search the web, fetch a page, run a command. **Skills** are written instructions the model follows for a particular task. Settings has a **Tools** tab and a **Skills** tab.
 
-Skill activation is mode-local across Ollama, Cloud, LM Studio, and llama.cpp: built-in toggles, plugin-skill activation, custom-skill availability, MCP configuration, connected clients, and tool generations cannot bleed into another mode. Plugin code remains installed globally, while each request captures the active mode's immutable skill/tool snapshot. Legacy global skill and custom-skill files are migrated to mode-specific state on first access.
+Ollama, LM Studio, and llama.cpp support **native tool calling (OpenAI schema)** with an automatic XML fallback for models that ignore `tools`. Cloud mode supports the same tools. **Agent Mode** (per mode) enables plan-first prompting with a configurable tool budget.
 
-Built-in skills (toggleable in Settings → Skills):
+Tool and skill activation is mode-local across Ollama, Cloud, LM Studio, and llama.cpp: built-in toggles, plugin tool activation, custom tool availability, Agent Skills switches, MCP configuration, connected clients, and tool generations cannot bleed into another mode. Plugin code remains installed globally, while each request captures the active mode's immutable tool snapshot. Legacy global settings files are migrated to mode-specific state on first access.
+
+Native tools, which come with Dive (toggleable in Settings → Tools):
 
 - **book_search** — searches Open Library, Google Books, Goodreads, StoryGraph (plus Hardcover, LibraryThing, and a local Calibre server when configured) in parallel; merges editions, reports source disagreements, and returns a metadata table with cover link and source pills. Query by title, author, or ISBN. `/book`, `/isbn`.
 - **wikipedia** — full-article plaintext (not just a summary) with disambiguation alternatives. `/wiki`.
 - **britannica** — resilient scraping through reader-proxy and Wayback fallbacks. `/britannica`.
 - **wiktionary**, **deep_etymology**, **web search**, **web_scraper**, **calculator**, **time_and_date**, **fact_check**, **local_notes**, and a confirmation-gated **shell_command**.
-- **Custom skills**: define your own shell or JavaScript tools in Settings → Skills.
-- **MCP**: connect Model Context Protocol servers (filesystem, memory, SQLite, …) from the plug panel; their tools are offered to models natively.
+- **Custom tools**: define your own shell or JavaScript tools in Settings → Tools.
+- **External tools**: plugins you install yourself, Node.js modules in `~/dive/plugins` that add tools and slash commands. See [PLUGINS.md](PLUGINS.md).
+- **MCP**: connect Model Context Protocol servers (filesystem, memory, SQLite, …) at the bottom of Settings → Tools; their tools are offered to models natively.
+
+Skills (Settings → Skills):
+
+- **Agent Skills**: skill folders with a `SKILL.md`, the format Claude Code and pi use. Dive loads them from `~/dive/skills`, `~/.agents/skills` and any folder you add in Settings → Skills. The model loads a skill when a request matches it, or you type `/skill:name` followed by your text.
 
 ---
 
@@ -326,7 +333,8 @@ Full documentation lives in [`docs/`](docs/README.md).
 | [Architecture](docs/architecture.md)     | Processes, module map, how a message travels                            |
 | [Modes](docs/modes.md)                   | The five modes and exactly how they differ                              |
 | [HTTP API](docs/api.md)                  | Every endpoint                                                          |
-| [Skills](docs/skills.md)                 | All 27 built-in skills                                                  |
+| [Tools](docs/tools.md)                   | All 29 native tools                                                     |
+| [Skills](docs/skills.md)                 | Agent Skills: `SKILL.md` instruction folders                            |
 | [Slash commands](docs/slash-commands.md) | Commands and the composer launcher                                      |
 | [Pi](docs/pi.md)                         | The Pi agent integration                                                |
 | [Library](docs/library.md)               | Indexing and retrieval                                                  |
@@ -340,7 +348,7 @@ Full documentation lives in [`docs/`](docs/README.md).
 ## Developer Checks
 
 ```bash
-npm test                  # 406 tests
+npm test                  # 503 tests
 npm run lint              # eslint + whole-program frontend lint
 npm run format:check      # prettier
 ```

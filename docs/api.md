@@ -29,7 +29,7 @@ Common request fields:
   "saveConv": "conversation-id",
   "convTitle": "Title",
   "library": { "enabled": true },
-  "nativeTools": true, // false forces the XML skill-call fallback
+  "nativeTools": true, // false forces the XML tool-call fallback
 }
 ```
 
@@ -39,7 +39,7 @@ Common request fields:
 | ---------------------------------------------------- | ------------------------------------------------------ |
 | `delta`                                              | Answer text so far, in `response`                      |
 | `thinking_start` / `thinking_delta` / `thinking_end` | Reasoning trace                                        |
-| `tool_start` / `tool_end`                            | A skill began or finished                              |
+| `tool_start` / `tool_end`                            | A tool began or finished                               |
 | `library_results`                                    | Retrieved passages and their sources                   |
 | `library_error`                                      | Retrieval failed; the turn continues ungrounded        |
 | `attachment_notice`                                  | Attachments were dropped; `message` says which and why |
@@ -101,22 +101,26 @@ streaming route as a `library_error` event, the non-streaming route as a
 `libraryError` field. An explicit `/db` request that cannot reach the library
 returns **502** rather than an ungrounded answer that looks grounded.
 
-## Skills and plugins
+## Tools, plugins and skills
 
-| Method   | Path                                | Purpose                                         |
-| -------- | ----------------------------------- | ----------------------------------------------- |
-| GET/POST | `/api/ollama/skills/settings?mode=` | Per-mode skill config (all modes use this path) |
-| GET/POST | `/api/custom-skills`                | User-defined skills                             |
-| GET      | `/api/plugins`                      | Installed plugins                               |
-| POST     | `/api/plugins/reload`               | Reload from disk                                |
-| GET      | `/api/plugins/drafts`               | Drafts proposed by a model                      |
-| POST     | `/api/plugins/drafts/approve`       | Approve a draft into the live directory         |
-| POST     | `/api/plugins/drafts/delete`        | Discard a draft                                 |
+| Method   | Path                                | Purpose                                                    |
+| -------- | ----------------------------------- | ---------------------------------------------------------- |
+| GET/POST | `/api/ollama/skills/settings?mode=` | Per-mode tool and skill switches (all modes use this path) |
+| GET/POST | `/api/custom-skills`                | User-defined custom tools                                  |
+| GET      | `/api/plugins`                      | Installed plugins                                          |
+| POST     | `/api/plugins/reload`               | Reload from disk                                           |
+| GET      | `/api/plugins/drafts`               | Drafts proposed by a model                                 |
+| POST     | `/api/plugins/drafts/approve`       | Approve a draft into the live directory                    |
+| POST     | `/api/plugins/drafts/delete`        | Discard a draft                                            |
+| GET      | `/api/agent-skills?mode=`           | Agent Skills found, per-mode switches, warnings            |
+| POST     | `/api/agent-skills/reload`          | Rescan the Agent Skills folders                            |
+| POST     | `/api/agent-skills/paths`           | Save the extra folders to scan (`paths` array)             |
 
-The skills settings path is `/api/ollama/skills/settings` for _every_ mode; the
-mode is a query parameter. The name is historical.
+The settings path is `/api/ollama/skills/settings` for _every_ mode; the mode is
+a query parameter. The name is historical: the endpoint holds the switches for
+built-in and plugin tools, and for Agent Skills as `skill:<name>` keys.
 
-`inputSkills` on that endpoint controls which skills appear as composer buttons.
+`inputSkills` on that endpoint controls which tools appear as composer buttons.
 Only names on a fixed allowlist are accepted, and only with the value `true`.
 `shell_command`, `file_operations` and `propose_plugin` are deliberately not on
 it.

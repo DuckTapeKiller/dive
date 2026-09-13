@@ -74,7 +74,7 @@ function startMockProvider() {
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         const flat = JSON.stringify(parsed.messages || []);
         // Second round trip: the skill result is in the conversation, so answer.
-        if (flat.includes("[SKILL RESULT: calculator]")) {
+        if (flat.includes("[TOOL RESULT: calculator]")) {
           res.write(sseChunk("The result of 2 + 2 * 4 is 10."));
         } else {
           res.write(sseChunk("Let me calculate that. "));
@@ -215,9 +215,9 @@ test("the skills system prompt reaches the provider", () => {
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n");
-  assert.match(system, /SKILLS & TOOL USAGE \(MANDATORY\)/);
+  assert.match(system, /### TOOL USAGE \(MANDATORY\)/);
   assert.match(system, /<call:calculator>/);
-  assert.match(system, /MUST call the relevant skill BEFORE answering/);
+  assert.match(system, /MUST call the relevant tool BEFORE answering/);
 });
 
 test("a model-initiated skill call is executed server-side", () => {
@@ -245,7 +245,7 @@ test("the skill result is fed back for a second round trip", () => {
   const second = JSON.stringify(providerRequests[1] || {});
   assert.match(
     second,
-    /\[SKILL RESULT: calculator\]/,
+    /\[TOOL RESULT: calculator\]/,
     "the second call did not carry the skill result",
   );
 });
