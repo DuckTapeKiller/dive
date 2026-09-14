@@ -5,7 +5,7 @@ HTTP server on `127.0.0.1`, and that server both serves the interface and talks
 to whichever model backend you have selected. Conversations, settings, indexed
 documents and attachments live in a directory on your machine.
 
-Version 5.0.9.
+Version 5.0.10.
 
 ## Start here
 

@@ -634,6 +634,97 @@ test("clicking into the extension panel takes typing away from the address bar",
   ]);
 });
 
+test("STOP PICKER closes whichever uBlock tool is open", async () => {
+  const { document, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: true,
+    uiOpen: false,
+  });
+  document.getElementById("browserStopPickerBtn").click();
+  assert.deepStrictEqual(sent()[0], { type: "quit-tool", target: "page" });
+});
+
+// A hand's click moves a few pixels between press and release. At the old 4px
+// threshold that counted as a text-selection drag and the click was dropped,
+// so "Create a custom filter" in uBlock's popup did nothing.
+function pressAndRelease(dom, element, from, to) {
+  const fire = (type, [x, y]) =>
+    element.dispatchEvent(
+      new dom.window.MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+      }),
+    );
+  fire("pointerdown", from);
+  fire("pointermove", to);
+  fire("pointerup", to);
+  fire("click", to);
+}
+
+test("a click that wobbles a few pixels is still a click", async () => {
+  const { dom, document, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: false,
+    uiOpen: true,
+  });
+  dom.window.eval(
+    `browserPointFor = (e) => ({ target: "ui", x: e.clientX - 600, y: e.clientY - 250 });`,
+  );
+  pressAndRelease(
+    dom,
+    document.getElementById("browserUiView"),
+    [660, 439],
+    [665, 440],
+  );
+  assert.deepStrictEqual(sent(), [
+    { type: "click", target: "ui", x: 65, y: 190 },
+  ]);
+});
+
+test("while a uBlock tool is picking, even a long drag is a click", async () => {
+  const { dom, document, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: true,
+    uiOpen: false,
+  });
+  dom.window.eval(
+    `browserPointFor = (e) => ({ target: "page", x: e.clientX, y: e.clientY });`,
+  );
+  document.getElementById("browserViewport").classList.add("picking");
+  pressAndRelease(
+    dom,
+    document.getElementById("browserView"),
+    [100, 100],
+    [160, 100],
+  );
+  assert.deepStrictEqual(sent(), [
+    { type: "click", target: "page", x: 160, y: 100 },
+  ]);
+});
+
+test("a real drag over the page still selects text", async () => {
+  const { dom, document, sent } = await browserPanelDom({
+    keyTarget: "page",
+    takeover: false,
+    uiOpen: false,
+  });
+  dom.window.eval(
+    `browserPointFor = (e) => ({ target: "page", x: e.clientX, y: e.clientY });`,
+  );
+  pressAndRelease(
+    dom,
+    document.getElementById("browserView"),
+    [100, 100],
+    [160, 100],
+  );
+  assert.deepStrictEqual(
+    sent().map((payload) => payload.type),
+    ["select"],
+  );
+});
+
 test("the wheel scrolls the surface under the pointer", async () => {
   const { dom, document, sent } = await browserPanelDom({
     keyTarget: "page",

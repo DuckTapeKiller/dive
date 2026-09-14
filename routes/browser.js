@@ -306,11 +306,11 @@ module.exports = function createBrowserDomain(deps = {}) {
         // so it is written through untouched rather than decoded and re-encoded.
         res.write(`data: ${data}\n\n`);
       };
-      const started = await browser.startScreencast(name, {
-        width,
-        height,
-        onFrame,
-      });
+      // Caught here as well as guarded inside: an exception thrown by this
+      // route had nowhere to go and ended the server process.
+      const started = await browser
+        .startScreencast(name, { width, height, onFrame })
+        .catch((error) => ({ error: `Live view failed: ${error.message}` }));
       if (started.error) {
         res.write(`event: error\ndata: ${JSON.stringify(started.error)}\n\n`);
         res.end();

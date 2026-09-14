@@ -460,6 +460,9 @@ async function ensureSession(name, dataDir) {
     }
   });
   SESSIONS.set(name, session);
+  context.on("page", (opened) => {
+    adoptExtensionPage(session, opened).catch(() => {});
+  });
   startReaper();
   if (resumeUrl) {
     try {
@@ -990,7 +993,7 @@ async function openExtensionPage(name, dataDir, extensionId, page = "") {
     // — the panel reported no extension UI, so BACK TO PAGE never appeared and
     // the only exit was retyping a URL.
     await closeExtensionUi(name);
-    const ui = await session.context.newPage();
+    const ui = await newDivePage(session);
     await ui.setViewportSize(DASHBOARD_VIEWPORT);
     await ui.goto(target, { waitUntil: "domcontentloaded" });
     session.uiPage = ui;
@@ -1049,7 +1052,7 @@ async function openExtensionPopup(name, dataDir, extensionId) {
   if (notLoaded) return { error: notLoaded };
   try {
     await closeExtensionUi(name);
-    const ui = await session.context.newPage();
+    const ui = await newDivePage(session);
     // Its own size: a popup is a small panel, and stretching it to the width of
     // the browser view would make a 300px control fill the screen.
     await ui.setViewportSize(POPUP_VIEWPORT);
@@ -1231,7 +1234,13 @@ async function userInteract(name, payload = {}) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) {
         return { error: "click needs x and y." };
       }
+      if (page === session.page) {
+        session.pointer = { x, y };
+        await rememberZap(session, x, y);
+      }
       await page.mouse.click(x, y);
+    } else if (payload.type === "quit-tool") {
+      await quitOverlayTool(session);
     } else if (payload.type === "type") {
       await page.keyboard.type(String(payload.text ?? ""), { delay: 8 });
     } else if (payload.type === "insert") {
@@ -1239,7 +1248,17 @@ async function userInteract(name, payload = {}) {
       // filter list would take seconds to arrive.
       await page.keyboard.insertText(String(payload.text ?? ""));
     } else if (payload.type === "key") {
-      await page.keyboard.press(String(payload.key || "Enter"));
+      const key = String(payload.key || "Enter");
+      // The zapper also removes the highlighted element on Delete or
+      // Backspace, so that removal is kept the same way a click's is.
+      if (
+        page === session.page &&
+        session.pointer &&
+        /^(Delete|Backspace)$/.test(key)
+      ) {
+        await rememberZap(session, session.pointer.x, session.pointer.y);
+      }
+      await page.keyboard.press(key);
     } else if (payload.type === "move") {
       // Pointer movement, which some things need and a click cannot stand in
       // for. uBlock's element picker highlights whatever is under the cursor
@@ -1251,6 +1270,7 @@ async function userInteract(name, payload = {}) {
         return { error: "move needs x and y." };
       }
       await page.mouse.move(x, y);
+      if (page === session.page) session.pointer = { x, y };
       // No load wait and no capture: movement is continuous, and the stream is
       // already sending the frames it causes.
       return { ok: true, url: session.lastUrl };
@@ -1347,34 +1367,46 @@ const DASHBOARD_VIEWPORT = { width: 760, height: 620 };
 async function startScreencast(name, { width, height, onFrame }) {
   const session = SESSIONS.get(sessionName(name));
   if (!session) return { error: "That browser session is not open." };
-  if (!session.cast) {
+  // Held locally. An extension page opening or closing detaches the cast
+  // (session.cast = null) at any await below, and reading session.cast after
+  // that threw inside the stream route, which took the whole server down.
+  let cast = session.cast;
+  if (!cast) {
     let cdp;
     try {
       cdp = await session.context.newCDPSession(viewPage(session));
     } catch (error) {
       return { error: `Live view unavailable: ${error.message}` };
     }
-    session.cast = { cdp, viewers: new Set(), running: false };
-    cdp.on("Page.screencastFrame", async (frame) => {
-      // Acknowledge first: an unacknowledged frame stops the stream, so a
-      // listener that throws must not be able to wedge it.
-      try {
-        await cdp.send("Page.screencastFrameAck", {
-          sessionId: frame.sessionId,
-        });
-      } catch {
-        // The page navigated or closed under us; the stream ends on its own.
-      }
-      for (const viewer of session.cast.viewers) {
+    if (session.cast) {
+      // Another viewer started one while this was connecting.
+      cdp.detach().catch(() => {});
+      cast = session.cast;
+    } else {
+      cast = { cdp, viewers: new Set(), running: false };
+      session.cast = cast;
+      const frames = cast;
+      cdp.on("Page.screencastFrame", async (frame) => {
+        // Acknowledge first: an unacknowledged frame stops the stream, so a
+        // listener that throws must not be able to wedge it.
         try {
-          viewer(frame.data, frame.metadata);
+          await cdp.send("Page.screencastFrameAck", {
+            sessionId: frame.sessionId,
+          });
         } catch {
-          // One bad viewer must not take the others down with it.
+          // The page navigated or closed under us; the stream ends on its own.
         }
-      }
-    });
+        for (const viewer of frames.viewers) {
+          try {
+            viewer(frame.data, frame.metadata);
+          } catch {
+            // One bad viewer must not take the others down with it.
+          }
+        }
+      });
+    }
   }
-  session.cast.viewers.add(onFrame);
+  cast.viewers.add(onFrame);
   // Applied on EVERY subscribe, not only when the cast starts. A viewer that
   // reconnects at a new size — the panel resized, a sub-panel opened — can
   // arrive while the previous cast is still winding down, and skipping the
@@ -1388,9 +1420,14 @@ async function startScreencast(name, { width, height, onFrame }) {
   } catch {
     // A page mid-navigation can refuse a resize; the next frame corrects it.
   }
-  if (!session.cast.running) {
+  if (session.cast !== cast) {
+    // Detached while the page was being resized: the client reconnects.
+    cast.viewers.delete(onFrame);
+    return { error: "Live view was interrupted; reconnecting." };
+  }
+  if (!cast.running) {
     try {
-      await session.cast.cdp.send("Page.startScreencast", {
+      await cast.cdp.send("Page.startScreencast", {
         format: "jpeg",
         quality: SCREENCAST_QUALITY,
         maxWidth: clampViewport(width, DEFAULT_VIEWPORT.width),
@@ -1401,9 +1438,9 @@ async function startScreencast(name, { width, height, onFrame }) {
         ),
         everyNthFrame: 1,
       });
-      session.cast.running = true;
+      cast.running = true;
     } catch (error) {
-      session.cast.viewers.delete(onFrame);
+      cast.viewers.delete(onFrame);
       return { error: `Live view could not start: ${error.message}` };
     }
   }
@@ -1413,15 +1450,16 @@ async function startScreencast(name, { width, height, onFrame }) {
 
 async function stopScreencast(name, onFrame) {
   const session = SESSIONS.get(sessionName(name));
-  if (!session?.cast) return;
-  session.cast.viewers.delete(onFrame);
-  if (session.cast.viewers.size || !session.cast.running) return;
+  const cast = session?.cast;
+  if (!cast) return;
+  cast.viewers.delete(onFrame);
+  if (cast.viewers.size || !cast.running) return;
   try {
-    await session.cast.cdp.send("Page.stopScreencast");
+    await cast.cdp.send("Page.stopScreencast");
   } catch {
     // Already gone with the page.
   }
-  session.cast.running = false;
+  cast.running = false;
 }
 
 // Is an element picker overlay active on the page?
@@ -1456,14 +1494,159 @@ async function pickerActive(session) {
 // sees every frame's URL. It matters because the two main tools look alike and
 // are not: the picker saves a filter, the zapper removes an element only until
 // the page reloads.
+const OVERLAY_TOOL_URL = /\/(picker|zapper|unpicker)-ui\.html(?:[?#]|$)/;
+
+function overlayToolFrame(page) {
+  return (
+    page.frames().find((frame) => OVERLAY_TOOL_URL.test(frame.url())) || null
+  );
+}
+
 function overlayToolKind(page) {
-  for (const frame of page.frames()) {
-    const match = /\/(picker|zapper|unpicker)-ui\.html(?:[?#]|$)/.exec(
-      frame.url(),
-    );
-    if (match) return match[1];
+  const frame = overlayToolFrame(page);
+  return frame ? OVERLAY_TOOL_URL.exec(frame.url())[1] : "";
+}
+
+// Every uBlock tool has a close button, but only the picker and the zapper
+// also close on Escape: STOP PICKER sent Escape, which left the unpicker
+// running. The button is pressed inside the tool's own frame.
+async function quitOverlayTool(session) {
+  const frame = overlayToolFrame(session.page);
+  if (frame) {
+    try {
+      await frame.locator("#quit").click({ timeout: 2000 });
+      return true;
+    } catch {
+      // A tool already closing, or one without the button: Escape below.
+    }
   }
-  return "";
+  await session.page.keyboard.press("Escape");
+  return false;
+}
+
+// A CSS selector that matches this element and nothing else on its page, built
+// the way uBlock's element picker builds its default candidate: tag, id,
+// classes, and :nth-of-type where same-tag siblings would match too. Ancestors
+// are added, closest first, until nothing else matches. It runs in the page
+// (serialised below), so it only uses what the element itself can reach.
+function uniqueSelectorFor(target) {
+  const doc = target.ownerDocument;
+  const escape =
+    doc.defaultView?.CSS?.escape ||
+    ((value) => String(value).replace(/[^\w-]/g, (c) => `\\${c}`));
+  const part = (el) => {
+    if (el.id && doc.querySelectorAll(`#${escape(el.id)}`).length === 1) {
+      return `#${escape(el.id)}`;
+    }
+    let css = escape(el.localName);
+    for (const name of el.classList) css += `.${escape(name)}`;
+    const parent = el.parentElement;
+    if (parent && parent.querySelectorAll(`:scope > ${css}`).length > 1) {
+      let index = 1;
+      for (let sib = el.previousElementSibling; sib;) {
+        if (sib.localName === el.localName) index += 1;
+        sib = sib.previousElementSibling;
+      }
+      css += `:nth-of-type(${index})`;
+    }
+    return css;
+  };
+  try {
+    let el = target;
+    let selector = part(el);
+    while (
+      doc.querySelectorAll(selector).length > 1 &&
+      el.parentElement &&
+      el.parentElement !== doc.body &&
+      el.parentElement !== doc.documentElement
+    ) {
+      el = el.parentElement;
+      selector = `${part(el)} > ${selector}`;
+    }
+    return doc.querySelectorAll(selector).length === 1 ? selector : "";
+  } catch {
+    return "";
+  }
+}
+
+// The element uBlock's zapper removes for a click at (x, y), as a selector.
+// zapper.js takes the element under the point with its own overlay frame out
+// of the way, never <html> or <body>; this finds the same one. Source rather
+// than a function, because it runs in the page; x and y are checked finite
+// before they get here.
+const zapTargetSelector = (x, y) => `(() => {
+  const isOverlay = (el) => {
+    if (el.localName !== "iframe" || el.parentElement !== document.documentElement) return false;
+    const names = el.getAttributeNames();
+    return names.some((n) => names.includes(n + "-loaded"));
+  };
+  const target = document
+    .elementsFromPoint(${x}, ${y})
+    .find((el) => !isOverlay(el) && el !== document.body && el !== document.documentElement);
+  return target ? (${uniqueSelectorFor.toString()})(target) : "";
+})()`;
+
+// uBlock's zapper removes an element only until the page reloads, so blocks
+// made with it came back after every refresh. While the zapper is the tool on
+// the page, the element about to be removed is also saved as a custom filter
+// for the site. It is sent from the zapper's own frame, an extension page, so
+// uBlock takes it exactly as it takes the picker's Create button.
+async function rememberZap(session, x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+  const frame = overlayToolFrame(session.page);
+  if (!frame || overlayToolKind(session.page) !== "zapper") return "";
+  try {
+    const selector = await session.page.evaluate(zapTargetSelector(x, y));
+    const { hostname } = new URL(session.page.url());
+    if (!selector || !hostname) return "";
+    await frame.evaluate(
+      ([host, css]) =>
+        globalThis.chrome.runtime.sendMessage({
+          what: "addCustomFilters",
+          hostname: host,
+          selectors: [css],
+        }),
+      [hostname, selector],
+    );
+    return selector;
+  } catch (error) {
+    console.warn("[browser] a zapped element was not kept:", error.message);
+    return "";
+  }
+}
+
+// A page Dive is opening itself, as opposed to one the extension opened. The
+// count is held around newPage() because the context announces the page
+// before newPage() hands it back.
+async function newDivePage(session) {
+  session.openingUi = (session.openingUi || 0) + 1;
+  try {
+    return await session.context.newPage();
+  } finally {
+    session.openingUi -= 1;
+  }
+}
+
+// uBlock opens some of its own pages as new tabs: "Report an issue" and the
+// dashboard gear in its popup. The panel never showed those tabs, so both
+// buttons looked dead. An extension page that opens by itself becomes the
+// panel's extension UI, the way OPTIONS does.
+async function adoptExtensionPage(session, opened) {
+  if (session.openingUi) return;
+  await opened.waitForLoadState("domcontentloaded").catch(() => {});
+  if (opened.isClosed() || opened === session.page) return;
+  if (opened === session.uiPage) return;
+  if (!opened.url().startsWith("chrome-extension://")) return;
+  const previous = uiPage(session);
+  session.uiPage = opened;
+  opened.once("close", () => {
+    if (session.uiPage === opened) session.uiPage = null;
+    detachScreencast(session).catch(() => {});
+  });
+  await opened.setViewportSize(DASHBOARD_VIEWPORT).catch(() => {});
+  if (previous && previous !== opened) await previous.close().catch(() => {});
+  await detachScreencast(session);
+  touch(session);
 }
 
 // Refreshed alongside the listing rather than polled separately: it is one
@@ -1549,4 +1732,8 @@ module.exports = {
   waitForExtensionScripts,
   serviceWorkerCount,
   overlayToolKind,
+  overlayToolFrame,
+  uniqueSelectorFor,
+  zapTargetSelector,
+  adoptExtensionPage,
 };

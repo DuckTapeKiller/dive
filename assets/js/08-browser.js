@@ -41,7 +41,7 @@ const BROWSER_TOOL_HINTS = {
   picker:
     "Create a custom filter: move over the page to highlight, click to select, then Create. The filter is saved and survives a restart.",
   zapper:
-    "Remove an element: click something to hide it until the page reloads. Nothing is saved. To block it for good, use Create a custom filter.",
+    "Remove an element: click something to remove it. Dive saves it as a custom filter, so it stays gone after a reload or a restart.",
   unpicker:
     "Remove a custom filter: choose a filter in the list to highlight what it hides, then click the trash can to remove it.",
 };
@@ -624,7 +624,10 @@ function browserViewMoved(event) {
 // Not behind TAKE OVER. Selecting is reading, and the server sets the selection
 // from caret positions rather than dragging a real mouse, so it cannot click,
 // drag or drop anything on the way.
-const BROWSER_DRAG_THRESHOLD_PX = 4;
+// A hand's click moves a few pixels between press and release. At 4px a 5px
+// wobble counted as a text-selection drag, and the click never reached the
+// page: "Create a custom filter" in uBlock's popup did nothing at all.
+const BROWSER_DRAG_THRESHOLD_PX = 12;
 let browserDragStart = null;
 let browserDragged = false;
 
@@ -686,8 +689,14 @@ function copyTextWithCommand(value) {
 
 function browserViewPointerDown(event) {
   if (event.button !== 0) return;
-  const point = browserPointFor(event);
   browserDragged = false;
+  // A uBlock tool takes every click and has no use for a text selection, so
+  // while one is running nothing counts as a drag.
+  if (getBrowserElements().viewport?.classList.contains("picking")) {
+    browserDragStart = null;
+    return;
+  }
+  const point = browserPointFor(event);
   browserDragStart = point
     ? { ...point, clientX: event.clientX, clientY: event.clientY }
     : null;
@@ -1180,10 +1189,10 @@ async function openBrowserExtensionPopup(id, name) {
     "Open extension popup",
   );
   if (result?.ok) {
-    // This used to point at "Remove an element", which is the zapper: nothing
-    // it removes is saved.
+    // Both tools save now: the zapper's removals are kept as custom filters by
+    // the server, so neither is the wrong one to reach for.
     setBrowserStatus(
-      `${name}: "Create a custom filter" saves a block that survives a restart. "Remove an element" only hides something until the page reloads.`,
+      `${name}: "Remove an element" removes what you click; "Create a custom filter" lets you choose what the filter matches. Both are saved and survive a restart.`,
       false,
       15000,
     );
@@ -1212,10 +1221,12 @@ async function openBrowserExtensionPopup(id, name) {
 async function stopBrowserPicker() {
   await browserUserRequest(
     "/api/browser/interact",
-    { type: "key", key: "Escape", target: "page" },
+    // Pressed inside the tool: the unpicker ignores Escape, so sending Escape
+    // left it running.
+    { type: "quit-tool", target: "page" },
     "Stop picker",
   );
-  setBrowserStatus("Element picker cancelled.", false, 4000);
+  setBrowserStatus("uBlock tool closed.", false, 4000);
   refreshBrowserPanel();
 }
 

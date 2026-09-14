@@ -3885,6 +3885,14 @@ a:hover {
   font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 0.5px;
   opacity: 0.75;
+  /* Always three lines tall. A hint wraps to two or three lines and "1
+     session(s) open." takes one, and each change of height moved the page and
+     any uBlock panel under the pointer: a click aimed at one row landed on the
+     next. A longer message scrolls inside the box instead of pushing. */
+  line-height: 1.35;
+  /* Everything here is border-box, so the height carries the padding too. */
+  height: calc(3 * 1.35em + 16px);
+  overflow-y: auto;
 }
 .browser-status.warn {
   opacity: 1;

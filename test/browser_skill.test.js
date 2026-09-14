@@ -682,3 +682,172 @@ test("a page with no uBlock tool open reports none", () => {
     "",
   );
 });
+
+test("the tool's own frame is found among the page's frames", () => {
+  const page = fakePage([
+    "https://example.com/",
+    "chrome-extension://x/unpicker-ui.html",
+  ]);
+  assert.equal(
+    browser.overlayToolFrame(page).url(),
+    "chrome-extension://x/unpicker-ui.html",
+  );
+  assert.equal(
+    browser.overlayToolFrame(fakePage(["https://example.com/"])),
+    null,
+  );
+});
+
+test("closing a uBlock tool on a session that is not open is refused", async () => {
+  const result = await route("POST", "/api/browser/interact", {
+    type: "quit-tool",
+    session: "not-open",
+  });
+  assert.strictEqual(result.status, 400);
+  assert.match(result.payload.error, /not open/i);
+});
+
+// ---- Keeping what the zapper removes ----
+//
+// uBlock's zapper removes an element until the page reloads, and blocks made
+// with it came back after every refresh. Dive saves the zapped element as a
+// custom filter. The selector has to find that element and nothing else, or a
+// zap would hide things the user never pointed at.
+
+const { JSDOM } = require("jsdom");
+
+function documentWith(body) {
+  return new JSDOM(`<!doctype html><body>${body}</body>`).window.document;
+}
+
+test("a zapped element with a unique id is kept by its id", () => {
+  const doc = documentWith('<div id="banner"><p>ad</p></div><div></div>');
+  assert.equal(
+    browser.uniqueSelectorFor(doc.getElementById("banner")),
+    "#banner",
+  );
+});
+
+test("alike siblings are told apart, and only the zapped one matches", () => {
+  const doc = documentWith(
+    '<ul class="list"><li class="card">a</li><li class="card">b</li>' +
+      '<li class="card">c</li></ul><ul class="list"><li class="card">d</li></ul>',
+  );
+  const target = doc.querySelectorAll("li.card")[1];
+  const matches = doc.querySelectorAll(browser.uniqueSelectorFor(target));
+  assert.equal(matches.length, 1);
+  assert.strictEqual(matches[0], target);
+});
+
+test("identical blocks are singled out through their ancestors", () => {
+  const doc = documentWith(
+    "<section><div><span>x</span></div></section>" +
+      "<section><div><span>x</span></div></section>",
+  );
+  const target = doc.querySelectorAll("span")[1];
+  const matches = doc.querySelectorAll(browser.uniqueSelectorFor(target));
+  assert.equal(matches.length, 1);
+  assert.strictEqual(matches[0], target);
+});
+
+test("the zap script skips uBlock's overlay and names the element beneath", () => {
+  const dom = new JSDOM(
+    '<!doctype html><body><div class="ad">x</div><div class="ad">y</div></body>',
+    { runScripts: "outside-only" },
+  );
+  const { document } = dom.window;
+  const overlay = document.createElement("iframe");
+  overlay.setAttribute("ubol-tool", "");
+  overlay.setAttribute("ubol-tool-loaded", "");
+  document.documentElement.append(overlay);
+  const target = document.querySelectorAll("div.ad")[1];
+  const at = [];
+  document.elementsFromPoint = (x, y) => {
+    at.push(x, y);
+    return [overlay, target, document.body, document.documentElement];
+  };
+  const selector = dom.window.eval(browser.zapTargetSelector(120, 340));
+  assert.deepStrictEqual(at, [120, 340]);
+  assert.equal(document.querySelectorAll(selector).length, 1);
+  assert.strictEqual(document.querySelector(selector), target);
+});
+
+// ---- Pages uBlock opens by itself ----
+//
+// "Report an issue" and the dashboard gear open new tabs. The panel shows only
+// the page and one extension UI, so those buttons looked like they did nothing.
+
+function openedPage(url) {
+  return {
+    url: () => url,
+    isClosed: () => false,
+    waitForLoadState: async () => {},
+    setViewportSize: async () => {},
+    once: () => {},
+  };
+}
+
+test("a page uBlock opens by itself becomes the panel's extension UI", async () => {
+  const session = { page: {}, uiPage: null };
+  const report = openedPage("chrome-extension://x/report.html");
+  await browser.adoptExtensionPage(session, report);
+  assert.strictEqual(session.uiPage, report);
+});
+
+test("a page Dive is opening itself is left for Dive to set up", async () => {
+  const session = { page: {}, uiPage: null, openingUi: 1 };
+  await browser.adoptExtensionPage(
+    session,
+    openedPage("chrome-extension://x/popup.html"),
+  );
+  assert.strictEqual(session.uiPage, null);
+});
+
+test("an ordinary web page opened in a new tab is not adopted", async () => {
+  const session = { page: {}, uiPage: null };
+  await browser.adoptExtensionPage(
+    session,
+    openedPage("https://github.com/uBlockOrigin/uBOL-home/issues"),
+  );
+  assert.strictEqual(session.uiPage, null);
+});
+
+// ---- The live view surviving an extension page closing ----
+//
+// uBlock's popup closes itself when a tool starts, which detaches the live
+// view (session.cast = null). A stream reconnecting at that moment read
+// session.cast after the detach, threw inside the stream route, and ended the
+// whole server process.
+
+test("a live view detached while it starts reports an error instead of throwing", async () => {
+  const sent = [];
+  const cdp = {
+    on: () => {},
+    send: async (method) => sent.push(method),
+    detach: async () => {},
+  };
+  const session = {
+    cast: null,
+    lastUsedAt: 0,
+    context: { newCDPSession: async () => cdp },
+    page: {
+      viewportSize: () => ({ width: 100, height: 100 }),
+      setViewportSize: async () => {
+        // The popup closes itself right now.
+        session.cast = null;
+      },
+    },
+  };
+  browser.SESSIONS.set("detach-race", session);
+  try {
+    const result = await browser.startScreencast("detach-race", {
+      width: 640,
+      height: 480,
+      onFrame: () => {},
+    });
+    assert.match(result.error, /interrupted/i);
+    assert.deepStrictEqual(sent, []);
+  } finally {
+    browser.SESSIONS.delete("detach-race");
+  }
+});
