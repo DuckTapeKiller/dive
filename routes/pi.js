@@ -493,6 +493,10 @@ function createPiDomain(deps) {
         subscribers: new Set(),
         events: [],
         nextSequence: 0,
+        // Sequences restart with every new channel (a server restart, or an
+        // idle channel swept away). The epoch tells a sequence from this
+        // channel apart from an equal one saved from an earlier channel.
+        epoch: randomUUID(),
         eventBytes: 0,
         lastActivityAt: Date.now(),
         completedSessions: new Map(),
@@ -501,6 +505,14 @@ function createPiDomain(deps) {
     }
     channel.lastActivityAt = Date.now();
     return channel;
+  }
+
+  // Whether a done or an error has already been sent for this session.
+  function piSessionEndedOnChannel(session) {
+    const channel = piEventChannels.get(
+      normalizePiChannelId(session.convProc?.convId),
+    );
+    return !!channel?.completedSessions.has(session.id);
   }
 
   function broadcastPiConvEvent(convId, event, { replay = true } = {}) {
@@ -522,6 +534,7 @@ function createPiDomain(deps) {
       ...safeEvent,
       convId: normalizePiChannelId(convId),
       sequence: ++channel.nextSequence,
+      epoch: channel.epoch,
       ...(sessionId
         ? { completed: channel.completedSessions.has(sessionId) }
         : {}),
@@ -814,6 +827,19 @@ function createPiDomain(deps) {
     }
     notifyPiSession(session);
     piRpcSessions.delete(sessionId);
+
+    // A session removed before it finished must still end every view of it:
+    // the prompt stream and any background run on the channel wait for a
+    // done or an error, and the browser stays busy until one arrives. Sent
+    // after the delete, so a listener that cleans up in response finds
+    // nothing left to do.
+    if (!session.done && !piSessionEndedOnChannel(session)) {
+      emitPiSessionEvent(session, {
+        type: "error",
+        error: session.error.message,
+        sessionId,
+      });
+    }
 
     if (convProc) {
       if (wasQueued && convProc.queue) {

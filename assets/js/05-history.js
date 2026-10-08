@@ -100,9 +100,13 @@ function loadConversation(conv) {
     renderSessionTranscript({ history: [...history] });
   } else {
     // No active run: bind the mode's session to the loaded conversation.
-    history = conv.history || [];
     currentConvId = conv.id;
     session.convId = conv.id;
+    history = conv.history || [];
+    // Pi notices this page showed are not in the server's copy until saved.
+    if (targetMode === "pi" && typeof piWithUnsavedRecords === "function") {
+      history = piWithUnsavedRecords(session, history);
+    }
     session.history = [...history];
     session.lastUserMessage = null;
     session.lastSentMessage = null;
@@ -1552,6 +1556,9 @@ function addThinking(initialSnapshot = {}) {
   if (initialSnapshot.live === true) {
     renderElapsed();
     timerInterval = window.setInterval(renderElapsed, 1000);
+  } else {
+    // A saved turn is not working on anything.
+    plain.style.display = "none";
   }
 
   let reasoningText =
@@ -2315,6 +2322,17 @@ function addThinking(initialSnapshot = {}) {
         clearInterval(timerInterval);
         timerInterval = null;
       }
+    },
+    // The header once the turn is over: how long it took, never a frozen
+    // "Working…". A failed turn keeps its failure label.
+    markFinished(prefix) {
+      prefix = prefix || "Finished in";
+      this.stopTimer();
+      if (lastFailureReason) return;
+      if (!plain.isConnected || plain.style.display === "none") return;
+      const s = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      const elapsed = s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+      plain.textContent = `${prefix} ${elapsed}`;
     },
     markFailure(reason) {
       if (!reason) return;
@@ -4109,6 +4127,21 @@ function formatStreamEventTraceLine(evt) {
   if (evt.type === "pi_banner") return String(evt.text || "");
   if (!evt || typeof evt !== "object") return "";
 
+  // Pi records, worded as handleStreamEventTrace words them live, so a trace
+  // rebuilt from saved events reads the same as it did on screen.
+  if (evt.type === "pi_notice") return `Notice: ${evt.message || ""}`;
+  if (evt.type === "pi_status") {
+    return evt.text ? `Status · ${evt.key || "status"}: ${evt.text}` : "";
+  }
+  if (evt.type === "pi_usage") {
+    const parts = [];
+    if (evt.model) parts.push(evt.model);
+    if (evt.input) parts.push(`↑${evt.input}`);
+    if (evt.output) parts.push(`↓${evt.output}`);
+    if (evt.cost) parts.push(`$${Number(evt.cost).toFixed(4)}`);
+    return parts.length ? `Turn: ${parts.join(" · ")}` : "";
+  }
+
   if (evt.type === "library_results") {
     const resultCount = Array.isArray(evt.results) ? evt.results.length : 0;
     const meta = evt.meta && typeof evt.meta === "object" ? evt.meta : {};
@@ -4575,7 +4608,8 @@ function handleStreamEventTrace(evt, thinking) {
     if (typeof thinking.finalizeTimeline === "function") {
       thinking.finalizeTimeline();
     }
-    if (typeof thinking.stopTimer === "function") thinking.stopTimer();
+    if (typeof thinking.markFinished === "function") thinking.markFinished();
+    else if (typeof thinking.stopTimer === "function") thinking.stopTimer();
   }
 }
 

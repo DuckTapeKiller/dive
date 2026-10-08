@@ -88,7 +88,12 @@ async function reloadOpenConversationFromServer(convId) {
     if (!conv || conv.id !== currentConvId) return;
     const session = getActiveModeSession(mode);
     if (session.activeAbortController) return;
-    session.history = Array.isArray(conv.history) ? conv.history : [];
+    const loaded = Array.isArray(conv.history) ? conv.history : [];
+    // Pi notices this page showed are not in the server's copy until saved.
+    session.history =
+      mode === "pi" && typeof piWithUnsavedRecords === "function"
+        ? piWithUnsavedRecords(session, loaded)
+        : loaded;
     history = [...session.history];
     renderSessionTranscript(session);
   } catch (_e) {
@@ -736,7 +741,9 @@ async function sendMessage() {
         if (typeof thinking.finalizeTimeline === "function") {
           thinking.finalizeTimeline();
         }
-        if (typeof thinking.stopTimer === "function") {
+        if (typeof thinking.markFinished === "function") {
+          thinking.markFinished("Stopped after");
+        } else if (typeof thinking.stopTimer === "function") {
           thinking.stopTimer();
         }
         if (
@@ -1134,7 +1141,9 @@ async function regenerate(wrapEl) {
         if (typeof thinking.finalizeTimeline === "function") {
           thinking.finalizeTimeline();
         }
-        if (typeof thinking.stopTimer === "function") {
+        if (typeof thinking.markFinished === "function") {
+          thinking.markFinished("Stopped after");
+        } else if (typeof thinking.stopTimer === "function") {
           thinking.stopTimer();
         }
         if (
@@ -1523,7 +1532,7 @@ function abortActiveGeneration() {
     }).catch(uiRefreshFailed("Pi abort"));
     if (typeof finalizePiChannelRun === "function") {
       try {
-        finalizePiChannelRun();
+        finalizePiChannelRun(undefined, "Stopped after");
       } catch (error) {
         console.error("[pi] failed to finalize the background run:", error);
       }

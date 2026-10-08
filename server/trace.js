@@ -80,6 +80,7 @@ function sanitizeTraceEventForStorage(event) {
     "model",
     "jobId",
     "status",
+    "epoch",
   ]) {
     if (typeof event[key] === "string") clean[key] = event[key].slice(0, 4000);
   }
