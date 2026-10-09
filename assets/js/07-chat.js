@@ -1325,10 +1325,11 @@ async function updateTokenCounter(
   renderTokenCounter(counterEl, state.used, state.total);
 }
 
-// The counter is a split label: the share of the context window still free
-// in a solid cell, joined to "used / total". The cell turns the accent colour
-// under 20%, and reads "--%" while the window size is unknown.
-const TOKEN_COUNTER_LOW_PERCENT = 20;
+// The counter is a split label: the share of the context window in use, in a
+// solid cell, joined to "used / total". The percentage is worded as Pi's side
+// panel words its CONTEXT figure, so the two always agree. From 90% the cell
+// and frame turn red; while the window size is unknown the cell reads "--%".
+const TOKEN_COUNTER_CRITICAL_PERCENT = 90;
 function renderTokenCounter(counterEl, used, total) {
   const percentEl = counterEl.querySelector(".token-counter-percent");
   const tokensEl = counterEl.querySelector(".token-counter-tokens");
@@ -1338,18 +1339,22 @@ function renderTokenCounter(counterEl, used, total) {
   if (!knownTotal) {
     tokensEl.textContent = `${fmt(usedTokens)} / ?`;
     percentEl.textContent = "--%";
-    counterEl.classList.remove("low");
+    counterEl.classList.remove("critical");
     counterEl.title = "Token Usage";
     return;
   }
-  const left = Math.max(
-    0,
-    Math.min(100, Math.round(100 - (usedTokens / total) * 100)),
+  // Rounded once, so the red state starts exactly where the label reads 90.0%.
+  const usedPercent = Number(
+    Math.max(0, Math.min(100, (usedTokens / total) * 100)).toFixed(1),
   );
+  const percentText = `${usedPercent.toFixed(1)}%`;
   tokensEl.textContent = `${fmt(usedTokens)} / ${fmt(total)}`;
-  percentEl.textContent = `${left}%`;
-  counterEl.classList.toggle("low", left < TOKEN_COUNTER_LOW_PERCENT);
-  counterEl.title = `Token Usage: ${left}% of the context window left`;
+  percentEl.textContent = percentText;
+  counterEl.classList.toggle(
+    "critical",
+    usedPercent >= TOKEN_COUNTER_CRITICAL_PERCENT,
+  );
+  counterEl.title = `Token Usage: ${percentText} of the context window used`;
 }
 
 // Generation is "active" while a foreground stream is attached OR a Pi

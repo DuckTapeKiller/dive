@@ -386,7 +386,7 @@ textarea {
   flex-shrink: 0;
 }
 /* Split label: a solid cell with the percentage of the context window
-         left, joined to the token count inside one frame. */
+         used, joined to the token count inside one frame. */
 #tokenCounter {
   align-items: stretch;
   padding: 0;
@@ -404,12 +404,15 @@ textarea {
   color: var(--bg-inverse);
   background: var(--text-inverse);
 }
-#tokenCounter.low {
-  border-color: var(--accent);
+/* From 90% used the cell and frame turn red. A fixed red, not --accent:
+         several palettes have a teal or blue accent, which does not read as
+         a warning. */
+#tokenCounter.critical {
+  border-color: #e53935;
 }
-#tokenCounter.low .token-counter-percent {
+#tokenCounter.critical .token-counter-percent {
   color: #fff;
-  background: var(--accent);
+  background: #e53935;
 }
 .mode-status {
   justify-content: flex-start;
