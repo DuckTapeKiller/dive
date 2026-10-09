@@ -2720,6 +2720,9 @@ async function refreshPiStatus() {
         used: piStatusInfo.contextUsage.used || 0,
         total: piStatusInfo.contextUsage.total || null,
       };
+      // The status usually lands after the reply has settled, so redraw the
+      // token counter or it keeps the pre-reply "0 / ?".
+      if (mode === "pi") updateTokenCounter();
     }
     updateModeStatus();
   } catch (e) {
