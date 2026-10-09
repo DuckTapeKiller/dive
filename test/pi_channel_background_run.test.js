@@ -187,7 +187,10 @@ function makeClient() {
     setDraftAssistant() {},
     refreshSideDownloads() {},
     finalizeDraftAssistant: () => ({ content: "" }),
-    basenameFromPath: (value) => String(value || "").split("/").pop(),
+    basenameFromPath: (value) =>
+      String(value || "")
+        .split("/")
+        .pop(),
     uiRefreshFailed: () => () => {},
     apiUrl: (value) => value,
     renderSessionTranscript() {},
@@ -333,7 +336,10 @@ test("a late notice, status line or widget frame: shown, saved, composer free", 
     assert.deepEqual(client.blocks(), ONE_BLOCK);
     const saved = kinds(client.turn(1));
     assert.deepEqual(saved.slice(0, 2), ["tool_start", "tool_end"]);
-    assert.ok(saved.some((kind) => kind.startsWith(evt.type)), "not saved");
+    assert.ok(
+      saved.some((kind) => kind.startsWith(evt.type)),
+      "not saved",
+    );
   }
 });
 
