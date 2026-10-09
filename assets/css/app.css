@@ -385,6 +385,32 @@ textarea {
   white-space: nowrap;
   flex-shrink: 0;
 }
+/* Split label: a solid cell with the percentage of the context window
+         left, joined to the token count inside one frame. */
+#tokenCounter {
+  align-items: stretch;
+  padding: 0;
+  border: max(var(--border-width), 2px) solid currentColor;
+}
+#tokenCounter .token-counter-tokens {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+}
+.token-counter-percent {
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  color: var(--bg-inverse);
+  background: var(--text-inverse);
+}
+#tokenCounter.low {
+  border-color: var(--accent);
+}
+#tokenCounter.low .token-counter-percent {
+  color: #fff;
+  background: var(--accent);
+}
 .mode-status {
   justify-content: flex-start;
   margin-left: auto;
