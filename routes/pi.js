@@ -1781,17 +1781,19 @@ function createPiDomain(deps) {
 
   function formatPiContextUsage(stats) {
     const cu = stats && stats.contextUsage;
-    if (cu && cu.tokens != null && cu.contextWindow != null) {
-      return {
-        used: cu.tokens,
-        total: cu.contextWindow,
-        percent:
-          cu.percent != null
-            ? cu.percent
-            : Math.round((cu.tokens / cu.contextWindow) * 100),
-      };
-    }
-    return null;
+    const total = Number(cu?.contextWindow);
+    if (!(total > 0)) return null;
+    // After a compaction Pi reports tokens: null until the next reply,
+    // because the last usage it has describes the context before the
+    // compaction. That is unknown, not zero, and not the old figure.
+    if (cu.tokens == null) return { used: null, total, percent: null };
+    const used = Number(cu.tokens);
+    if (!Number.isFinite(used)) return null;
+    return {
+      used,
+      total,
+      percent: cu.percent != null ? Number(cu.percent) : (used / total) * 100,
+    };
   }
 
   function summarizePiStatus(state, stats = null) {
@@ -2132,11 +2134,19 @@ function createPiDomain(deps) {
       };
     } else if (type === "get_session_stats") {
       clean.data = {
+        // tokens and percent are null after a compaction, until the next
+        // reply: unknown, which 0 would misreport.
         contextUsage: data.contextUsage
           ? {
-              tokens: Number(data.contextUsage.tokens) || 0,
+              tokens:
+                data.contextUsage.tokens == null
+                  ? null
+                  : Number(data.contextUsage.tokens) || 0,
               contextWindow: Number(data.contextUsage.contextWindow) || 0,
-              percent: Number(data.contextUsage.percent) || 0,
+              percent:
+                data.contextUsage.percent == null
+                  ? null
+                  : Number(data.contextUsage.percent) || 0,
             }
           : null,
         cost: Number.isFinite(Number(data.cost)) ? Number(data.cost) : null,

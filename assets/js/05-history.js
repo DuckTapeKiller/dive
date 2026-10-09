@@ -75,6 +75,15 @@ function loadConversation(conv) {
   }
   const session = getActiveModeSession(targetMode);
   const runActive = !!session.activeAbortController;
+  const openingAnother = session.convId !== conv.id;
+  // Never send switch_session into a conversation whose Pi process is
+  // mid-generation: reloading the session file resets the agent and
+  // cancels the in-flight turn. The live process already has its
+  // session open — there is nothing to load.
+  const loadsPiSession =
+    conv.mode === "pi" &&
+    !!conv.piSessionFile &&
+    !(runActive && session.convId === conv.id);
   if (runActive && session.convId === conv.id) {
     // Returning to the conversation that is still streaming: the
     // in-memory session is authoritative (it holds the pending user
@@ -116,18 +125,16 @@ function loadConversation(conv) {
     lastSentMessage = null;
     renderSessionTranscript(session);
   }
+  // The token counter must not carry the previous conversation's usage
+  // over. While a run streams elsewhere the counter is that run's.
+  if (openingAnother && !runActive) forgetTokenUsage(targetMode);
+  // Until the session file is in, Pi's status describes what its process
+  // held before: refreshPiStatus waits for it, then asks again below.
+  if (loadsPiSession) piSessionLoadingConvId = conv.id;
   if (typeof updateTokenCounter === "function") updateTokenCounter();
   // The queue strip only ever shows the conversation now on screen.
   if (typeof renderMessageQueue === "function") renderMessageQueue();
-  // Never send switch_session into a conversation whose Pi process is
-  // mid-generation: reloading the session file resets the agent and
-  // cancels the in-flight turn. The live process already has its
-  // session open — there is nothing to load.
-  if (
-    conv.mode === "pi" &&
-    conv.piSessionFile &&
-    !(runActive && session.convId === conv.id)
-  ) {
+  if (loadsPiSession) {
     fetch(apiUrl("/api/pi/load-session"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -135,7 +142,14 @@ function loadConversation(conv) {
         saveConv: conv.id,
         sessionFile: conv.piSessionFile,
       }),
-    }).catch(console.error);
+    })
+      .catch(console.error)
+      .finally(() => {
+        if (piSessionLoadingConvId === conv.id) piSessionLoadingConvId = null;
+        if (mode === "pi" && currentConvId === conv.id) {
+          refreshPiStatus().catch(uiRefreshFailed("Pi status"));
+        }
+      });
   }
   if (mode === "pi") {
     refreshPiStatus().catch(uiRefreshFailed("Pi status"));

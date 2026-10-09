@@ -339,7 +339,7 @@ async function fetchLocalModelList(modeId, { alertOnError = false } = {}) {
     const st = modeId === "lmstudio" ? lmstudioTokenState : llamacppTokenState;
     updateTokenCounter(
       modeId,
-      typeof st.used === "number" ? st.used : 0,
+      st.used,
       modeId === "llamacpp"
         ? llamaCppTokenCounterTotal()
         : localContextCache[modeId] || null,
@@ -1197,13 +1197,7 @@ function renderLlamaCppModelList(status, wrapId, full) {
           mode === "llamacpp" &&
           (m.file === selected || m.file.replace(/\.gguf$/i, "") === stem)
         ) {
-          updateTokenCounter(
-            "llamacpp",
-            typeof llamacppTokenState.used === "number"
-              ? llamacppTokenState.used
-              : 0,
-            next,
-          );
+          updateTokenCounter("llamacpp", llamacppTokenState.used, next);
         }
       });
       ctxSlider.title =
@@ -1407,7 +1401,7 @@ async function refreshLlamaCppManager() {
     // that without waiting for the model list to be refetched.
     updateTokenCounter(
       "llamacpp",
-      typeof llamacppTokenState.used === "number" ? llamacppTokenState.used : 0,
+      llamacppTokenState.used,
       llamaCppTokenCounterTotal(),
     );
   }

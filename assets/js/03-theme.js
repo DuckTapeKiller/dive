@@ -2410,9 +2410,7 @@ function applyPalette(p) {
 }
 
 async function refreshOllamaModelContext() {
-  const used =
-    typeof ollamaTokenState.used === "number" ? ollamaTokenState.used : 0;
-  ollamaTokenState = { used, total: ollamaOptions.numCtx };
+  ollamaTokenState = { ...ollamaTokenState, total: ollamaOptions.numCtx };
   if (mode === "ollama") {
     updateTokenCounter("ollama");
   }
@@ -2648,21 +2646,31 @@ function updateModeStatus() {
 }
 
 async function refreshPiStatus() {
-  if (mode !== "pi" || !currentConvId) {
+  // While the conversation's session file is loading, Pi's status describes
+  // the session it held before; loadConversation asks again once it is in.
+  if (
+    mode !== "pi" ||
+    !currentConvId ||
+    piSessionLoadingConvId === currentConvId
+  ) {
     updateModeStatus();
     return;
   }
+  const convId = currentConvId;
   try {
     const res = await fetch(apiUrl("/api/pi/status"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ saveConv: currentConvId }),
+      body: JSON.stringify({ saveConv: convId }),
     });
     if (!res.ok) {
       updateModeStatus();
       return;
     }
     const payload = await res.json();
+    // A status for a conversation the user has since left must not land on
+    // the one now on screen.
+    if (mode !== "pi" || currentConvId !== convId) return;
     piStatusInfo = payload?.status || piStatusInfo;
 
     // Update sidebar status elements
@@ -2683,7 +2691,9 @@ async function refreshPiStatus() {
         const target = stateLine.querySelector(`[data-pi-state="${key}"]`);
         if (target) target.textContent = value;
       };
-      const contextPercent = Number(piStatusInfo?.contextUsage?.percent);
+      // null after a compaction: unknown until the next reply.
+      const rawPercent = piStatusInfo?.contextUsage?.percent;
+      const contextPercent = rawPercent == null ? NaN : Number(rawPercent);
       setStateValue(
         "runtime",
         piStatusInfo?.isLocal === true ? "LOCAL" : "CLOUD",
@@ -2715,14 +2725,11 @@ async function refreshPiStatus() {
       }
     }
 
-    if (piStatusInfo?.contextUsage) {
-      piTokenState = {
-        used: piStatusInfo.contextUsage.used || 0,
-        total: piStatusInfo.contextUsage.total || null,
-      };
+    if (payload?.status) {
+      piTokenState = piTokenStateFromUsage(payload.status.contextUsage);
       // The status usually lands after the reply has settled, so redraw the
       // token counter or it keeps the pre-reply "0 / ?".
-      if (mode === "pi") updateTokenCounter();
+      updateTokenCounter();
     }
     updateModeStatus();
   } catch (e) {
@@ -2952,17 +2959,12 @@ function clearChat() {
       body: JSON.stringify({ saveConv: currentConvId }),
     }).catch(console.error);
   }
-  if (mode === "ollama") {
-    ollamaTokenState = { used: null, total: null };
-  } else if (mode === "pi") {
-    piTokenState = { used: null, total: null };
+  // An empty conversation uses nothing; the context window is still the
+  // model's, so the counter keeps it (Pi's comes back with its status).
+  forgetTokenUsage(mode);
+  if (mode === "pi") {
     piStatusInfo = null;
-  } else if (mode === "lmstudio") {
-    lmstudioTokenState = { used: null, total: null };
-  } else if (mode === "llamacpp") {
-    llamacppTokenState = { used: null, total: null };
-  } else {
-    cloudTokenState = { used: null, total: null };
+  } else if (mode === "cloud") {
     cloudStreamState = "IDLE";
   }
   // Wipe the saved session for this mode so switching back doesn't restore it
@@ -3808,10 +3810,14 @@ async function runLocalModeConversation(
         finalResponse =
           typeof evt.response === "string" ? evt.response : finalResponse;
         if (evt.usage && typeof evt.usage.total === "number") {
+          // llama.cpp's total is the one the CONTEXT slider and the status
+          // poll show; the server's own figure lags a model reload behind.
           updateTokenCounter(
             modeId,
             evt.usage.total,
-            localContextCache[modeId] || null,
+            modeId === "llamacpp"
+              ? llamaCppTokenCounterTotal()
+              : localContextCache[modeId] || null,
           );
           // Context was unknown at start — fetch it now so the
           // token counter replaces '?' with the real limit.

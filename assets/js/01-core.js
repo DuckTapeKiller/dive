@@ -227,11 +227,17 @@ function nudgeFontScale(modeId, direction) {
   if (mode === modeId) applyFontScale(fontScales[modeId]);
   saveUiSettingsSoon();
 }
+// Token-counter state per mode. `used` is null when nobody has measured it:
+// a conversation opened from history before its next reply, or Pi after a
+// compaction. `total` is null while the context window is unknown.
 let ollamaTokenState = { used: null, total: null };
 let piTokenState = { used: null, total: null };
 let cloudTokenState = { used: null, total: null };
 let lmstudioTokenState = { used: null, total: null };
 let llamacppTokenState = { used: null, total: null };
+// The conversation whose Pi session file is still loading into its process.
+// Until it has loaded, Pi's status describes what the process held before.
+let piSessionLoadingConvId = null;
 // Sampling parameters exposed for local modes (both LM Studio and
 // llama.cpp accept these on /v1/chat/completions).
 const LOCAL_PARAM_DEFS = [

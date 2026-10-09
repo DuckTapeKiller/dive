@@ -1246,44 +1246,31 @@ async function regenerate(wrapEl) {
   }
 }
 
-async function updateTokenCounter(
+// Record usage for a mode and redraw the counter. Leave `used` undefined to
+// only redraw. Passing it (a number, or null for "not measured") replaces
+// that mode's state with { used, total }. Pi's figures arrive through
+// refreshPiStatus, the one place that asks Pi: the server takes one stats
+// request per Pi process at a time and refuses a second with a 409.
+function updateTokenCounter(
   modeOverride = null,
-  used = null,
-  total = null,
+  used = undefined,
+  total = undefined,
 ) {
   const counterEl = document.getElementById("tokenCounter");
   if (!counterEl) return;
 
   const m = modeOverride || mode;
 
-  // If called with explicit data, save it to the right mode's state
-  if (typeof used === "number") {
-    if (m === "ollama") {
-      ollamaTokenState = {
-        used,
-        total: typeof total === "number" ? total : null,
-      };
-    } else if (m === "pi") {
-      piTokenState = {
-        used,
-        total: typeof total === "number" ? total : null,
-      };
-    } else if (m === "cloud") {
-      cloudTokenState = {
-        used,
-        total: typeof total === "number" ? total : null,
-      };
-    } else if (m === "lmstudio") {
-      lmstudioTokenState = {
-        used,
-        total: typeof total === "number" ? total : null,
-      };
-    } else if (m === "llamacpp") {
-      llamacppTokenState = {
-        used,
-        total: typeof total === "number" ? total : null,
-      };
-    }
+  if (used !== undefined) {
+    const next = {
+      used: typeof used === "number" ? used : null,
+      total: typeof total === "number" && total > 0 ? total : null,
+    };
+    if (m === "ollama") ollamaTokenState = next;
+    else if (m === "pi") piTokenState = next;
+    else if (m === "cloud") cloudTokenState = next;
+    else if (m === "lmstudio") lmstudioTokenState = next;
+    else if (m === "llamacpp") llamacppTokenState = next;
   }
 
   // Display only the current mode's state
@@ -1298,46 +1285,55 @@ async function updateTokenCounter(
             ? llamacppTokenState
             : cloudTokenState;
 
-  // Pi with no data yet: try fetching live from the process
-  if (mode === "pi" && state.used == null && currentConvId) {
-    try {
-      const res = await fetch(apiUrl("/api/pi/status"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ saveConv: currentConvId }),
-      });
-      const data = await res.json();
-      piStatusInfo = data?.status || piStatusInfo;
-      updateModeStatus();
-      if (data.status?.contextUsage) {
-        piTokenState = {
-          used: data.status.contextUsage.used || 0,
-          total: data.status.contextUsage.total || null,
-        };
-        renderTokenCounter(counterEl, piTokenState.used, piTokenState.total);
-        return;
-      }
-    } catch (_e) {
-      // Pi status unavailable; fall through to the generic counter below.
-    }
-  }
+  // Nothing measured yet means zero in an empty conversation, but unknown in
+  // one opened from history: its size is known only after its next reply.
+  const shownUsed =
+    state.used != null ? state.used : history.length > 0 ? null : 0;
+  renderTokenCounter(counterEl, shownUsed, state.total);
+}
 
-  renderTokenCounter(counterEl, state.used, state.total);
+// Pi's context usage (from /api/pi/status) as token-counter state. Pi sends
+// used: null after a compaction, until the next reply: unknown, not zero.
+function piTokenStateFromUsage(usage) {
+  return {
+    used: typeof usage?.used === "number" ? usage.used : null,
+    total:
+      typeof usage?.total === "number" && usage.total > 0 ? usage.total : null,
+  };
+}
+
+// A conversation opened from history has not been measured: drop the count
+// the counter holds for the previous one. The window size stays, as it
+// belongs to the model, except in Pi, where each conversation has its own
+// process and model and its status brings both back.
+function forgetTokenUsage(modeId) {
+  if (modeId === "ollama")
+    ollamaTokenState = { ...ollamaTokenState, used: null };
+  else if (modeId === "pi") piTokenState = { used: null, total: null };
+  else if (modeId === "cloud")
+    cloudTokenState = { ...cloudTokenState, used: null };
+  else if (modeId === "lmstudio")
+    lmstudioTokenState = { ...lmstudioTokenState, used: null };
+  else if (modeId === "llamacpp")
+    llamacppTokenState = { ...llamacppTokenState, used: null };
 }
 
 // The counter is a split label: the share of the context window in use, in a
 // solid cell, joined to "used / total". The percentage is worded as Pi's side
 // panel words its CONTEXT figure, so the two always agree. From 90% the cell
-// and frame turn red; while the window size is unknown the cell reads "--%".
+// and frame turn red. It reads "--%" while either figure is unknown, with "?"
+// in place of the unknown one.
 const TOKEN_COUNTER_CRITICAL_PERCENT = 90;
 function renderTokenCounter(counterEl, used, total) {
   const percentEl = counterEl.querySelector(".token-counter-percent");
   const tokensEl = counterEl.querySelector(".token-counter-tokens");
-  const usedTokens = typeof used === "number" && used > 0 ? used : 0;
+  const knownUsed = typeof used === "number" && Number.isFinite(used);
   const knownTotal = typeof total === "number" && total > 0;
-  const fmt = (n) => n.toLocaleString("en-US");
-  if (!knownTotal) {
-    tokensEl.textContent = `${fmt(usedTokens)} / ?`;
+  const fmt = (n) => Math.max(0, Math.round(n)).toLocaleString("en-US");
+  const usedText = knownUsed ? fmt(used) : "?";
+  const totalText = knownTotal ? fmt(total) : "?";
+  tokensEl.textContent = `${usedText} / ${totalText}`;
+  if (!knownUsed || !knownTotal) {
     percentEl.textContent = "--%";
     counterEl.classList.remove("critical");
     counterEl.title = "Token Usage";
@@ -1345,10 +1341,9 @@ function renderTokenCounter(counterEl, used, total) {
   }
   // Rounded once, so the red state starts exactly where the label reads 90.0%.
   const usedPercent = Number(
-    Math.max(0, Math.min(100, (usedTokens / total) * 100)).toFixed(1),
+    Math.max(0, Math.min(100, (used / total) * 100)).toFixed(1),
   );
   const percentText = `${usedPercent.toFixed(1)}%`;
-  tokensEl.textContent = `${fmt(usedTokens)} / ${fmt(total)}`;
   percentEl.textContent = percentText;
   counterEl.classList.toggle(
     "critical",

@@ -197,6 +197,8 @@ async function runPiLocalCommand(rawText) {
         piCurrentModelValue = piModelValue(target);
         if (mode === "pi") populateTopbarModelSelect();
         updateModeStatus();
+        // A new model brings its own context window.
+        refreshPiStatus().catch(uiRefreshFailed("Pi status"));
         record(`Model set to \`${piCurrentModelValue}\`.`);
       }
       return true;
@@ -219,6 +221,9 @@ async function runPiLocalCommand(rawText) {
     }
     if (name === "compact") {
       const r = await callPiCommand({ type: "compact" });
+      // Pi cannot measure the compacted context until the next reply; the
+      // status says so, rather than leaving the pre-compaction figure up.
+      refreshPiStatus().catch(uiRefreshFailed("Pi status"));
       const data = r?.result?.data || {};
       record(
         r?.result?.success === false
