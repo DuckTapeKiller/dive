@@ -38,6 +38,7 @@ https://github.com/user-attachments/assets/ee4bdb68-7e68-4ccd-9783-31355823e891
 - **Chat**: streaming responses; reasoning models get a collapsible **Thinking** box; agent runs show a **step timeline**, **live tool-progress panels** (web searches, subagent fleets update in place, like a terminal), an **Execution Trace**, retrieved **Passages**, and clickable **source pills** for every web source a skill used.
 - **History keeps everything**: interrupted and failed turns are preserved (with their thinking and traces), checkpointed to disk continuously, and survive clearing the chat or restarting the app. All panels are resizable.
 - **Appearance**: eight palettes in light and dark, all following the same low-contrast surface logic (near-shade backgrounds, one text color — easy on the eyes). Each mode has its own default palette and font, changeable per mode.
+- **Grammar and spelling**: point Dive at your own [LanguageTool](https://languagetool.org/dev) server in Settings → Main and the message box, notes, saved prompts, system prompts and lessons are checked as you type. Click an underlined word for suggestions; each paragraph is checked in its own language, and Markdown, code and links are skipped.
 
 ---
 

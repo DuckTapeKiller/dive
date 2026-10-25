@@ -171,6 +171,16 @@ Cloud settings are returned redacted — keys are never sent back to the client.
 | GET      | `/api/notes/list`                         | List notes       |
 | GET      | `/api/media/downloads`                    | Downloaded media |
 
+## LanguageTool
+
+| Method   | Path                               | Purpose                                      |
+| -------- | ---------------------------------- | -------------------------------------------- |
+| GET/POST | `/api/languagetool/settings`       | Server URL, language, on/off                 |
+| GET      | `/api/languagetool/status`         | Whether the LanguageTool server answers      |
+| POST     | `/api/languagetool/check`          | Check `{ text }`; forwarded to the server    |
+| POST     | `/api/languagetool/dictionary`     | Add `{ word }` to the personal dictionary    |
+| POST     | `/api/languagetool/disabled-rules` | Add `{ ruleId }` to the rules never reported |
+
 ## System
 
 | Method | Path                  | Purpose                 |

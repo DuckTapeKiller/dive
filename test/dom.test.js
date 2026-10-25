@@ -250,6 +250,18 @@ function createFetchStub() {
       return jsonResponse({ models: [] });
     }
     if (path === "/api/version") return jsonResponse({ version: "1.0.5" });
+    if (path === "/api/languagetool/settings") {
+      return jsonResponse({
+        settings: {
+          enabled: false,
+          serverUrl: "http://localhost:8010",
+          language: "auto",
+          preferredVariants: "en-GB,es-ES",
+          dictionary: [],
+          disabledRules: [],
+        },
+      });
+    }
     if (path === "/api/media/downloads") return jsonResponse({ jobs: [] });
     if (
       path === "/api/security-event" ||
@@ -2277,4 +2289,115 @@ test("no assistant bubble exists until the model produces text", async () => {
     w.document.querySelector("#chat .msg.assistant").textContent,
     /Here is the answer/,
   );
+});
+
+test("LanguageTool underlines a flagged word and applies the picked suggestion", async () => {
+  const baseFetch = createFetchStub();
+  const checked = [];
+  const savedSpelling = [];
+  const fetchImpl = async (url, options = {}) => {
+    const path = String(url).replace("http://localhost", "");
+    if (path === "/api/languagetool/settings" && options.method !== "POST") {
+      return jsonResponse({
+        settings: {
+          enabled: true,
+          serverUrl: "http://localhost:8010",
+          language: "auto",
+          preferredVariants: "en-GB,es-ES",
+          dictionary: [],
+          disabledRules: [],
+        },
+      });
+    }
+    if (path === "/api/languagetool/settings" && options.method === "POST") {
+      const { settings } = JSON.parse(options.body);
+      savedSpelling.push(settings.spelling);
+      return jsonResponse({
+        settings: {
+          enabled: true,
+          serverUrl: "http://localhost:8010",
+          language: "auto",
+          preferredVariants: "en-GB,es-ES",
+          spelling: settings.spelling,
+          dictionary: [],
+          disabledRules: [],
+        },
+      });
+    }
+    if (path === "/api/languagetool/check") {
+      const { text } = JSON.parse(options.body);
+      checked.push(text);
+      const offset = text.indexOf("pelicula");
+      return jsonResponse({
+        language: { code: "es", name: "Spanish" },
+        matches:
+          offset < 0
+            ? []
+            : [
+                {
+                  offset,
+                  length: 8,
+                  text: "pelicula",
+                  message: "Se ha encontrado un posible error ortográfico.",
+                  shortMessage: "Error de ortografía",
+                  replacements: ["película", "películas"],
+                  ruleId: "MORFOLOGIK_RULE_ES",
+                  ruleDescription: "Posible error de ortografía",
+                  issueType: "misspelling",
+                  category: "Posible error ortográfico",
+                },
+              ],
+      });
+    }
+    return baseFetch(url, options);
+  };
+  const { dom, errors } = createDom(fetchImpl);
+  const { window } = dom;
+  const { document } = window;
+  // jsdom lays nothing out, so every element reports no boxes; the checker
+  // skips boxes that are not shown.
+  window.HTMLTextAreaElement.prototype.getClientRects = () => [{}];
+  await waitFor(
+    () => document.getElementById("languageToolEnabledInput").checked,
+  );
+
+  const input = document.getElementById("input");
+  assert.equal(input.getAttribute("spellcheck"), "false");
+  input.value = "Vimos una pelicula ayer.";
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await waitFor(() => input.nextElementSibling.querySelector(".lt-mark"), 3000);
+  const mark = input.nextElementSibling.querySelector(".lt-mark");
+  assert.ok(input.nextElementSibling.classList.contains("lt-mirror"));
+  assert.equal(mark.textContent, "pelicula");
+  assert.ok(mark.classList.contains("lt-mark-spelling"));
+  assert.ok(checked.includes("Vimos una pelicula ayer."));
+
+  input.setSelectionRange(13, 13);
+  input.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  const popup = document.querySelector(".lt-popup");
+  assert.ok(popup, "clicking the underlined word opens the suggestions");
+  assert.match(popup.textContent, /ERROR DE ORTOGRAFÍA/);
+  assert.match(popup.textContent, /ADD TO DICTIONARY/);
+  const pick = [...popup.querySelectorAll(".lt-popup-replacement")].find(
+    (b) => b.textContent === "película",
+  );
+  pick.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  assert.equal(input.value, "Vimos una película ayer.");
+  assert.equal(document.querySelector(".lt-popup"), null);
+  assert.equal(input.nextElementSibling.querySelector(".lt-mark"), null);
+
+  // Handing spelling to the system spellchecker turns it back on.
+  const spelling = document.getElementById("languageToolSpellingSelect");
+  assert.equal(spelling.value, "languagetool");
+  spelling.value = "system";
+  spelling.dispatchEvent(new window.Event("change", { bubbles: true }));
+  await waitFor(() => input.getAttribute("spellcheck") === null);
+  assert.deepStrictEqual(savedSpelling, ["system"]);
+
+  // Assigning .value, as Dive does after sending, drops stale underlines.
+  input.value = "Otra pelicula.";
+  await waitFor(() => input.nextElementSibling.querySelector(".lt-mark"), 3000);
+  input.value = "";
+  assert.equal(input.nextElementSibling.querySelector(".lt-mark"), null);
+  assert.deepStrictEqual(errors, []);
 });

@@ -39,6 +39,7 @@ const {
 ├── conversations.json        conversation index
 ├── deleted-tombstones.json   deletions, 24-hour TTL
 ├── ui-settings.json          interface preferences
+├── languagetool.json         LanguageTool server, dictionary, disabled rules
 ├── ollama-settings.json      Ollama base URL
 ├── local-model-settings.json llama.cpp and LM Studio
 ├── cloud-settings.json       providers, keys, base URLs

@@ -2564,6 +2564,10 @@ const conversationsDomain = require("./routes/conversations")({
 });
 const promptsDomain = require("./routes/prompts")({ DATA_DIR, parseJsonBody });
 const notesDomain = require("./routes/notes")({ DATA_DIR, parseJsonBody });
+const languageToolDomain = require("./routes/languagetool")({
+  DATA_DIR,
+  parseJsonBody,
+});
 const settingsDomain = require("./routes/settings")({
   parseJsonBody,
   loadUiSettingsWithMeta,
@@ -2889,6 +2893,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (await notesDomain.handleRequest({ req, urlPath, requestUrl, send })) {
+    return;
+  }
+  if (await languageToolDomain.handleRequest({ req, urlPath, send })) {
     return;
   }
 

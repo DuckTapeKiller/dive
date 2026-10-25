@@ -4006,6 +4006,91 @@
                 >
               </div>
             </div>
+            <div id="languageToolGroup" class="setting-group">
+              <label>LANGUAGETOOL</label>
+              <div class="setting-help">
+                Grammar and spelling checks in the message box, notes, saved
+                prompts, system prompts and lessons, done by your own
+                LanguageTool server. Click an underlined word for suggestions.
+              </div>
+              <div class="setting-row-inline">
+                <label style="font-size: calc(10px * var(--font-scale, 1))">
+                  <input id="languageToolEnabledInput" type="checkbox" />
+                  CHECK TEXT AS I TYPE
+                </label>
+              </div>
+              <label>SERVER URL</label>
+              <input
+                id="languageToolServerUrl"
+                type="text"
+                spellcheck="false"
+                placeholder="http://localhost:8010"
+              />
+              <label>LANGUAGE</label>
+              <select id="languageToolLanguageSelect">
+                <option value="auto">Auto-detect</option>
+                <option value="en-GB">English (British)</option>
+                <option value="en-US">English (American)</option>
+                <option value="es">Spanish</option>
+                <option value="ca-ES">Catalan</option>
+                <option value="fr">French</option>
+                <option value="de-DE">German</option>
+                <option value="it">Italian</option>
+                <option value="pt-PT">Portuguese (Portugal)</option>
+                <option value="pt-BR">Portuguese (Brazil)</option>
+                <option value="nl">Dutch</option>
+              </select>
+              <label>AUTO-DETECT VARIANTS</label>
+              <input
+                id="languageToolVariantsInput"
+                type="text"
+                spellcheck="false"
+                placeholder="en-GB,es-ES"
+              />
+              <div class="setting-help">
+                Which variant auto-detect picks for a language it recognises,
+                comma-separated (en-GB, en-US, es-ES, pt-PT…).
+              </div>
+              <label>SPELLING CHECKED BY</label>
+              <select id="languageToolSpellingSelect">
+                <option value="languagetool">LanguageTool</option>
+                <option value="system">System spellchecker</option>
+                <option value="both">Both</option>
+              </select>
+              <div class="setting-help">
+                The system spellchecker is the one macOS uses everywhere, with
+                the words you have taught it. With LanguageTool it is off in the
+                boxes LanguageTool checks; with the system spellchecker,
+                LanguageTool keeps grammar and style; with both, a misspelt word
+                can be underlined twice.
+              </div>
+              <button
+                id="languageToolTestBtn"
+                type="button"
+                class="settings-action-btn"
+              >
+                Test connection
+              </button>
+              <div id="languageToolStatus" class="setting-help"></div>
+              <label>PERSONAL DICTIONARY</label>
+              <textarea
+                id="languageToolDictionary"
+                rows="4"
+                spellcheck="false"
+                style="width: 100%; resize: vertical"
+              ></textarea>
+              <label>DISABLED RULES</label>
+              <textarea
+                id="languageToolDisabledRules"
+                rows="3"
+                spellcheck="false"
+                style="width: 100%; resize: vertical"
+              ></textarea>
+              <div class="setting-help">
+                One word or rule ID per line. ADD TO DICTIONARY and DISABLE RULE
+                in the suggestions add to these lists; delete a line to undo.
+              </div>
+            </div>
             <div id="diagnosticsGroup" class="setting-group">
               <label>DIAGNOSTICS</label>
               <div class="setting-help">
@@ -4181,5 +4266,6 @@
     <script src="/assets/js/06-pi.js"></script>
     <script src="/assets/js/07-chat.js"></script>
     <script src="/assets/js/08-browser.js"></script>
+    <script src="/assets/js/09-languagetool.js"></script>
   </body>
 </html>

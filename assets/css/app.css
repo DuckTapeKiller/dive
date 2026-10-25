@@ -4271,3 +4271,102 @@ a:hover {
   border-color: #ff4444;
   color: #fff;
 }
+
+/* LanguageTool: a transparent copy of a textarea's text laid over it, with
+         the flagged ranges underlined (see assets/js/09-languagetool.js). */
+.lt-mirror {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  background: transparent;
+  border-style: solid;
+  border-color: transparent;
+}
+.lt-mirror[hidden] {
+  display: none;
+}
+.lt-mark {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1.5px;
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+.lt-mark-spelling {
+  text-decoration-color: #e5484d;
+}
+.lt-mark-grammar {
+  text-decoration-color: #0091ff;
+}
+.lt-mark-style {
+  text-decoration-color: #8e4ec6;
+}
+.lt-popup {
+  position: fixed;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  color: var(--text-normal);
+  border: var(--border-width) solid var(--border-color);
+  box-shadow:
+    var(--shadow-offset) var(--shadow-offset) 0 0 var(--border-color),
+    0 6px 24px rgba(0, 0, 0, 0.28);
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.45;
+}
+.lt-popup-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.lt-popup-lang {
+  padding: 1px 5px;
+  background: var(--flat-fill-strong);
+}
+.lt-popup-replacements,
+.lt-popup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lt-popup button {
+  padding: 4px 8px;
+  border: var(--border-width) solid var(--text-normal);
+  font-family: inherit;
+  cursor: pointer;
+}
+.lt-popup-replacement {
+  background: var(--text-normal);
+  color: var(--bg-primary);
+  font-size: calc(12px * var(--font-scale, 1));
+  font-weight: 700;
+}
+.lt-popup-replacement:hover {
+  opacity: 0.85;
+}
+.lt-popup-action {
+  background: var(--flat-fill);
+  color: var(--text-normal);
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.lt-popup-action:hover {
+  background: var(--flat-fill-strong);
+}
+.lt-status-error {
+  color: var(--accent);
+  opacity: 1;
+}

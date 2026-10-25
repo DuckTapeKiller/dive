@@ -1823,6 +1823,7 @@ function organizeSettingsTabs() {
     "cloudSettingsGroup",
     "lmStudioSettingsGroup",
     "llamaCppSettingsGroup",
+    "languageToolGroup",
   ]);
   appendSettingsGroups("settingsTabDatabase", ["databaseSettingsGroup"]);
   // Lessons are standing instructions appended to the system prompt, so they
