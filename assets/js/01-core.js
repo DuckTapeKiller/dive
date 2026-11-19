@@ -334,6 +334,22 @@ function defaultLocalParams(modeId) {
   Object.assign(p, LOCAL_PARAM_MODE_DEFAULTS[modeId] || {});
   return p;
 }
+// The entry in a local server's model list that names `selected`, or "" when
+// none does. A model Dive starts itself is stored as its file stem
+// ("gemma-4-E2B-it-Q8_0") — the name a router advertises — while a plain
+// llama-server lists the file ("gemma-4-E2B-it-Q8_0.gguf"). Matched exactly
+// first, then with or without the extension, so the dropdowns show the loaded
+// model instead of a blank.
+function localModelListEntry(list, selected) {
+  const name = String(selected || "");
+  if (!name || !Array.isArray(list)) return "";
+  if (list.includes(name)) return name;
+  const stem = (s) =>
+    String(s)
+      .replace(/\.gguf$/i, "")
+      .toLowerCase();
+  return list.find((m) => stem(m) === stem(name)) || "";
+}
 // Per-mode config for local OpenAI-compatible modes.
 const localModelConfig = {
   lmstudio: {
@@ -348,7 +364,8 @@ const localModelConfig = {
     singleSystemMessage: {},
   },
   llamacpp: {
-    baseUrl: "http://127.0.0.1:8080/v1",
+    // Where Dive starts its own llama-server; 8080 is Dive itself.
+    baseUrl: "http://127.0.0.1:8130/v1",
     model: "",
     params: defaultLocalParams("llamacpp"),
     nativeTools: true,
@@ -750,10 +767,6 @@ const DEFAULT_BUILTIN_SKILLS_CONFIG = Object.freeze({
   run_python: true,
   macos_control: false,
   task_plan: true,
-  // Mirrors defaultSkillsConfig() in server.js: reading a page is on, acting
-  // on one is off until the user switches it on.
-  browse_read: true,
-  browse_act: false,
   inputSkills: Object.freeze({}),
 });
 const SKILL_MODE_IDS = DIVE_SKILL_MODE_IDS;
@@ -867,14 +880,6 @@ const ALL_BUILTIN_SKILLS_INFO = {
   web_scraper: {
     desc: "Reads and extracts text content from a given URL, using provenance-labelled Wayback Machine or archive.ph snapshots when the live page is unavailable.",
     example: '{"url": "https://example.com"}',
-  },
-  browse_read: {
-    desc: "Opens a page in a real browser and reads it, running the page's JavaScript, so it works on sites that only render in a browser. Lists links and fields, takes screenshots and keeps a session's cookies. You can watch it in the agent browser panel.",
-    example: '{"action": "open", "url": "https://example.com"}',
-  },
-  browse_act: {
-    desc: "Clicks, types, presses keys, selects options and scrolls on the page browse_read opened. Every action asks for your confirmation first. Off by default.",
-    example: '{"action": "click", "target": "Accept"}',
   },
   fact_check: {
     desc: "Fact-checks a specific claim against multiple sources.",

@@ -7,4 +7,6 @@ assets/sqlite-tools
 assets/sqlite-vec
 package-lock.json
 *.min.js
+# Generated from the Global Book Search plugin (scripts/build-book-sources.mjs).
+skills/books/global-book-search.js
 .husky/_

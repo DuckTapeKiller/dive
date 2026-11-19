@@ -1,3 +1,13 @@
+// `Dive --render-page` is the server asking for one web page to be rendered
+// (see render-page.js). That process must hand over before ANYTHING below
+// runs: no single-instance lock (it would quit, or wake the open window), no
+// LaunchAgent (it would be rewritten and the live server restarted), no
+// window. It is a separate, short-lived process and nothing else.
+if (process.argv.includes("--render-page")) {
+  require("./render-page.js");
+  return;
+}
+
 const http = require("http");
 const fs = require("fs");
 const os = require("os");
@@ -268,6 +278,27 @@ function syncRuntimeFiles(runtimeDir) {
   });
 }
 
+// How the server can start this app to render a page (web_scraper's fallback
+// for pages that need JavaScript; see render-page.js). The server itself runs
+// under plain Node — the LaunchAgent's, or this binary as Node — so it is told
+// which binary and arguments reach render mode: the packaged app takes the
+// flag alone, a development run also needs the app folder.
+function renderEnv() {
+  return {
+    DIVE_ELECTRON_BINARY: process.execPath,
+    DIVE_RENDER_ARGS: JSON.stringify(
+      app.isPackaged ? ["--render-page"] : [app.getAppPath(), "--render-page"],
+    ),
+  };
+}
+
+function xmlText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
   const runtimeServerPath = path.join(runtimeDir, "server.js");
   const outLog = path.join(logsDir, "launchagent.out.log");
@@ -289,6 +320,12 @@ function buildLaunchPlist({ nodeBin, runtimeDir, logsDir, serverPort }) {
   <dict>
     <key>PORT</key>
     <string>${serverPort}</string>
+${Object.entries(renderEnv())
+  .map(
+    ([key, value]) =>
+      `    <key>${key}</key>\n    <string>${xmlText(value)}</string>`,
+  )
+  .join("\n")}
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -371,6 +408,7 @@ function startLocalServerProcess(serverPort) {
 
   const env = {
     ...process.env,
+    ...renderEnv(),
     PORT: String(serverPort),
     ELECTRON_RUN_AS_NODE: "1",
   };
@@ -414,6 +452,7 @@ async function bootLocalServer() {
   stopLocalServerProcess();
   localPort = configuredPort;
   process.env.PORT = String(localPort);
+  Object.assign(process.env, renderEnv());
   require(path.join(app.getAppPath(), "server.js"));
   await waitForServer(localPort);
 }

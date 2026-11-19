@@ -267,7 +267,26 @@ function sanitizeTraceEventForStorage(event) {
   return redacted;
 }
 
+// Did a tool call fail? Tools report failure in their text, as "Error: …" or,
+// far more often, "<Tool name> Error: …" ("Code Search Error:", "HTTP Request
+// Error:"). Only the bare form used to count, so most failed calls were drawn
+// with a tick in the steps list while the model was reading an error.
+//
+// A call the user refused, or whose approval prompt expired, did not run
+// either, and is drawn as failed for the same reason.
+function isToolErrorResult(result) {
+  const text = String(result || "").trimStart();
+  return (
+    /^(?:[A-Za-z]+(?:[ -][A-Za-z]+){0,3} )?Error(?: \([^)]{1,40}\))?:/i.test(
+      text,
+    ) ||
+    /^User denied permission to execute /.test(text) ||
+    /^The confirmation prompt for \S+ expired /.test(text)
+  );
+}
+
 module.exports = {
+  isToolErrorResult,
   serializeLibraryResults,
   sanitizeStoredTraceLines,
   sanitizeTraceEventForStorage,

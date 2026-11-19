@@ -70,8 +70,36 @@ function isNativeToolsRejection(error) {
   return /jinja|\btools?\b/i.test(String(error?.message || ""));
 }
 
+// The readable part of a local server's error body.
+//
+// llama.cpp answers {"error":{"code":400,"message":"request (4282 tokens)
+// exceeds the available context size (4096 tokens), try increasing it",…}},
+// LM Studio and the OpenAI shape {"error":{"message":…}} or {"error":"…"}.
+// The chat showed that whole body, braces and escapes included; the message is
+// what the user needs. Anything that is not such JSON comes back as it was.
+function localErrorText(raw) {
+  const text = String(raw || "").trim();
+  try {
+    const body = JSON.parse(text);
+    const err = body?.error;
+    const message =
+      typeof err === "string"
+        ? err
+        : typeof err?.message === "string"
+          ? err.message
+          : typeof body?.message === "string"
+            ? body.message
+            : "";
+    if (message.trim()) return message.trim();
+  } catch {
+    /* not JSON */
+  }
+  return text;
+}
+
 module.exports = {
   collapseLeadingSystemMessages,
   wantsSingleSystemMessage,
   isNativeToolsRejection,
+  localErrorText,
 };

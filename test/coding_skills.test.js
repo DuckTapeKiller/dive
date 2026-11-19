@@ -31,7 +31,31 @@ test("resolveAllowedPath accepts the workspace and rejects outside paths", () =>
   assert.match(outside.error, /outside the allowed directories/);
 });
 
-test("resolveAllowedPath rejects relative paths and missing paths", () => {
+test("resolveAllowedPath reads relative paths from the workspace", () => {
+  // The same place file_operations writes, so "demo" and "./" mean what the
+  // model just saw there.
+  fs.mkdirSync(path.join(workspace, "demo"), { recursive: true });
+  assert.strictEqual(
+    resolveAllowedPath("demo").target,
+    fs.realpathSync(path.join(workspace, "demo")),
+  );
+  assert.strictEqual(
+    resolveAllowedPath("./").target,
+    fs.realpathSync(workspace),
+  );
+  assert.strictEqual(resolveAllowedPath("").target, fs.realpathSync(workspace));
+  // Climbing out is still refused by the allowed-root check.
+  assert.match(
+    resolveAllowedPath("../../../../etc").error,
+    /outside the allowed directories|does not exist/,
+  );
+  assert.match(
+    resolveAllowedPath("..").error,
+    /outside the allowed directories/,
+  );
+});
+
+test("resolveAllowedPath rejects missing paths", () => {
   assert.ok(resolveAllowedPath("relative/path").error);
   assert.ok(
     resolveAllowedPath(path.join(workspace, "definitely-not-here-12345")).error,

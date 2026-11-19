@@ -367,8 +367,20 @@ function apiUrl(path) {
 async function readJsonResponse(res, contextLabel) {
   const raw = await res.text();
   if (!res.ok) {
-    const details =
+    // Every Dive route answers a failure with {"error": "…"}. Show that text,
+    // not the JSON around it: the raw body put braces, quotes and literal
+    // "\n" escapes in front of the user, as in a failed llama-server start.
+    let details =
       raw && raw.trim() ? raw.trim().slice(0, 500) : "empty response body";
+    try {
+      const body = JSON.parse(raw);
+      const text = body && (body.error || body.message);
+      if (typeof text === "string" && text.trim()) {
+        details = text.trim().slice(0, 1500);
+      }
+    } catch (_e) {
+      /* not JSON: the raw text is the best there is */
+    }
     throw new Error(`${contextLabel} failed (${res.status}): ${details}`);
   }
   if (!raw || !raw.trim()) {

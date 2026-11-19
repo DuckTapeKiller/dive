@@ -744,3 +744,36 @@ test("genuine error payloads are still refused", () => {
     );
   }
 });
+
+// ---- Encyclopedia anchors ----
+
+test("an encyclopedia article unrelated to the topic is not kept as a source", () => {
+  const { parseEncyclopediaEvidence } = require("../skills/research.js");
+  const body =
+    "Eugène Henri Paul Gauguin fue un pintor francés, una de las grandes figuras del postimpresionismo. ".repeat(
+      4,
+    );
+  const gauguin = `## Wikipedia (es): Paul Gauguin\n\n${body}\n\n<!-- https://es.wikipedia.org/wiki/Paul_Gauguin -->`;
+  assert.strictEqual(
+    parseEncyclopediaEvidence(
+      gauguin,
+      "wikipedia",
+      "Cien años de soledad English translator, setting of Cien años de soledad",
+    ),
+    null,
+  );
+  // The right article, by its title…
+  const novel = `## Wikipedia: Cien años de soledad\n\n${"Cien años de soledad es una novela de Gabriel García Márquez publicada en 1967. ".repeat(4)}\n\n<!-- https://es.wikipedia.org/wiki/Cien_a%C3%B1os_de_soledad -->`;
+  assert.ok(
+    parseEncyclopediaEvidence(
+      novel,
+      "wikipedia",
+      "Cien años de soledad English translator",
+    ),
+  );
+  // …or under another name, when its opening names the topic.
+  const louis = `## Wikipedia: Louis XIV\n\n${"Louis XIV, known as the Sun King, had the longest reign of any monarch of a sovereign country in history. ".repeat(3)}\n\n<!-- https://en.wikipedia.org/wiki/Louis_XIV -->`;
+  assert.ok(
+    parseEncyclopediaEvidence(louis, "wikipedia", "the Sun King's reign"),
+  );
+});

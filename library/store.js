@@ -623,11 +623,17 @@ function normalizeConfig(rawConfig) {
     typeof rawConfig === "object" &&
     Object.prototype.hasOwnProperty.call(rawConfig, "chatModes");
   const merged = mergeConfig(defaults, rawConfig || {});
-  const databasePath = expandHome(
-    typeof merged.databasePath === "string"
-      ? merged.databasePath
-      : defaults.databasePath,
-  );
+  // The shipped default ("~/dive/library.sqlite") means "the library in Dive's
+  // data folder", so it follows DIVE_DATA_DIR. Read literally, every instance
+  // started with its own data folder — a test server, a second copy of Dive —
+  // opened the user's live library instead of its own, and could index into
+  // it. A path the user chose themselves is kept as it is.
+  const chosenDatabasePath =
+    typeof merged.databasePath === "string" ? merged.databasePath.trim() : "";
+  const databasePath =
+    !chosenDatabasePath || chosenDatabasePath === defaults.databasePath
+      ? path.join(DATA_DIR, "library.sqlite")
+      : expandHome(chosenDatabasePath);
   const rawSearchMaxLimit = Number(merged.search?.maxLimit);
   const usesLegacySearchMaxLimit =
     rawSearchMaxLimit === 20 && Number(defaults.search?.maxLimit) === 50;

@@ -510,21 +510,6 @@
               <line x1="16" x2="16" y1="18" y2="22" />
             </svg>
           </button>
-          <button class="side-box side-nav-btn" id="sideBrowserBtn">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-              <path d="M2 12h20" />
-            </svg>
-          </button>
           <button class="side-box side-nav-btn" id="sideNotesBtn">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -639,25 +624,6 @@
             <line x1="14" x2="14" y1="2" y2="6" />
             <line x1="8" x2="8" y1="10" y2="14" />
             <line x1="16" x2="16" y1="18" y2="22" />
-          </svg>
-        </button>
-        <button
-          id="railBrowserBtn"
-          title="Agent browser"
-          aria-label="Agent browser"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-            <path d="M2 12h20" />
           </svg>
         </button>
         <button id="railNotesBtn" title="Notes" aria-label="Notes">
@@ -867,174 +833,6 @@
             placeholder="Note title"
             autocomplete="off"
           />
-        </div>
-      </div>
-
-      <div id="browserResizer" style="display: none"></div>
-      <!-- What the agent's browser is looking at. Read-only by design: the
-           panel can watch and it can close a session, but it cannot navigate.
-           Driving the browser belongs to browse_read/browse_act, where the
-           confirmation gate is — an endpoint here that could navigate would be
-           a way around that gate. -->
-      <div id="browserPanel">
-        <div id="browserHeader">
-          <span>AGENT BROWSER</span>
-          <div id="browserActions">
-            <button
-              id="browserExtBtn"
-              type="button"
-              title="Manage extensions"
-              aria-pressed="false"
-            >
-              EXTENSIONS
-            </button>
-            <button id="browserRefreshBtn" title="Refresh now">REFRESH</button>
-            <button id="browserCloseAllBtn" title="End every session">
-              END ALL
-            </button>
-            <button id="closeBrowserBtn">✕</button>
-          </div>
-        </div>
-        <div id="browserBody">
-          <!-- The address bar. The agent drives this browser through
-               browse_read/browse_act; this is how YOU drive it — to get past a
-               cookie wall, sign in, or just look at something yourself. -->
-          <div id="browserNav">
-            <button
-              id="browserBackBtn"
-              title="Back"
-              aria-label="Back"
-              type="button"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-chevron-left"
-                aria-hidden="true"
-              >
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-            </button>
-            <button
-              id="browserForwardBtn"
-              title="Forward"
-              aria-label="Forward"
-              type="button"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-chevron-right"
-                aria-hidden="true"
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
-            <button
-              id="browserReloadBtn"
-              title="Reload"
-              aria-label="Reload"
-              type="button"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-rotate-cw"
-                aria-hidden="true"
-              >
-                <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-              </svg>
-            </button>
-            <button
-              id="browserBackToPageBtn"
-              type="button"
-              title="Back to the page"
-              hidden
-            >
-              BACK TO PAGE
-            </button>
-            <!-- While the element picker runs it consumes every click, links
-                 included, so without this there is no way out of it. -->
-            <button
-              id="browserStopPickerBtn"
-              type="button"
-              title="Cancel the element picker"
-              hidden
-            >
-              STOP PICKER
-            </button>
-            <input
-              id="browserAddress"
-              type="text"
-              placeholder="Type a URL and press Enter"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <button id="browserGoBtn" title="Go" type="button">GO</button>
-          </div>
-          <!-- Extensions run third-party code inside the browser the agent
-               drives, so installing is always an explicit act here and never
-               something the model can ask for. -->
-          <div id="browserExtPanel" hidden>
-            <div class="setting-section">
-              <h3 class="setting-title">BROWSER EXTENSIONS</h3>
-              <div class="setting-help" style="margin-bottom: 8px">
-                Extensions run inside the browser the agent drives. Enabling one
-                gives that browser a profile on disk and takes effect the next
-                time it launches. Chromium 153 has no Manifest V2, so uBlock
-                Origin classic cannot run here — Lite is the Manifest V3 build.
-              </div>
-              <div id="browserExtList"></div>
-            </div>
-          </div>
-          <label id="browserTakeoverRow">
-            <input
-              type="checkbox"
-              id="browserTakeover"
-              class="brutalist-toggle"
-              checked
-            />
-            <span>TAKE OVER — click and type into the page</span>
-          </label>
-          <div id="browserStatus"></div>
-          <div id="browserTabs"></div>
-          <div id="browserViewport">
-            <img
-              id="browserView"
-              alt="The page the agent is viewing"
-              draggable="false"
-            />
-            <!-- The extension's own panel, floating OVER the page the way a
-                 real browser popup does. It must not replace the page: the
-                 whole point of "block an element" is picking one off the page
-                 you are looking at. -->
-            <div id="browserUiLayer" hidden>
-              <img id="browserUiView" alt="Extension panel" draggable="false" />
-              <button id="browserUiCloseBtn" type="button" title="Close">
-                ✕
-              </button>
-            </div>
-            <div id="browserEmpty">
-              The agent has no page open. Ask it to browse something.
-            </div>
-          </div>
-          <div id="browserUrl"></div>
         </div>
       </div>
 
@@ -1605,17 +1403,19 @@
             <input
               id="llamaCppExtraArgs"
               type="text"
-              placeholder="e.g. --no-mmap --seed 42"
+              placeholder="e.g. --seed 42 --threads-batch 8"
             />
             <div class="setting-help">
               Extra command-line flags appended to every llama-server launch,
-              for options not covered above. See `llama-server --help`.
+              for options not covered above. See `llama-server --help`: an
+              option your llama-server does not list stops the model starting
+              (llama.cpp 0.8.0 removed `--mlock` and `--no-mmap`, for example).
             </div>
             <label>SERVER URL (ADVANCED)</label>
             <input
               id="llamaCppBaseUrl"
               type="text"
-              placeholder="http://127.0.0.1:8080/v1"
+              placeholder="http://127.0.0.1:8130/v1"
             />
             <div class="setting-help">
               Managed automatically when you LOAD a model. Only change this if
@@ -3903,7 +3703,7 @@
             <textarea
               id="mcpConfigArea"
               rows="12"
-              placeholder='{\n  "mcpServers": {\n    "sqlite": {\n      "command": "uvx",\n      "args": ["mcp-server-sqlite", "--db-path", "~/test.db"]\n    }\n  }\n}'
+              placeholder='{&#10;  "mcpServers": {&#10;    "sqlite": {&#10;      "command": "uvx",&#10;      "args": ["mcp-server-sqlite", "--db-path", "~/test.db"]&#10;    }&#10;  }&#10;}'
               style="
                 width: 100%;
                 margin-top: 8px;
@@ -3946,14 +3746,62 @@
           <div id="bookSearchConfigGroup" class="setting-group">
             <label>BOOK SEARCH PROVIDERS</label>
             <div class="setting-help">
-              Open Library, Google Books, Goodreads and StoryGraph work with no
-              setup. Optional keys below unlock the remaining providers; the
-              Calibre fields point the tool at a local calibre-server.
+              The book search tool runs Global Book Search's own search code:
+              every source at once, then the chosen edition looked up by ISBN in
+              the others to fill the gaps. Goodreads and Open Library need no
+              setup. Google Books works without a key until its shared daily
+              quota runs out; a free key gives you your own. StoryGraph needs
+              your login, and Hardcover and LibraryThing a token. The Calibre
+              fields point the tool at your calibre-server.
             </div>
             <label style="font-size: calc(10px * var(--font-scale, 1))"
               >GOOGLE BOOKS API KEY (optional)</label
             >
             <input id="bookSearchGoogleKey" type="password" />
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >STORYGRAPH SESSION COOKIE (_storygraph_session)</label
+            >
+            <input
+              id="bookSearchStorygraphSession"
+              type="password"
+              autocomplete="off"
+            />
+            <label style="font-size: calc(10px * var(--font-scale, 1))"
+              >STORYGRAPH REMEMBER-ME COOKIE (remember_user_token)</label
+            >
+            <input
+              id="bookSearchStorygraphRemember"
+              type="password"
+              autocomplete="off"
+            />
+            <details class="setting-help">
+              <summary>How to get the StoryGraph cookies</summary>
+              StoryGraph has no public API and refuses searches that are not
+              signed in, so the tool uses your own login. Both values are sent
+              only to app.thestorygraph.com.
+              <ol
+                style="list-style: decimal; padding-left: 18px; margin: 6px 0"
+              >
+                <li>
+                  Sign in at app.thestorygraph.com with Remember me ticked.
+                </li>
+                <li>
+                  Open the browser's developer tools (Cmd+Option+I on a Mac, F12
+                  elsewhere). Chrome, Edge or Brave: Application → Cookies →
+                  https://app.thestorygraph.com. Firefox: Storage → Cookies.
+                  Safari: turn on Settings → Advanced → Show features for web
+                  developers, then Develop → Show Web Inspector → Storage →
+                  Cookies.
+                </li>
+                <li>
+                  Copy the values of _storygraph_session and remember_user_token
+                  into the two fields above, then Save. A value pasted with its
+                  name in front is accepted too.
+                </li>
+              </ol>
+              When StoryGraph stops answering, the login has expired: copy fresh
+              values the same way.
+            </details>
             <label style="font-size: calc(10px * var(--font-scale, 1))"
               >HARDCOVER API TOKEN</label
             >
@@ -3968,7 +3816,7 @@
             <input
               id="bookSearchCalibreUrl"
               type="text"
-              placeholder="http://127.0.0.1:8080"
+              placeholder="e.g. http://127.0.0.1:8085 (8080 is Dive's own port)"
             />
             <label style="font-size: calc(10px * var(--font-scale, 1))"
               >CALIBRE LIBRARY ID (optional)</label
@@ -4265,7 +4113,6 @@
     <script src="/assets/js/05-history.js"></script>
     <script src="/assets/js/06-pi.js"></script>
     <script src="/assets/js/07-chat.js"></script>
-    <script src="/assets/js/08-browser.js"></script>
     <script src="/assets/js/09-languagetool.js"></script>
   </body>
 </html>

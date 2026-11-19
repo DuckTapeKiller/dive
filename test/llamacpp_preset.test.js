@@ -762,3 +762,90 @@ test("setSectionKeys appends to a final section with no trailing blank line", ()
   );
   assert.deepStrictEqual(out, ["[a]", "model = /x/a.gguf", "ctx-size = 512"]);
 });
+
+// The user's chat preset with its E4B section gone: E2B, the default model
+// kept loaded and locked in RAM, is the only hand-written section left, and so
+// "agrees with every other section" about everything.
+test("one model's keep-loaded settings never spread to sections Dive writes", () => {
+  const dir = makeDir(["e2b.gguf", "new.gguf"]);
+  const original = [
+    "[e2b]",
+    `model = ${path.join(dir, "e2b.gguf")}`,
+    "n-gpu-layers = 99",
+    "jinja = true",
+    "load-mode = mmap+mlock",
+    "load-on-startup = true",
+    "",
+  ].join("\n");
+  const result = plan(
+    dir,
+    "chat",
+    [model("e2b.gguf"), model("new.gguf")],
+    original,
+  );
+  const block = preset.splitManagedBlock(result.after).managed.join("\n");
+  assert.match(block, /\[new\]/);
+  // House style still comes through…
+  assert.match(block, /n-gpu-layers = 99/);
+  // …but not the residency choices made for e2b alone.
+  assert.doesNotMatch(block, /load-mode/);
+  assert.doesNotMatch(block, /load-on-startup/);
+  // And e2b's own section is untouched.
+  assert.ok(result.after.startsWith(original.trimEnd()));
+});
+
+test("an mlock line two sections share is still never copied", () => {
+  // llama.cpp 0.8.0 rejects `mlock` as a preset key, so copying it would stop
+  // the router starting at all. Every spelling of it counts.
+  for (const key of ["mlock", "--mlock", "LLAMA_ARG_MLOCK", "lm", "no-mmap"]) {
+    const dir = makeDir(["a.gguf", "b.gguf", "new.gguf"]);
+    const original = [
+      "[a]",
+      `model = ${path.join(dir, "a.gguf")}`,
+      `${key} = true`,
+      "sleep-idle-seconds = 3600",
+      "",
+      "[b]",
+      `model = ${path.join(dir, "b.gguf")}`,
+      `${key} = true`,
+      "sleep-idle-seconds = 3600",
+      "",
+    ].join("\n");
+    const result = plan(
+      dir,
+      "chat",
+      [model("a.gguf"), model("b.gguf"), model("new.gguf")],
+      original,
+    );
+    const block = preset.splitManagedBlock(result.after).managed.join("\n");
+    assert.match(block, /sleep-idle-seconds = 3600/, key);
+    assert.ok(!block.includes(`${key} =`), `${key} was copied`);
+  }
+});
+
+test("a residency setting under [*] is still copied — the user said every model", () => {
+  const dir = makeDir(["new.gguf"]);
+  const original = ["[*]", "load-mode = mmap+mlock", ""].join("\n");
+  const result = plan(dir, "chat", [model("new.gguf")], original);
+  const block = preset.splitManagedBlock(result.after).managed.join("\n");
+  assert.match(block, /load-mode = mmap\+mlock/);
+});
+
+test("per-model keys are recognised in every spelling", () => {
+  const defaults = preset.inheritedDefaults(
+    preset.parseSections(
+      [
+        "[*]",
+        "LLAMA_ARG_MODEL = /x.gguf",
+        "--alias = foo",
+        "mm = /p.gguf",
+        "n-gpu-layers = 99",
+      ]
+        .join("\n")
+        .split("\n"),
+    ),
+  );
+  assert.deepStrictEqual([...defaults.keys()], ["n-gpu-layers"]);
+  assert.strictEqual(preset.canonicalKey("LLAMA_ARG_LOAD_MODE"), "load-mode");
+  assert.strictEqual(preset.canonicalKey("--mlock"), "mlock");
+});

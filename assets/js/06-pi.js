@@ -1,5 +1,7 @@
 const BOOK_SEARCH_FIELDS = {
   bookSearchGoogleKey: "googleApiKey",
+  bookSearchStorygraphSession: "storygraphSessionCookie",
+  bookSearchStorygraphRemember: "storygraphRememberToken",
   bookSearchHardcoverToken: "hardcoverToken",
   bookSearchLibrarythingToken: "librarythingToken",
   bookSearchCalibreUrl: "calibreServerUrl",

@@ -5,7 +5,6 @@ function toggleHistory() {
   if (historyOpen) {
     if (settingsOpen) toggleSettings();
     if (notesOpen) toggleNotes();
-    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     if (resizerEl) resizerEl.style.display = "block";
     loadHistoryPanel();

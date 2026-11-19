@@ -22,17 +22,150 @@ const {
 
 const vm = require("vm");
 
-async function executeCalculator({ expression }) {
-  try {
-    if (!/^[0-9+\-*/().\s]*$/.test(expression)) {
-      return "Error: Expression contains invalid characters.";
+// What the calculator accepts beyond numbers and + - * / ( ). The tool used to
+// take nothing else, so the expressions models actually write — sqrt(144),
+// 2^10, pi*r^2 — all came back "invalid characters", with no hint of what
+// would work, and the model gave up.
+const CALCULATOR_FUNCTIONS = new Set([
+  "sqrt",
+  "cbrt",
+  "abs",
+  "round",
+  "floor",
+  "ceil",
+  "trunc",
+  "sign",
+  "exp",
+  "log",
+  "log2",
+  "log10",
+  "sin",
+  "cos",
+  "tan",
+  "asin",
+  "acos",
+  "atan",
+  "atan2",
+  "sinh",
+  "cosh",
+  "tanh",
+  "min",
+  "max",
+  "pow",
+  "hypot",
+]);
+// ln is the natural log; log is log10, as on a calculator keypad.
+// Maps, not object literals: a name like "constructor" or "toString" must not
+// be found on Object.prototype.
+const CALCULATOR_ALIASES = new Map([
+  ["ln", "log"],
+  ["log", "log10"],
+]);
+const CALCULATOR_CONSTANTS = new Map([
+  ["pi", "Math.PI"],
+  ["e", "Math.E"],
+  ["tau", "(2*Math.PI)"],
+]);
+const CALCULATOR_HELP =
+  "Use numbers, + - * / % ^ (power) and parentheses, the constants pi, e and tau, " +
+  "and the functions sqrt, cbrt, abs, round, floor, ceil, trunc, sign, exp, ln, log (base 10), " +
+  "log2, sin, cos, tan, asin, acos, atan, atan2, sinh, cosh, tanh, min, max, pow and hypot " +
+  "(angles in radians). Write 1000, not 1,000.";
+
+// Turn a calculator expression into JavaScript made only of numbers,
+// operators, parentheses and whitelisted Math members. Every character is
+// accounted for by a token, so nothing else — no property access, no names
+// outside the lists above — can reach the evaluator.
+function translateCalculatorExpression(raw) {
+  const text = String(raw ?? "")
+    .replace(/[×·]/g, "*")
+    .replace(/÷/g, "/")
+    .replace(/−/g, "-")
+    .replace(/\bMath\./g, "");
+  const tokens =
+    text.match(
+      /\s+|\d*\.?\d+(?:e[+-]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|\*\*|[-+*/%^(),]|./gi,
+    ) || [];
+  const out = [];
+  // One entry per open parenthesis: true when it opened a function call,
+  // which is the only place a comma may appear.
+  const parens = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (/^\s+$/.test(token)) continue;
+    if (/^\d*\.?\d+(?:e[+-]?\d+)?$/i.test(token)) {
+      out.push(token);
+      continue;
     }
-    const result = vm.runInNewContext(expression, Object.create(null), {
+    if (/^[A-Za-z_]/.test(token)) {
+      const name = token.toLowerCase();
+      if (CALCULATOR_CONSTANTS.has(name)) {
+        out.push(CALCULATOR_CONSTANTS.get(name));
+        continue;
+      }
+      const fn = CALCULATOR_ALIASES.get(name) || name;
+      const next = tokens.slice(i + 1).find((t) => !/^\s+$/.test(t));
+      if (CALCULATOR_FUNCTIONS.has(fn) && next === "(") {
+        out.push(`Math.${fn}`);
+        continue;
+      }
+      throw new Error(`unknown name "${token}"`);
+    }
+    if (token === "(") {
+      const previous = out[out.length - 1] || "";
+      parens.push(previous.startsWith("Math.") && previous !== "Math.PI");
+      out.push("(");
+      continue;
+    }
+    if (token === ")") {
+      if (!parens.length) throw new Error("unbalanced parentheses");
+      parens.pop();
+      out.push(")");
+      continue;
+    }
+    if (token === ",") {
+      if (!parens.length || !parens[parens.length - 1]) {
+        throw new Error("a comma may only separate function arguments");
+      }
+      out.push(",");
+      continue;
+    }
+    if (token === "^" || token === "**") {
+      out.push("**");
+      continue;
+    }
+    if (/^[-+*/%]$/.test(token)) {
+      out.push(token);
+      continue;
+    }
+    throw new Error(`unexpected character "${token}"`);
+  }
+  if (parens.length) throw new Error("unbalanced parentheses");
+  if (!out.length) throw new Error("the expression is empty");
+  return out.join(" ");
+}
+
+async function executeCalculator({ expression }) {
+  let source;
+  try {
+    source = translateCalculatorExpression(expression);
+  } catch (e) {
+    return `Calculator Error: ${e.message}. ${CALCULATOR_HELP}`;
+  }
+  try {
+    // A unary minus straight before ** is a syntax error in JavaScript
+    // (-2 ** 2); the error text below covers it.
+    // The new context brings its own Math; nothing from this process is
+    // passed in.
+    const result = vm.runInNewContext(source, Object.create(null), {
       timeout: 1000,
     });
+    if (typeof result !== "number" || Number.isNaN(result)) {
+      return `Calculator Error: the expression did not give a number. ${CALCULATOR_HELP}`;
+    }
     return `Result: ${result}`;
   } catch (e) {
-    return `Calculator Error: ${e.message}`;
+    return `Calculator Error: ${e.message}. ${CALCULATOR_HELP} Put a negative base in parentheses before ^, as in (-2)^2.`;
   }
 }
 
@@ -355,6 +488,7 @@ async function executeHttpRequest({
 
 module.exports = {
   executeCalculator,
+  translateCalculatorExpression,
   executeLocalNotes,
   executeTimeAndDate,
   executeTaskPlan,

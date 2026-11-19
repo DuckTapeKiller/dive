@@ -25,6 +25,7 @@ const preset = require("./llamacpp-preset");
 const routers = require("./llamacpp-router-discovery");
 const projectors = require("./llamacpp-projector");
 const derived = require("./llamacpp-derived");
+const loadMode = require("./llamacpp-load-mode");
 
 module.exports = function createLlamaCppDomain(deps) {
   const {
@@ -281,6 +282,10 @@ module.exports = function createLlamaCppDomain(deps) {
   }
 
   // ---- Binary discovery ----
+
+  // Which keep-in-RAM flag the installed llama-server takes (`--load-mode` on
+  // 0.8.0 and later, `--mlock` before). Cached per binary file.
+  const probeLoadFlags = loadMode.createLoadFlagProbe();
 
   function findBinary(cfg) {
     if (cfg.binaryPath) {
@@ -1276,7 +1281,15 @@ module.exports = function createLlamaCppDomain(deps) {
     ];
     if (modelCfg.threads > 0) args.push("-t", String(modelCfg.threads));
     if (modelCfg.batchSize > 0) args.push("-b", String(modelCfg.batchSize));
-    if (modelCfg.mlock) args.push("--mlock");
+    // KEEP IN RAM. llama.cpp 0.8.0 replaced `--mlock` with `--load-mode`, and
+    // either flag is fatal on a build that does not know it — so the binary is
+    // asked which one it takes. See llamacpp-load-mode.js.
+    let keepInRamNote = "";
+    if (modelCfg.mlock) {
+      const keep = await loadMode.resolveKeepInRam(binary, probeLoadFlags);
+      args.push(...keep.args);
+      keepInRamNote = keep.note;
+    }
     // Quantized KV cache (anything other than f16) requires Flash Attention in
     // llama.cpp, so turn it on automatically when the user picks a quantized
     // cache type even if they didn't tick the box.
@@ -1305,6 +1318,10 @@ module.exports = function createLlamaCppDomain(deps) {
     if (cfg.extraArgs) args.push(...cfg.extraArgs.split(/\s+/).filter(Boolean));
 
     slot.log = [];
+    if (keepInRamNote) {
+      pushLog(slot, keepInRamNote);
+      console.warn(`[llamacpp:${slotId}] ${keepInRamNote}`);
+    }
     slot.lastError = "";
     slot.state = "starting";
     slot.model = file;

@@ -171,3 +171,35 @@ test("other statuses are never retried", () => {
   }
   assert.strictEqual(isNativeToolsRejection(undefined), false);
 });
+
+// ---- Error text ----
+
+test("a llama.cpp error body is reduced to its message", () => {
+  const { localErrorText } = require("../routes/chat-local-request.js");
+  assert.strictEqual(
+    localErrorText(
+      '{"error":{"code":400,"message":"request (4282 tokens) exceeds the available context size (4096 tokens), try increasing it","type":"exceed_context_size_error","n_prompt_tokens":4282,"n_ctx":4096}}',
+    ),
+    "request (4282 tokens) exceeds the available context size (4096 tokens), try increasing it",
+  );
+  assert.strictEqual(
+    localErrorText('{"error":"model not found"}'),
+    "model not found",
+  );
+  assert.strictEqual(localErrorText('{"message":"bad"}'), "bad");
+  // Not JSON, or JSON with nothing readable: returned as it came.
+  assert.strictEqual(localErrorText("Not Found"), "Not Found");
+  assert.strictEqual(localErrorText('{"error":{}}'), '{"error":{}}');
+  assert.strictEqual(localErrorText(""), "");
+});
+
+test("the missing --jinja 500 is still retried once its body is reduced", () => {
+  const { localErrorText } = require("../routes/chat-local-request.js");
+  const message = `Local model request failed (500): ${localErrorText(
+    '{"error":{"message":"tools param requires --jinja flag"}}',
+  )}`;
+  assert.strictEqual(
+    isNativeToolsRejection({ statusCode: 500, message }),
+    true,
+  );
+});

@@ -317,6 +317,21 @@ module.exports = function createSkillsDomain(deps) {
             clean[key] = raw[key].trim();
           }
         }
+        // The StoryGraph login, cleaned as Global Book Search cleans it: a
+        // value pasted with its name ("remember_user_token=…") is accepted,
+        // and characters a cookie value can never hold are dropped so the
+        // header stays well formed.
+        for (const [key, name] of [
+          ["storygraphSessionCookie", "_storygraph_session"],
+          ["storygraphRememberToken", "remember_user_token"],
+        ]) {
+          if (typeof raw[key] !== "string") continue;
+          let value = raw[key].trim();
+          if (value.startsWith(`${name}=`))
+            value = value.slice(name.length + 1);
+          value = value.replace(/[\s;,"\\]/g, "");
+          if (value) clean[key] = value;
+        }
         const file = path.join(DATA_DIR, "book-search.json");
         fs.writeFileSync(file, JSON.stringify(clean, null, 2), {
           mode: 0o600,

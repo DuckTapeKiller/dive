@@ -13,6 +13,7 @@ const {
   wantsSingleSystemMessage,
   isNativeToolsRejection,
 } = require("./chat-local-request.js");
+const { isToolErrorResult } = require("../server/trace.js");
 const {
   buildForcedSkillToolCall,
   isDatabaseSlashCommand,
@@ -612,7 +613,7 @@ module.exports = function createChatDomain(deps) {
             type: "tool_end",
             toolName: slashCommand.skillName,
             outputPreview: String(result || "").slice(0, 300),
-            isError: /^Error:/i.test(String(result || "")),
+            isError: isToolErrorResult(result),
           });
           const forcedSources = extractWebSources(
             slashCommand.skillName,
@@ -718,7 +719,7 @@ module.exports = function createChatDomain(deps) {
           type: "tool_end",
           toolName: toolCall.function.name,
           outputPreview: String(result || "").slice(0, 300),
-          isError: /^Error:/i.test(String(result || "")),
+          isError: isToolErrorResult(result),
         });
         const localSources = extractWebSources(
           toolCall.function.name,
@@ -1309,10 +1310,34 @@ module.exports = function createChatDomain(deps) {
         return "Download the selected media entries?";
       }
     }
-    if (toolName === "run_code" || toolName === "shell_command") {
-      const what =
-        toolName === "run_code" ? "JavaScript code" : "shell command";
-      return `The AI wants to run the following ${what}:\n\n${command}\n\nDo you want to allow this?`;
+    // Code and commands are shown as the model wrote them. They arrive inside
+    // the tool's JSON arguments, and printing that JSON put the whole script
+    // on one line with every newline as a literal "\n" — unreadable at the
+    // one moment the user has to read it to decide.
+    const CODE_FIELDS = {
+      run_code: ["JavaScript code", "code"],
+      run_python: ["Python code", "code"],
+      shell_command: ["shell command", "command"],
+    };
+    if (Object.hasOwn(CODE_FIELDS, toolName)) {
+      const [what, field] = CODE_FIELDS[toolName];
+      let args = null;
+      try {
+        args = JSON.parse(String(command || "{}"));
+      } catch {
+        args = null;
+      }
+      const body =
+        typeof args?.[field] === "string" && args[field].trim()
+          ? args[field]
+          : String(command || "");
+      const where =
+        toolName === "shell_command" &&
+        typeof args?.cwd === "string" &&
+        args.cwd
+          ? `\n\nIn: ${args.cwd}`
+          : "";
+      return `The AI wants to run the following ${what}:\n\n${body}${where}\n\nDo you want to allow this?`;
     }
     let pretty = String(command || "");
     try {
@@ -2407,7 +2432,7 @@ module.exports = function createChatDomain(deps) {
               type: "tool_end",
               toolName: slashCommand.skillName,
               outputPreview: String(result || "").slice(0, 300),
-              isError: /^Error:/i.test(String(result || "")),
+              isError: isToolErrorResult(result),
             });
             const forcedSources = extractWebSources(
               slashCommand.skillName,
@@ -2576,7 +2601,7 @@ module.exports = function createChatDomain(deps) {
             type: "tool_end",
             toolName: toolCall.function.name,
             outputPreview: String(result || "").slice(0, 300),
-            isError: /^Error:/i.test(String(result || "")),
+            isError: isToolErrorResult(result),
           });
           const cloudSources = extractWebSources(
             toolCall.function.name,
@@ -2912,7 +2937,7 @@ module.exports = function createChatDomain(deps) {
               type: "tool_end",
               toolName: slashCommand.skillName,
               outputPreview: String(result || "").slice(0, 300),
-              isError: /^Error:/i.test(String(result || "")),
+              isError: isToolErrorResult(result),
             });
             const forcedSources = extractWebSources(
               slashCommand.skillName,
@@ -3161,7 +3186,7 @@ module.exports = function createChatDomain(deps) {
                           type: "tool_end",
                           toolName: tc.function.name,
                           outputPreview: String(result || "").slice(0, 300),
-                          isError: /^Error:/i.test(String(result || "")),
+                          isError: isToolErrorResult(result),
                         });
 
                         const ollamaSources = extractWebSources(

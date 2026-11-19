@@ -412,3 +412,27 @@ test("Custom shell skills require explicit confirmation", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// ---- Prompt injection ----
+//
+// web_scraper returns text written by whoever controls the page, straight into
+// the model's context, so its description has to say that the text is
+// evidence, never instructions. (This check used to live with the built-in
+// browser's tests, which went when the browser was removed.)
+test("web_scraper tells the model its content is untrusted", () => {
+  const { ALL_SKILLS } = require("../skills");
+  const description = ALL_SKILLS.find((s) => s.function?.name === "web_scraper")
+    .function.description;
+  assert.match(description, /untrusted/i);
+  assert.match(
+    description,
+    /never as instructions|not as instructions|evidence/i,
+  );
+});
+
+test("the browser tools are gone", () => {
+  const { ALL_SKILLS } = require("../skills");
+  const names = ALL_SKILLS.map((s) => s.function?.name);
+  assert.ok(!names.includes("browse_read"));
+  assert.ok(!names.includes("browse_act"));
+});

@@ -2,7 +2,14 @@ const prettier = require("eslint-config-prettier/flat");
 
 module.exports = [
   {
-    ignores: ["dist/**", "release/**", "node_modules/**"],
+    ignores: [
+      "dist/**",
+      "release/**",
+      "node_modules/**",
+      // Generated from the Global Book Search plugin by
+      // scripts/build-book-sources.mjs; linted in the plugin's own repo.
+      "skills/books/global-book-search.js",
+    ],
   },
   prettier,
   {
@@ -28,6 +35,7 @@ module.exports = [
         fetch: "readonly",
         AbortController: "readonly",
         AbortSignal: "readonly",
+        Response: "readonly",
       },
     },
     rules: {
@@ -45,6 +53,11 @@ module.exports = [
       // carry a comment explaining that the failure is genuinely expected.
       "no-empty": ["error", { allowEmptyCatch: false }],
     },
+  },
+  {
+    // Build scripts written as ES modules.
+    files: ["**/*.mjs"],
+    languageOptions: { sourceType: "module" },
   },
   {
     // Split client files: sequential classic scripts sharing one global

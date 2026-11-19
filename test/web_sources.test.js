@@ -194,3 +194,29 @@ test("the manifest survives an extra line between a title and its URL", () => {
     { title: "Plain Source", url: "https://example.org/b" },
   ]);
 });
+
+// ---- Tool failures ----
+
+test("a tool's own error prefix marks the call as failed", () => {
+  const { isToolErrorResult } = require("../server/trace.js");
+  for (const failed of [
+    "Error: boom",
+    "Code Search Error: Path must be absolute",
+    "HTTP Request Error: 404",
+    "Run Python Error: exit 1",
+    "SNL Error: not found",
+    "Browser Error (click): locator.click: Timeout 15000ms exceeded",
+    "User denied permission to execute run_python. Do not retry it.",
+    "The confirmation prompt for shell_command expired before the user answered it, so it was not run.",
+  ]) {
+    assert.strictEqual(isToolErrorResult(failed), true, failed);
+  }
+  for (const fine of [
+    "Result: 403",
+    "Wikipedia: Error handling in Rust is…",
+    "No results. Error: none",
+    "",
+  ]) {
+    assert.strictEqual(isToolErrorResult(fine), false, fine);
+  }
+});

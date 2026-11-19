@@ -167,11 +167,18 @@ function loadAllowedDirs() {
 // prefix check, so symlinks cannot escape). options.allowHome additionally
 // accepts anything under the home directory (used by shell_command's cwd,
 // which is already confirmation-gated).
+//
+// A relative path is taken as relative to the workspace, the same place
+// file_operations resolves its paths: a model that has just written
+// "demo/x.py" there naturally asks code_search and git_tools about "demo" or
+// "./", and refusing those made the three tools disagree about where files
+// are. The result still has to pass the allowed-root check below, so "../"
+// cannot climb out.
 function resolveAllowedPath(rawPath, options = {}) {
-  const expanded = expandHomePath(rawPath);
-  if (!path.isAbsolute(expanded)) {
-    return { error: `Path must be absolute or start with ~/: ${rawPath}` };
-  }
+  const homeExpanded = expandHomePath(rawPath);
+  const expanded = path.isAbsolute(homeExpanded)
+    ? homeExpanded
+    : path.resolve(WORKSPACE_DIR, homeExpanded || ".");
   let real;
   try {
     real = fs.realpathSync(expanded);

@@ -2480,7 +2480,10 @@ function populateTopbarModelSelect() {
     const list = localModelsCache[mode] || [];
     addOpt("", list.length ? "Automatic" : "(no models — Refresh)");
     list.forEach((m) => addOpt(m, m));
-    modelSelect.value = localModelConfig[mode].model || "";
+    // A name the list does not hold left the select on no option at all,
+    // which the picker drew as a blank — see localModelListEntry.
+    const selected = localModelConfig[mode].model || "";
+    modelSelect.value = localModelListEntry(list, selected) || selected;
   } else if (mode === "cloud") {
     // Only list providers that actually have an API key saved (or set via
     // env) — you can't use a model without a key.

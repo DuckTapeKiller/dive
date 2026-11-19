@@ -47,14 +47,61 @@ const BLOCK_START_RE = /^\s*;\s*>>>\s*dive-managed\b.*$/;
 const BLOCK_END_RE = /^\s*;\s*<<<\s*dive-managed\s*<<<\s*$/;
 
 // Keys that describe one specific model and must never be inherited from a
-// sibling section or from `[*]`.
-const PER_MODEL_KEYS = new Set(["model", "mmproj", "alias"]);
+// sibling section or from `[*]`. Compared by canonical key (canonicalKey), so
+// the short and environment-variable spellings count too.
+const PER_MODEL_KEYS = new Set([
+  "model",
+  "m",
+  "model-url",
+  "mu",
+  "hf-repo",
+  "hfr",
+  "hf-file",
+  "hff",
+  "mmproj",
+  "mm",
+  "mmproj-url",
+  "mmu",
+  "alias",
+  "a",
+]);
 // Chat-only: a template engine setting is meaningless on an embedding server.
 const CHAT_ONLY_KEYS = new Set([
   "jinja",
   "chat-template",
   "chat-template-file",
 ]);
+// How one model is held in memory and whether the router loads it unasked.
+// These are a choice made for THAT model ("keep my default chat model loaded
+// and locked in RAM"), never house style, so a sibling section's value is not
+// copied into the sections Dive writes — even when every hand-written section
+// agrees, which is trivially true once only one is left. Copied, they would
+// mark every model Dive adds to load at router start and lock itself in RAM,
+// and `mlock` is a key llama.cpp 0.8.0 rejects outright, so the router would
+// not start at all. A value under `[*]` is still copied: there the user said
+// "every model". Compared by canonical key, so `--mlock`, `lm` and
+// `LLAMA_ARG_LOAD_MODE` are caught as well.
+const RESIDENCY_KEYS = new Set([
+  "load-mode",
+  "lm",
+  "mlock",
+  "mmap",
+  "no-mmap",
+  "direct-io",
+  "dio",
+  "no-direct-io",
+  "lazy-mode",
+  "lzm",
+  "load-on-startup",
+]);
+
+// `--load-mode`, `load-mode` and `LLAMA_ARG_LOAD_MODE` all name one option.
+function canonicalKey(key) {
+  const k = String(key || "").trim();
+  const env = k.match(/^LLAMA_ARG_(.+)$/i);
+  if (env) return env[1].toLowerCase().replace(/_/g, "-");
+  return k.replace(/^-+/, "").toLowerCase();
+}
 
 function splitLines(text) {
   return String(text || "").split(/\r?\n/);
@@ -126,6 +173,9 @@ function guardFrom(sections, modelsDir) {
 // This matters because a named section may REPLACE the globals rather than
 // merge with them, so a generated section that omits them would silently run
 // with different settings from its neighbours.
+//
+// Residency keys (RESIDENCY_KEYS) are learned from `[*]` only, never from the
+// named sections: see above.
 function inheritedDefaults(sections) {
   const star = sections.find((s) => s.name === "*");
   const named = sections.filter((s) => s.name !== "*");
@@ -133,14 +183,16 @@ function inheritedDefaults(sections) {
   if (named.length) {
     const [first, ...others] = named;
     for (const [key, value] of first.entries) {
-      if (PER_MODEL_KEYS.has(key)) continue;
+      const canonical = canonicalKey(key);
+      if (PER_MODEL_KEYS.has(canonical)) continue;
+      if (RESIDENCY_KEYS.has(canonical)) continue;
       if (others.every((s) => s.entries.get(key) === value))
         out.set(key, value);
     }
   }
   if (star) {
     for (const [key, value] of star.entries) {
-      if (PER_MODEL_KEYS.has(key)) continue;
+      if (PER_MODEL_KEYS.has(canonicalKey(key))) continue;
       out.set(key, value);
     }
   }
@@ -594,6 +646,8 @@ module.exports = {
   splitManagedBlock,
   parseSections,
   guardFrom,
+  canonicalKey,
+  RESIDENCY_KEYS,
   inheritedDefaults,
   buildChatSections,
   buildEmbedSections,

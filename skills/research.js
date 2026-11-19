@@ -29,6 +29,7 @@ const {
   urlGuardError,
   resolveWorkspacePath,
 } = require("./sandbox.js");
+const { renderPage } = require("./render-page.js");
 const {
   CHALLENGE_PAGE_RE,
   canonicalResearchUrl,
@@ -277,6 +278,22 @@ async function searchWikipedia(lang, query) {
   return searchData?.query?.search || [];
 }
 
+// The article a title leads to in one edition, following a redirect — or ""
+// when no page has that title. Search ranks by content and does not report a
+// redirect that matches the query exactly, so "Cartagena de Indias" (on
+// en.wikipedia a redirect to "Cartagena, Colombia") looked like an article
+// English did not have, and the Spanish one was returned instead.
+async function wikipediaTitleTarget(lang, query) {
+  const data = await fetchJson(
+    `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(query)}&redirects=1&format=json&origin=*`,
+  );
+  const page = Object.values(data?.query?.pages || {})[0];
+  if (!page || page.missing !== undefined || page.invalid !== undefined) {
+    return "";
+  }
+  return typeof page.title === "string" ? page.title : "";
+}
+
 async function executeWikipedia({ query, language = "en" }) {
   try {
     const primary =
@@ -294,9 +311,25 @@ async function executeWikipedia({ query, language = "en" }) {
 
     let lang = primary;
     let searchArr = promoteExact(await searchWikipedia(primary, query));
+    let foundExact = searchArr.some(isExact);
+    // A title that redirects is as exact as one that does not.
+    if (!foundExact) {
+      try {
+        const target = await wikipediaTitleTarget(primary, query);
+        if (target) {
+          searchArr = [
+            { title: target },
+            ...searchArr.filter((r) => r.title !== target),
+          ];
+          foundExact = true;
+        }
+      } catch {
+        /* lookup unavailable — the search results stand */
+      }
+    }
     // No exact match in the primary edition: consult the other editions and
     // prefer one that titles an article exactly as queried.
-    if (!searchArr.some(isExact)) {
+    if (!foundExact) {
       for (const alt of chain.slice(1)) {
         try {
           const altArr = await searchWikipedia(alt, query);
@@ -1327,6 +1360,8 @@ function cleanBritannicaMarkdown(markdown) {
   return kept.join("\n\n");
 }
 
+const BRITANNICA_BUDGET_MS = 45000;
+
 async function executeBritannica({ query }, context = {}) {
   try {
     const cloudKeys = (context && context.cloudKeys) || {};
@@ -1449,8 +1484,12 @@ async function executeBritannica({ query }, context = {}) {
     // a run of bad candidates can't stall the skill.
     let articleUrl = "";
     const tried = new Set();
+    // A ceiling on the whole search. Every reader can be slow at once, and
+    // without one a single call ran for minutes while the chat showed nothing
+    // but "Working…"; past it the Wikipedia fallback below answers instead.
+    const deadline = Date.now() + BRITANNICA_BUDGET_MS;
     for (const finder of finders) {
-      if (tried.size >= 4) break;
+      if (tried.size >= 4 || Date.now() > deadline) break;
       let candidates = [];
       try {
         candidates = await finder();
@@ -1458,7 +1497,9 @@ async function executeBritannica({ query }, context = {}) {
         continue; // finder unavailable — try the next one
       }
       for (const url of candidates) {
-        if (tried.has(url) || tried.size >= 4) continue;
+        if (tried.has(url) || tried.size >= 4 || Date.now() > deadline) {
+          continue;
+        }
         tried.add(url);
         if (!articleUrl) articleUrl = url;
         const read = await readUrlContent(url, 6000, { archiveFirst: true });
@@ -1499,9 +1540,13 @@ async function executeBritannica({ query }, context = {}) {
 }
 
 async function executeFactCheck({ claim, language = "en" }, context = {}) {
-  const wiki = await executeWikipedia({ query: claim, language });
-  const brit = await executeBritannica({ query: claim }, context);
-  const ddg = await executeDuckDuckGo({ query: claim }, context);
+  // Independent lookups, so they run side by side: one after another, the
+  // check took as long as all three added together (over two minutes).
+  const [wiki, brit, ddg] = await Promise.all([
+    executeWikipedia({ query: claim, language }),
+    executeBritannica({ query: claim }, context),
+    executeDuckDuckGo({ query: claim }, context),
+  ]);
   return `### Wikipedia findings:\n${wiki}\n\n### Britannica findings:\n${brit}\n\n### Web search findings:\n${ddg}`;
 }
 
@@ -1663,7 +1708,16 @@ function extractArchivePhSnapshotUrls(value) {
   return urls;
 }
 
+// archive.ph often stops answering altogether (it drops connections from
+// addresses it dislikes). Each lookup then waits out its full timeout, and with
+// four lookup URLs per page every reader chain that reached it stalled for a
+// minute — Britannica, which tries up to four pages, for four. Once it fails
+// without an HTTP answer it is skipped for a while instead.
+const ARCHIVE_PH_COOLDOWN_MS = 10 * 60 * 1000;
+let archivePhUnavailableUntil = 0;
+
 async function readViaArchivePh(url, maxChars) {
+  if (Date.now() < archivePhUnavailableUntil) return null;
   const lookupUrls = archivePhLookupUrls(url);
   for (const lookupUrl of lookupUrls) {
     let body = "";
@@ -1677,7 +1731,14 @@ async function readViaArchivePh(url, maxChars) {
         timeout: 15000,
         failOnHttpError: true,
       });
-    } catch {
+    } catch (error) {
+      // An HTTP status is an answer ("no capture of this URL"); anything else
+      // — a timeout, a reset, DNS — means the service itself is out of reach,
+      // and the other lookups would only wait just as long.
+      if (!/^HTTP \d+/.test(String(error?.message || ""))) {
+        archivePhUnavailableUntil = Date.now() + ARCHIVE_PH_COOLDOWN_MS;
+        return null;
+      }
       continue;
     }
 
@@ -1723,6 +1784,7 @@ async function readUrlContent(
     fetchHtmlFn = fetchHtml,
     readViaWaybackFn = readViaWayback,
     readViaArchivePhFn = readViaArchivePh,
+    renderPageFn = renderPage,
     retryDelayMs = 600,
   } = {},
 ) {
@@ -1803,12 +1865,43 @@ async function readUrlContent(
     lastReaderError = "direct reader request failed";
     /* fall through to the Wayback strategy */
   }
-  // 3) Wayback Machine snapshot (unless it was already tried first).
+  // 3) Render the page in Dive's own Chromium (desktop app only): for pages
+  //    that build their text with JavaScript, which a plain fetch reads as
+  //    empty. This is what the removed agent browser was good for, without
+  //    Playwright. Without the desktop app it answers at once and is skipped.
+  if (typeof renderPageFn === "function") {
+    try {
+      const rendered = await renderPageFn(url);
+      if (rendered?.ok && (rendered.text || rendered.html)) {
+        // The renderer's own text keeps the page's layout (separate blocks
+        // stay separate words); the HTML is the fallback when it has none.
+        const laidOut = String(rendered.text || "")
+          .replace(/[ \t]+\n/g, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+        const validation = validateReaderText(
+          laidOut || extractMainText(rendered.html || ""),
+          150,
+        );
+        if (validation.ok) {
+          console.log(`[web] read ${url} by rendering it in Dive's Chromium`);
+          return {
+            ok: true,
+            text: truncateText(validation.text, maxChars, "... [TRUNCATED]"),
+          };
+        }
+        lastReaderError = validation.error;
+      }
+    } catch {
+      /* rendering is a bonus; the archives below still get their turn */
+    }
+  }
+  // 4) Wayback Machine snapshot (unless it was already tried first).
   if (!archiveFirst) {
     const archived = await readArchive(url, maxChars);
     if (archived) return archived;
   }
-  // 4) Archive.ph's public Memento snapshots. This is deliberately last: an
+  // 5) Archive.ph's public Memento snapshots. This is deliberately last: an
   // archived copy is useful recovery evidence, but it is not current by
   // default and must carry its capture metadata into the dossier.
   const archivedPh = await tryArchivePh();
@@ -1966,6 +2059,23 @@ function parseEncyclopediaEvidence(result, sourceType, topic) {
   const validation = validateReaderText(content, 120);
   if (!validation.ok) return null;
   const title = cleanResearchTitle(heading[1], topic);
+  // Each encyclopedia answers with its best guess, and for a long question
+  // that guess can be anything: "Cien años de soledad English translator"
+  // brought back Paul Gauguin from Wikipedia, "Anost" from Larousse and a
+  // Norwegian novel from SNL, all listed to the user as sources. An article
+  // is kept when its title shares a word with the topic, or when its opening
+  // names the topic — which keeps alias titles ("Louis XIV" for the Sun King).
+  const tokens = researchTokens(topic);
+  if (tokens.length) {
+    const lead = validation.text.slice(0, 800);
+    const needed = Math.min(2, tokens.length);
+    if (
+      !countTokenMatches(`${heading[1]} ${title}`, tokens).length &&
+      countTokenMatches(lead, tokens).length < needed
+    ) {
+      return null;
+    }
+  }
   let capturedAt = "";
   if (retrievalMatch?.[3]) {
     try {
@@ -2964,16 +3074,23 @@ async function fetchWiktionaryWiki(word, langCode) {
     const url = `https://${langCode}.wiktionary.org/wiki/${encodeURIComponent(word)}`;
     const html = await fetchText(url);
     const $ = cheerio.load(html);
+    // Template styles and edit links are markup, not etymology.
+    $("style, script, .mw-editsection").remove();
     const etymHeader = $(
       "#Étymologie, #Etymologie, #Etimología, #Etymology, #Etymology_1",
     ).first();
     if (!etymHeader.length) return null;
+    // Current MediaWiki wraps each heading in <div class="mw-heading">, so the
+    // section is the run of siblings after that wrapper, up to the next
+    // wrapper. Only bare h2/h3 used to end it, and with the wrapper in the way
+    // the walk ran to the bottom of the page — the whole entry, inline CSS
+    // included, some 28,000 characters for one word.
+    const wrapper = etymHeader.parent(".mw-heading");
+    const isHeading = (el) =>
+      /^h[1-6]$/i.test(el.get(0).tagName) || el.hasClass("mw-heading");
     let etymologyText = "";
-    let nextElement = etymHeader.parent().next();
-    while (
-      nextElement.length &&
-      !["h2", "h3"].includes(nextElement.get(0).tagName.toLowerCase())
-    ) {
+    let nextElement = (wrapper.length ? wrapper : etymHeader.parent()).next();
+    while (nextElement.length && !isHeading(nextElement)) {
       etymologyText += nextElement.text().trim() + "\n";
       nextElement = nextElement.next();
     }
@@ -3133,606 +3250,8 @@ async function executeDeepEtymology({ word, language }) {
   );
 }
 
-const BOOK_PROVIDER_TIMEOUT_MS = 9000;
-
-const BOOK_SCRAPER_TIMEOUT_MS = 13000;
-
-function bookSearchConfig(context) {
-  try {
-    const dataDir = context && context.dataDir;
-    if (!dataDir) return {};
-    const file = path.join(dataDir, "book-search.json");
-    if (!fs.existsSync(file)) return {};
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (_e) {
-    return {};
-  }
-}
-
-function withBookTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      const t = setTimeout(
-        () => reject(new Error(`${label} timed out after ${ms}ms`)),
-        ms,
-      );
-      if (t.unref) t.unref();
-    }),
-  ]);
-}
-
-function normalizeWorkKey(str) {
-  return String(str || "")
-    .toLowerCase()
-    .trim()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Ported verbatim from the plugin's edition_score.ts.
-function scoreBookCandidate(book) {
-  let score = 0;
-  if (book.isbn13) score += 20;
-  if (book.isbn10) score += 15;
-  if (book.publisher) score += 10;
-  const pages =
-    typeof book.totalPage === "number"
-      ? book.totalPage
-      : parseInt(book.totalPage || "", 10) || 0;
-  if (pages) score += 12;
-  if (book.coverUrl) score += 10;
-  if (book.publishDate) score += 6;
-  if (book.categories) score += 6;
-  if (book.description) score += 4;
-  if (book.title) score += 2;
-  if (book.author) score += 2;
-  return score;
-}
-
-function detectIsbn(query) {
-  const compact = String(query || "").replace(/[-\s]/g, "");
-  if (/^\d{13}$/.test(compact) || /^\d{9}[\dXx]$/.test(compact)) {
-    return compact.toUpperCase();
-  }
-  return "";
-}
-
-function pickIsbns(values) {
-  let isbn10 = "";
-  let isbn13 = "";
-  for (const value of values || []) {
-    const digits = String(value || "").replace(/[^\dXx]/g, "");
-    if (digits.length === 13 && !isbn13) isbn13 = digits;
-    else if (digits.length === 10 && !isbn10) isbn10 = digits;
-  }
-  return { isbn10, isbn13 };
-}
-
-async function bookOpenLibrary(query, isbn) {
-  const url = isbn
-    ? `https://openlibrary.org/search.json?q=isbn:${encodeURIComponent(isbn)}&limit=5`
-    : `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`;
-  const fields =
-    "&fields=key,title,author_name,isbn,first_publish_year,publisher,number_of_pages_median,language,cover_i,subject";
-  const data = await fetchJson(url + fields);
-  return (data?.docs || []).slice(0, 5).map((doc) => {
-    const { isbn10, isbn13 } = pickIsbns(doc.isbn || []);
-    return {
-      title: doc.title || "",
-      author: (doc.author_name || [])[0] || "",
-      authors: doc.author_name || [],
-      coverUrl: doc.cover_i
-        ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`
-        : "",
-      link: doc.key ? `https://openlibrary.org${doc.key}` : "",
-      isbn10,
-      isbn13,
-      publisher: (doc.publisher || [])[0] || "",
-      publishDate: doc.first_publish_year ? String(doc.first_publish_year) : "",
-      totalPage: doc.number_of_pages_median || "",
-      categories: (doc.subject || []).slice(0, 5).join(", "),
-      language: (doc.language || [])[0] || "",
-      _workKey: doc.key || "",
-    };
-  });
-}
-
-async function bookOpenLibraryDescription(workKey) {
-  if (!workKey) return "";
-  try {
-    const work = await fetchJson(`https://openlibrary.org${workKey}.json`);
-    const d = work?.description;
-    return typeof d === "string" ? d : d?.value || "";
-  } catch (_e) {
-    return "";
-  }
-}
-
-async function bookGoogle(query, isbn, config, language) {
-  const q = isbn ? `isbn:${isbn}` : query;
-  let url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5&printType=books`;
-  if (language)
-    url += `&langRestrict=${encodeURIComponent(language.slice(0, 2))}`;
-  if (config.googleApiKey)
-    url += `&key=${encodeURIComponent(config.googleApiKey)}`;
-  const data = await fetchJson(url);
-  if (data?.error) throw new Error(data.error.message || "Google Books error");
-  return (data?.items || []).slice(0, 5).map((item) => {
-    const v = item.volumeInfo || {};
-    const ids = v.industryIdentifiers || [];
-    const find = (type) =>
-      (ids.find((i) => i.type === type) || {}).identifier || "";
-    return {
-      title: v.title || "",
-      author: (v.authors || [])[0] || "",
-      authors: v.authors || [],
-      coverUrl: (v.imageLinks?.thumbnail || "").replace(/^http:/, "https:"),
-      link: v.canonicalVolumeLink || v.infoLink || "",
-      isbn10: find("ISBN_10"),
-      isbn13: find("ISBN_13"),
-      description: v.description || "",
-      publisher: v.publisher || "",
-      publishDate: v.publishedDate || "",
-      totalPage: v.pageCount || "",
-      categories: (v.categories || []).join(", "),
-      language: v.language || "",
-    };
-  });
-}
-
-// Goodreads search bot-challenges plain fetches, so the finder goes through
-// web search / the reader proxy; the book PAGE itself answers direct fetches
-// and carries a __NEXT_DATA__ JSON blob with the full record.
-async function bookGoodreadsFindUrl(query, context) {
-  try {
-    const { results } = await runWebSearch(
-      `site:goodreads.com/book/show ${query}`,
-      5,
-      (context && context.cloudKeys) || {},
-    );
-    const hit = (results || []).find((r) =>
-      /goodreads\.com\/book\/show\//i.test(r.url || ""),
-    );
-    if (hit) return hit.url.split("?")[0];
-  } catch (_e) {
-    /* fall through */
-  }
-  try {
-    const proxied = await readUrlContent(
-      `https://www.goodreads.com/search?q=${encodeURIComponent(query)}`,
-      20000,
-    );
-    if (proxied.ok) {
-      const m = proxied.text.match(
-        /https:\/\/www\.goodreads\.com\/book\/show\/[A-Za-z0-9._-]+/,
-      );
-      if (m) return m[0];
-    }
-  } catch (_e) {
-    /* no goodreads result */
-  }
-  return "";
-}
-
-function bookGoodreadsParseNextData(html) {
-  const $ = cheerio.load(html);
-  const raw = $("#__NEXT_DATA__").text() || "";
-  if (!raw) return null;
-  let json;
-  try {
-    json = JSON.parse(raw);
-  } catch (_e) {
-    return null;
-  }
-  const apollo = json?.props?.pageProps?.apolloState || {};
-  let book = null;
-  const contributors = {};
-  for (const [key, value] of Object.entries(apollo)) {
-    if (!value || typeof value !== "object") continue;
-    if (key.startsWith("Contributor:") && value.name) {
-      contributors[key] = value.name;
-    }
-    if (value.__typename === "Book" && value.title && value.details) {
-      if (!book || (value.description && !book.description)) book = value;
-    }
-  }
-  if (!book) return null;
-  const details = book.details || {};
-  const primary = (book.primaryContributorEdge || {}).node || {};
-  const authorName =
-    primary.name ||
-    contributors[(primary.__ref || "").trim()] ||
-    Object.values(contributors)[0] ||
-    "";
-  const genres = (book.bookGenres || [])
-    .map((g) => g?.genre?.name)
-    .filter(Boolean)
-    .join(", ");
-  const year = details.publicationTime
-    ? String(new Date(details.publicationTime).getUTCFullYear())
-    : "";
-  return {
-    title: book.titleComplete || book.title || "",
-    author: authorName,
-    authors: authorName ? [authorName] : [],
-    coverUrl: book.imageUrl || "",
-    link: book.webUrl || "",
-    isbn10: details.isbn || "",
-    isbn13: details.isbn13 || "",
-    description: String(book.description || "").replace(/<[^>]+>/g, ""),
-    publisher: details.publisher || "",
-    publishDate: year,
-    totalPage: details.numPages || "",
-    categories: genres,
-    language: details.language?.name || "",
-  };
-}
-
-async function bookGoodreads(query, isbn, context) {
-  const url = await bookGoodreadsFindUrl(isbn || query, context);
-  if (!url) return [];
-  const html = await fetchHtml(url, { timeout: BOOK_SCRAPER_TIMEOUT_MS });
-  const book = bookGoodreadsParseNextData(html);
-  return book ? [book] : [];
-}
-
-async function bookStoryGraph(query) {
-  const html = await fetchHtml(
-    `https://app.thestorygraph.com/browse?search_term=${encodeURIComponent(query)}`,
-    { timeout: BOOK_SCRAPER_TIMEOUT_MS },
-  );
-  const $ = cheerio.load(html);
-  const books = [];
-  $(".book-pane").each((_, el) => {
-    if (books.length >= 3) return;
-    const node = $(el);
-    const linkEl = node.find('a[href^="/books/"]').first();
-    const href = linkEl.attr("href") || "";
-    const img = node.find("img").first();
-    const text = node.text().replace(/\s+/g, " ").trim();
-    const title = (img.attr("alt") || "").replace(/ by .*$/, "").trim();
-    const authorMatch = (img.attr("alt") || "").match(/ by (.+)$/);
-    if (!title || !href) return;
-    books.push({
-      title,
-      author: authorMatch ? authorMatch[1].trim() : "",
-      authors: authorMatch ? [authorMatch[1].trim()] : [],
-      coverUrl: img.attr("src") || "",
-      link: `https://app.thestorygraph.com${href.split("?")[0]}`,
-      totalPage: (text.match(/(\d+)\s+pages/) || [])[1] || "",
-    });
-  });
-  if (
-    !books.length &&
-    /you need to sign in|sign in to continue/i.test($.text())
-  ) {
-    throw new Error("StoryGraph requires sign-in for this request");
-  }
-  return books;
-}
-
-async function bookHardcover(query, config) {
-  const token = String(config.hardcoverToken || "").trim();
-  if (!token) return [];
-  const auth = /^bearer /i.test(token) ? token : `Bearer ${token}`;
-  const body = JSON.stringify({
-    query: `query SearchBooks($query: String!) {
-      search(query: $query, query_type: "Book", per_page: 5, page: 1) { results }
-    }`,
-    variables: { query },
-  });
-  const res = await fetchHtml("https://api.hardcover.app/v1/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: auth,
-    },
-    body,
-    timeout: BOOK_PROVIDER_TIMEOUT_MS,
-  });
-  const json = JSON.parse(res);
-  const hits = json?.data?.search?.results?.hits || [];
-  return hits.slice(0, 5).map((h) => {
-    const doc = h.document || h;
-    const { isbn10, isbn13 } = pickIsbns(doc.isbns || []);
-    return {
-      title: doc.title || "",
-      author: (doc.author_names || [])[0] || "",
-      authors: doc.author_names || [],
-      coverUrl: doc.image?.url || "",
-      link: doc.slug ? `https://hardcover.app/books/${doc.slug}` : "",
-      isbn10,
-      isbn13,
-      publishDate: doc.release_year ? String(doc.release_year) : "",
-      totalPage: doc.pages || "",
-      categories: (doc.genres || []).slice(0, 5).join(", "),
-    };
-  });
-}
-
-async function bookLibraryThing(query, config) {
-  const token = String(config.librarythingToken || "").trim();
-  if (!token) return [];
-  const url = `https://www.librarything.com/api/talpa.php?search=${encodeURIComponent(query)}&token=${encodeURIComponent(token)}&limit=5&responseType=json`;
-  const data = await fetchJson(url);
-  const items = data?.resultlist || data?.results || [];
-  return (Array.isArray(items) ? items : []).slice(0, 5).map((item) => {
-    const isbns = item.isbns || item.isbn || [];
-    const { isbn10, isbn13 } = pickIsbns(
-      Array.isArray(isbns) ? isbns : [isbns],
-    );
-    return {
-      title: item.title || "",
-      author: item.author || "",
-      authors: item.author ? [item.author] : [],
-      coverUrl:
-        isbn13 || isbn10
-          ? `https://covers.openlibrary.org/b/isbn/${isbn13 || isbn10}-L.jpg`
-          : "",
-      link: item.work_id
-        ? `https://www.librarything.com/work/${item.work_id}`
-        : "",
-      isbn10,
-      isbn13,
-    };
-  });
-}
-
-async function bookCalibre(query, config) {
-  const server = String(config.calibreServerUrl || "")
-    .trim()
-    .replace(/\/$/, "");
-  if (!server) return [];
-  const libraryId = encodeURIComponent(config.calibreLibraryId || "");
-  const search = await fetchJson(
-    `${server}/ajax/search?query=${encodeURIComponent(query)}&num=5${libraryId ? `&library_id=${libraryId}` : ""}`,
-  );
-  const ids = (search?.book_ids || []).slice(0, 5);
-  if (!ids.length) return [];
-  const detail = await fetchJson(
-    `${server}/ajax/books?ids=${ids.join(",")}${libraryId ? `&library_id=${libraryId}` : ""}`,
-  );
-  return ids
-    .map((id) => detail?.[id])
-    .filter(Boolean)
-    .map((b) => {
-      const identifiers = b.identifiers || {};
-      const { isbn10, isbn13 } = pickIsbns([identifiers.isbn || ""]);
-      return {
-        title: b.title || "",
-        author: (b.authors || [])[0] || "",
-        authors: b.authors || [],
-        coverUrl: "",
-        link: `${server}/#book_id=${encodeURIComponent(String(b.application_id || ""))}`,
-        isbn10,
-        isbn13,
-        publisher: b.publisher || "",
-        publishDate: (b.pubdate || "").slice(0, 10),
-        language: (b.languages || [])[0] || "",
-        series: b.series || "",
-        seriesNumber: b.series_index || "",
-        categories: (b.tags || []).slice(0, 6).join(", "),
-        description: String(b.comments || "").replace(/<[^>]+>/g, ""),
-      };
-    });
-}
-
-const BOOK_FIELD_PRIORITY = {
-  title: ["goodreads", "google", "openlibrary", "hardcover", "calibre"],
-  author: ["goodreads", "google", "openlibrary", "hardcover", "calibre"],
-  description: ["goodreads", "google", "calibre", "openlibrary"],
-  publisher: ["google", "openlibrary", "goodreads", "hardcover", "calibre"],
-  publishDate: ["google", "openlibrary", "goodreads", "hardcover", "calibre"],
-  totalPage: ["google", "goodreads", "openlibrary", "hardcover", "storygraph"],
-  categories: ["goodreads", "google", "openlibrary", "hardcover", "calibre"],
-  coverUrl: ["goodreads", "google", "openlibrary", "hardcover", "storygraph"],
-  language: ["google", "goodreads", "openlibrary", "calibre"],
-  series: ["calibre", "goodreads"],
-};
-
-function mergeBooks(candidates) {
-  const merged = {};
-  const conflicts = [];
-  const sources = candidates.map((c) => c._src);
-  const fields = new Set();
-  candidates.forEach((c) => Object.keys(c).forEach((k) => fields.add(k)));
-  for (const field of fields) {
-    if (field.startsWith("_")) continue;
-    const order = BOOK_FIELD_PRIORITY[field] || sources;
-    const holders = candidates.filter((c) => {
-      const v = c[field];
-      return Array.isArray(v)
-        ? v.length
-        : v !== undefined && v !== null && String(v).trim() !== "";
-    });
-    if (!holders.length) continue;
-    holders.sort(
-      (a, b) =>
-        (order.indexOf(a._src) + 1 || 99) - (order.indexOf(b._src) + 1 || 99),
-    );
-    merged[field] = holders[0][field];
-    if (["totalPage", "publisher", "publishDate"].includes(field)) {
-      const distinct = [
-        ...new Set(holders.map((h) => String(h[field]).trim())),
-      ];
-      if (distinct.length > 1) {
-        conflicts.push(
-          `${field}: ` +
-            holders
-              .slice(0, 3)
-              .map((h) => `${h[field]} (${h._src})`)
-              .join(" vs "),
-        );
-      }
-    }
-  }
-  return { merged, conflicts };
-}
-
-async function executeBookSearch(
-  { query, language = "", provider = "" },
-  context = {},
-) {
-  try {
-    const config = bookSearchConfig(context);
-    const isbn = detectIsbn(query);
-    const wanted = String(provider || "")
-      .toLowerCase()
-      .trim();
-    const providers = [
-      { id: "openlibrary", run: () => bookOpenLibrary(query, isbn) },
-      { id: "google", run: () => bookGoogle(query, isbn, config, language) },
-      { id: "goodreads", run: () => bookGoodreads(query, isbn, context) },
-      { id: "storygraph", run: () => bookStoryGraph(query) },
-      { id: "hardcover", run: () => bookHardcover(query, config) },
-      { id: "librarything", run: () => bookLibraryThing(query, config) },
-      { id: "calibre", run: () => bookCalibre(query, config) },
-    ].filter((p) => !wanted || p.id === wanted);
-
-    const outcomes = await Promise.allSettled(
-      providers.map((p) =>
-        withBookTimeout(
-          p.run(),
-          p.id === "goodreads" || p.id === "storygraph"
-            ? BOOK_SCRAPER_TIMEOUT_MS
-            : BOOK_PROVIDER_TIMEOUT_MS,
-          p.id,
-        ).then((books) => (books || []).map((b) => ({ ...b, _src: p.id }))),
-      ),
-    );
-
-    const all = [];
-    const unavailable = [];
-    outcomes.forEach((o, i) => {
-      if (o.status === "fulfilled") all.push(...o.value);
-      else unavailable.push(providers[i].id);
-    });
-    if (!all.length) {
-      return `No book found for "${query}".${unavailable.length ? ` (Sources unavailable: ${unavailable.join(", ")})` : ""}`;
-    }
-
-    // Group by work (normalized title|author), exactly like the plugin.
-    const workMap = new Map();
-    for (const book of all) {
-      const groupTitle = normalizeWorkKey(
-        String(book.title || "").replace(/\s*[([][^)\]]*[)\]]\s*$/, ""),
-      );
-      const key = `${groupTitle}|${normalizeWorkKey(book.author)}`;
-      if (!workMap.has(key)) workMap.set(key, []);
-      workMap.get(key).push(book);
-    }
-    // Rank works: source coverage first, then best edition score, with a
-    // preference for titles containing the query terms.
-    const queryNorm = normalizeWorkKey(isbn ? "" : query);
-    const ranked = [...workMap.values()].sort((a, b) => {
-      const cover = (list) => new Set(list.map((x) => x._src)).size;
-      const relevance = (list) =>
-        queryNorm &&
-        normalizeWorkKey(list[0].title) &&
-        queryNorm.includes(normalizeWorkKey(list[0].title))
-          ? 1
-          : 0;
-      const best = (list) => Math.max(...list.map(scoreBookCandidate));
-      return (
-        relevance(b) - relevance(a) || cover(b) - cover(a) || best(b) - best(a)
-      );
-    });
-    const workBooks = ranked[0];
-    const { merged, conflicts } = mergeBooks(workBooks);
-    // ISBNs describe an edition, not a work: take them from the strongest
-    // edition rather than by per-field source priority.
-    const queriedEdition = isbn
-      ? workBooks.find((b) => b.isbn13 === isbn || b.isbn10 === isbn)
-      : null;
-    const bestEdition =
-      queriedEdition ||
-      [...workBooks].sort(
-        (a, b) => scoreBookCandidate(b) - scoreBookCandidate(a),
-      )[0];
-    if (bestEdition) {
-      if (bestEdition.isbn13) merged.isbn13 = bestEdition.isbn13;
-      if (bestEdition.isbn10) merged.isbn10 = bestEdition.isbn10;
-    }
-    if (isbn && !merged.isbn13 && !merged.isbn10) {
-      if (isbn.length === 13) merged.isbn13 = isbn;
-      else merged.isbn10 = isbn;
-    }
-
-    // Mutual enrichment: fill missing description from Open Library's work
-    // record; fill missing cover from the ISBN cover CDN.
-    if (!merged.description) {
-      const ol = workBooks.find((b) => b._src === "openlibrary" && b._workKey);
-      if (ol)
-        merged.description = await bookOpenLibraryDescription(ol._workKey);
-    }
-    if (!merged.coverUrl && (merged.isbn13 || merged.isbn10)) {
-      merged.coverUrl = `https://covers.openlibrary.org/b/isbn/${merged.isbn13 || merged.isbn10}-L.jpg`;
-    }
-
-    // Output: markdown table + description + editions + sources.
-    const rows = [
-      ["Title", merged.title],
-      ["Author(s)", (merged.authors || []).join(", ") || merged.author],
-      ["ISBN-13", merged.isbn13],
-      ["ISBN-10", merged.isbn10],
-      ["Publisher", merged.publisher],
-      ["Published", merged.publishDate],
-      ["Pages", merged.totalPage],
-      ["Categories", merged.categories],
-      [
-        "Series",
-        merged.series
-          ? `${merged.series}${merged.seriesNumber ? ` #${merged.seriesNumber}` : ""}`
-          : "",
-      ],
-      ["Language", merged.language],
-    ].filter(([, v]) => v !== undefined && String(v || "").trim() !== "");
-
-    let out = `## ${merged.title}\n\n`;
-    out += "| Field | Value |\n|---|---|\n";
-    rows.forEach(([k, v]) => {
-      out += `| ${k} | ${String(v).replace(/\|/g, "/").replace(/\n/g, " ")} |\n`;
-    });
-    if (merged.description) {
-      const desc = String(merged.description).trim();
-      out += `\n**Description:** ${desc.length > 900 ? desc.slice(0, 900) + "…" : desc}\n`;
-    }
-    if (merged.coverUrl) out += `\n[Cover](${merged.coverUrl})\n`;
-    const links = workBooks
-      .filter((b) => b.link)
-      .map((b) => `[${b._src}](${b.link})`);
-    if (links.length) {
-      // Inside an HTML comment: the server extracts these into source pills;
-      // the reply text itself must not repeat them.
-      out += `\n<!-- sources: ${links.join(" ")} -->\n`;
-    }
-    if (conflicts.length) {
-      out += `\n**Source disagreements:** ${conflicts.join("; ")}\n`;
-    }
-    const otherWorks = ranked
-      .slice(1, 4)
-      .map((list) => `${list[0].title} (${list[0].author})`)
-      .filter(Boolean);
-    if (otherWorks.length) {
-      out += `\n**Other matches** (re-query to pick one): ${otherWorks.join(" | ")}\n`;
-    }
-    if (unavailable.length) {
-      out += `\n_Sources unavailable this run: ${unavailable.join(", ")}_\n`;
-    }
-    out +=
-      "\n[Instruction to the assistant: present the markdown table, description and Cover link above VERBATIM in your reply — do not convert them to prose, do not expand the cover into a bare URL, and do not list the sources (they are shown to the user as pills automatically).]";
-    return out.trim();
-  } catch (e) {
-    return `Book Search Error: ${e.message}`;
-  }
-}
-
 module.exports = {
+  parseEncyclopediaEvidence,
   executeWikipedia,
   executeLarousse,
   executeScholarpedia,
@@ -3746,7 +3265,6 @@ module.exports = {
   executeAcademicSearch,
   executeFetchPaper,
   executeDeepEtymology,
-  executeBookSearch,
   WIKI_FALLBACK_LANGS,
   wikiTitleKey,
   searchWikipedia,
@@ -3765,22 +3283,6 @@ module.exports = {
   fetchDLE,
   fetchDeChile,
   fetchCNRTL,
-  bookSearchConfig,
-  detectIsbn,
-  bookOpenLibrary,
-  bookGoogle,
-  bookGoodreads,
-  bookStoryGraph,
-  bookHardcover,
-  bookLibraryThing,
-  bookCalibre,
-  withBookTimeout,
-  BOOK_SCRAPER_TIMEOUT_MS,
-  BOOK_PROVIDER_TIMEOUT_MS,
-  normalizeWorkKey,
-  scoreBookCandidate,
-  mergeBooks,
-  bookOpenLibraryDescription,
   readViaWayback,
   readViaArchivePh,
   archivePhLookupUrls,
@@ -3819,10 +3321,6 @@ module.exports = {
   fetchText,
   cleanEtymText,
   fetchArrayBuffer,
-  pickIsbns,
-  bookGoodreadsFindUrl,
-  bookGoodreadsParseNextData,
-  BOOK_FIELD_PRIORITY,
   WEB_UAS,
   webSearchSettingsCache,
   WEB_SEARCH_SETTINGS_FILE,

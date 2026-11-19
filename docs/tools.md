@@ -1,6 +1,6 @@
 # Tools
 
-Tools are functions the model can call during a turn. Dive ships 29, defined in
+Tools are functions the model can call during a turn. Dive ships 27, defined in
 [`skills.js`](../skills.js) as `ALL_SKILLS` and implemented across `skills/`.
 File names, identifiers and API paths keep the older name "skill"; the interface
 and these documents call them tools.
@@ -34,16 +34,13 @@ Required arguments are in **bold**.
 | `academic_search` | **query**, year_from, year_to, max_results, providers | Scholarly search                     |
 | `fetch_paper`     | **url_or_doi**, save                                  | Retrieve a paper, optionally to disk |
 | `fact_check`      | **claim**, language                                   | Check a specific claim               |
-| `web_scraper`     | **url**                                               | Extract the readable text of a page  |
+| `web_scraper`     | **url**                                               | Extract the readable text of a page¹ |
 
-### Browser
-
-A real Chromium the model drives, shown in a panel beside the chat.
-
-| Tool          | Arguments                                      | Notes                                                     |
-| ------------- | ---------------------------------------------- | --------------------------------------------------------- |
-| `browse_read` | **action**, url, selector, session, show       | Open, read, list elements, screenshot, back, close        |
-| `browse_act`  | **action**, target, text, key, amount, session | Click, type, press, select, scroll; requires confirmation |
+¹ When a page has no readable text without JavaScript, the desktop app renders
+it in a hidden window of its own Chromium (`electron/render-page.js`) and reads
+that. The window is sandboxed, keeps nothing, and cannot reach this machine or
+the local network. `node server.js` on its own has no renderer and skips this
+step.
 
 ### Working memory
 

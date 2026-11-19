@@ -21,6 +21,7 @@ const {
 const { isDatabaseSlashCommand } = require("./slash_commands");
 const { MODE_IDS, DEFAULT_ENABLED_MODES } = require("./assets/js/00-modes.js");
 const { redactText: redactTraceText } = require("./redact.js");
+const { localErrorText } = require("./routes/chat-local-request.js");
 // Sanitising stream events for storage lives in server/trace.js.
 const {
   serializeLibraryResults,
@@ -1177,10 +1178,6 @@ function defaultSkillsConfig() {
     run_python: true,
     macos_control: false,
     task_plan: true,
-    browse_read: true,
-    // Off by default, like shell_command and macos_control: it acts on the
-    // world, and the page it acts on is untrusted input.
-    browse_act: false,
   };
 }
 
@@ -1531,7 +1528,10 @@ function saveUiSettings(settings) {
 // this OpenAI-format request/stream code internally.
 const LOCAL_MODE_DEFAULTS = {
   lmstudio: { label: "LM Studio", baseUrl: "http://127.0.0.1:1234/v1" },
-  llamacpp: { label: "llama.cpp", baseUrl: "http://127.0.0.1:8080/v1" },
+  // 8130, not llama-server's own default of 8080: that is Dive's port, so a
+  // llama.cpp URL left on 8080 sent every message to Dive itself (404). 8130 is
+  // where Dive starts its own llama-server (DEFAULT_PORT in routes/llamacpp.js).
+  llamacpp: { label: "llama.cpp", baseUrl: "http://127.0.0.1:8130/v1" },
 };
 const LOCAL_MODE_IDS = Object.keys(LOCAL_MODE_DEFAULTS);
 const LOCAL_MODEL_SETTINGS_FILE = path.join(
@@ -1766,7 +1766,7 @@ async function streamLocalOpenAiCompletion({
     const raw = await upstreamRes.text().catch(() => "");
     throw createHttpError(
       upstreamRes.status,
-      `Local model request failed (${upstreamRes.status}): ${(raw || upstreamRes.statusText || "empty response body").slice(0, 700)}`,
+      `Local model request failed (${upstreamRes.status}): ${(localErrorText(raw) || upstreamRes.statusText || "empty response body").slice(0, 700)}`,
     );
   }
   if (!upstreamRes.body) {
@@ -2592,11 +2592,6 @@ const skillsDomain = require("./routes/skills")({
   initMcpServers,
   stopMcpServers,
 });
-const browserDomain = require("./routes/browser")({
-  parseJsonBody,
-  appendSecurityEvent,
-  DATA_DIR,
-});
 const libraryDomain = require("./routes/library")({
   DATA_DIR,
   parseJsonBody,
@@ -2882,12 +2877,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (
-    await browserDomain.handleRequest({ req, res, urlPath, requestUrl, send })
-  ) {
-    return;
-  }
-
   if (await skillsDomain.handleRequest({ req, urlPath, requestUrl, send })) {
     return;
   }
@@ -2916,14 +2905,6 @@ const server = http.createServer(async (req, res) => {
         "ollama_mode_entered",
         "cloud_mode_entered",
         "user_message_submitted",
-        // Ending an agent browser session discards whatever it had open,
-        // including a page the user signed into, so it belongs in the trail.
-        "browser_session_closed",
-        "browser_user_navigated",
-        "browser_extension_installed",
-        "browser_extension_enabled",
-        "browser_agent_acted",
-        "browser_agent_navigated",
       ]);
       if (!ALLOWED_SECURITY_EVENTS.has(body.event.trim())) {
         send(400, { error: "Unknown security event type" });
@@ -3112,12 +3093,6 @@ function gracefulShutdown(signal) {
     }
   }
   appEventClients.clear();
-
-  // Agent browser sessions are child processes of their own: without this a
-  // headless Chromium survives the server that started it.
-  browserDomain.closeAllSessions().catch((error) => {
-    console.error("Failed to close browser sessions:", error);
-  });
 
   // Force exit after 5 seconds, including if an MCP transport is stuck while
   // closing. Normal shutdown waits for every mode-local MCP generation first.

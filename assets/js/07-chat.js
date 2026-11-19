@@ -1649,7 +1649,6 @@ function toggleNotes() {
   if (notesOpen) {
     if (historyOpen) toggleHistory();
     if (settingsOpen) toggleSettings();
-    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     const { area } = getNotesElements();
@@ -1777,7 +1776,6 @@ function toggleSettings() {
   if (settingsOpen) {
     if (historyOpen) toggleHistory();
     if (notesOpen) toggleNotes();
-    if (typeof closeBrowserPanel === "function") closeBrowserPanel();
     panel.classList.add("open");
     resizerEl.style.display = "block";
     closePromptEditor();

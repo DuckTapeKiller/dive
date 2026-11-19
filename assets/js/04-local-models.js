@@ -122,7 +122,7 @@ function renderLocalModelOptions(modeId, models) {
     o.textContent = m;
     els.select.appendChild(o);
   }
-  els.select.value = current;
+  els.select.value = localModelListEntry(list, current) || current;
   // The visible dropdown is a custom-select widget built from the native
   // select's options at startup; rebuild it so new models show up.
   refreshCustomSelectUi(els.select);
@@ -216,6 +216,20 @@ async function refreshLocalModelSelection() {
     return;
   }
   for (const id of LOCAL_MODE_IDS) {
+    // The server URL moves with a load too: Dive points it at the port the
+    // model was started on. This page posts its whole copy back on the next
+    // settings change (picking a model, ticking MERGE SYSTEM PROMPTS), so a
+    // stale URL here quietly undid the load and the next message went to the
+    // old port. Followed unless the field holds an edit not yet saved.
+    const nextUrl = data?.settings?.[id]?.baseUrl;
+    if (typeof nextUrl === "string" && nextUrl) {
+      const els = localModeEls(id);
+      const previous = localModelConfig[id].baseUrl;
+      if (nextUrl !== previous) {
+        localModelConfig[id].baseUrl = nextUrl;
+        if (els.base && els.base.value === previous) els.base.value = nextUrl;
+      }
+    }
     const next = data?.settings?.[id]?.model;
     if (typeof next !== "string" || next === localModelConfig[id].model) {
       continue;
@@ -1248,6 +1262,21 @@ function renderLlamaCppModelList(status, wrapId, full) {
       // the llama.cpp model settings the helpers above write, so it needs
       // its own handler instead of mkCheck.
       mkSingleSystemCheck(m.file, advPanel);
+      // A router on this slot's port loads models from its own preset, so
+      // the launch options above never reach it — only CONTEXT and GPU
+      // LAYERS are written into the preset. Without this note KEEP IN RAM
+      // looked like it worked while a hand-written `load-mode` line was what
+      // actually kept the model resident.
+      const servingRouter = m.embedding
+        ? status.embeddingExternal
+        : status.chatExternal;
+      if (servingRouter && servingRouter.router) {
+        const note = document.createElement("div");
+        note.className = "setting-help";
+        note.style.cssText = "flex-basis: 100%; margin: 0;";
+        note.textContent = `A llama-server router answers on port ${servingRouter.port}, so THREADS, BATCH, FLASH ATTENTION, KEEP IN RAM and KV CACHE do not reach it: it takes those from its preset file. They apply when Dive starts llama-server itself.`;
+        advPanel.appendChild(note);
+      }
       container.appendChild(advPanel);
     }
 

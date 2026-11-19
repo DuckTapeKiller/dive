@@ -16,7 +16,7 @@ const os = require("os");
 const path = require("path");
 const { exec, execFile } = require("child_process");
 const { Worker } = require("worker_threads");
-const { DATA_DIR } = require("../data-dir.js");
+const { DATA_DIR, WORKSPACE_DIR } = require("../data-dir.js");
 const {
   expandHomePath,
   resolveAllowedPath,
@@ -103,7 +103,10 @@ async function executeCodeSearch({
   if (!act) {
     return "Code Search Error: action must be grep, find, read, or tree.";
   }
-  const resolved = resolveAllowedPath(targetPath || "~/dive/workspace");
+  // WORKSPACE_DIR, not "~/dive/workspace": with DIVE_DATA_DIR set, the literal
+  // path lies outside the allowed directories and every call without a path
+  // failed.
+  const resolved = resolveAllowedPath(targetPath || WORKSPACE_DIR);
   if (resolved.error) return `Code Search Error: ${resolved.error}`;
   const target = resolved.target;
   const cap = Math.max(
@@ -256,7 +259,7 @@ async function executeGitTools(args) {
   if (action === "blame" && !args.path_filter) {
     return "Git Tools Error: blame requires path_filter (the file to blame).";
   }
-  const resolved = resolveAllowedPath(args.repo || "~/dive/workspace");
+  const resolved = resolveAllowedPath(args.repo || WORKSPACE_DIR);
   if (resolved.error) return `Git Tools Error: ${resolved.error}`;
   // Refs and paths become argv entries, never shell text; reject option-like
   // values so they cannot be smuggled in as git flags.

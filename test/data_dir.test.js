@@ -142,3 +142,40 @@ test("the settings files that bypassed the override now honour it", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// The shipped library default reads "~/dive/library.sqlite". Taken literally,
+// a test server or second instance with its own data folder opened the user's
+// live library.
+test("the default library database lives in the overridden data folder", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dive-datadir-"));
+  try {
+    const out = execFileSync(
+      process.execPath,
+      [
+        "-e",
+        `const s = require("./library/store.js");
+         process.stdout.write(JSON.stringify({
+           fresh: s.normalizeConfig({}).databasePath,
+           shipped: s.normalizeConfig({ databasePath: "~/dive/library.sqlite" }).databasePath,
+           chosen: s.normalizeConfig({ databasePath: "~/elsewhere/lib.sqlite" }).databasePath,
+         }));`,
+      ],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, DIVE_DATA_DIR: dir },
+      },
+    );
+    const paths = JSON.parse(out);
+    const expected = path.join(path.resolve(dir), "library.sqlite");
+    assert.strictEqual(paths.fresh, expected);
+    assert.strictEqual(paths.shipped, expected);
+    // A path the user picked is theirs and stays where they put it.
+    assert.strictEqual(
+      paths.chosen,
+      path.join(os.homedir(), "elsewhere", "lib.sqlite"),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
