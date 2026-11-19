@@ -15,6 +15,13 @@ const {
 } = require("./chat-local-request.js");
 const { isToolErrorResult } = require("../server/trace.js");
 const {
+  detectLanguage,
+  withReplyLanguage,
+  withLanguageReminder,
+  needsRewrite,
+  rewriteInLanguage,
+} = require("./reply-language.js");
+const {
   buildForcedSkillToolCall,
   isDatabaseSlashCommand,
   isSkillSlashCommand,
@@ -766,6 +773,14 @@ module.exports = function createChatDomain(deps) {
       // as tool results are appended.
       const mergeSystem = wantsSingleSystemMessage(conf, model);
 
+      // The answer is in the language of the question, named — see
+      // reply-language.js. Not for a system override: those are utility calls
+      // (a rewrite, a translation) that set their own terms.
+      const askedLanguage = systemOverride
+        ? null
+        : detectLanguage(originalMessage);
+      requestMessages = withReplyLanguage(requestMessages, askedLanguage);
+
       let round = 0;
       for (;;) {
         throwIfClientAborted();
@@ -881,6 +896,13 @@ module.exports = function createChatDomain(deps) {
               },
             ];
           }
+          // The language named again after the results, the last thing the
+          // model reads before it answers.
+          const lastResult = requestMessages[requestMessages.length - 1];
+          requestMessages[requestMessages.length - 1] = {
+            ...lastResult,
+            content: withLanguageReminder(lastResult.content, askedLanguage),
+          };
           // Anything a skill wants the model to SEE goes in after the results.
           const imageTurn = takePendingSkillImages();
           if (imageTurn) requestMessages = [...requestMessages, imageTurn];
@@ -921,7 +943,10 @@ module.exports = function createChatDomain(deps) {
           ...requestMessages,
           {
             role: "user",
-            content: `[TOOL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this tool result, write your complete final answer to the user's question now. Do not repeat this tool call.`,
+            content: withLanguageReminder(
+              `[TOOL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this tool result, write your complete final answer to the user's question now. Do not repeat this tool call.`,
+              askedLanguage,
+            ),
           },
         ];
         // Reset the accumulated text so the final reply is ONLY what the model
@@ -935,6 +960,34 @@ module.exports = function createChatDomain(deps) {
       // Final safety net: never let raw skill-call syntax reach the bubble, even
       // if a call was malformed or emitted while skills were disabled (DB on).
       output = stripLeakedSkillCalls(output);
+
+      // Still in another language after all that: rewrite it once, without
+      // tools, in the language of the question.
+      const rewriteTo = systemOverride
+        ? null
+        : needsRewrite(originalMessage, output);
+      if (rewriteTo) {
+        output = await rewriteInLanguage(
+          output,
+          rewriteTo,
+          async (messages) => {
+            let text = "";
+            await streamLocalOpenAiCompletion({
+              baseUrl,
+              model,
+              messages: mergeSystem
+                ? collapseLeadingSystemMessages(messages)
+                : messages,
+              params,
+              signal: abortController.signal,
+              onDelta: (delta) => {
+                text += delta;
+              },
+            });
+            return text;
+          },
+        );
+      }
       emit({ type: "delta", delta: "", response: output });
 
       if (emittedThinkingStart) {
@@ -2462,6 +2515,12 @@ module.exports = function createChatDomain(deps) {
         // Applied last: the library/skills assembly above rewrites the system
         // message, so the image notice has to go on after it.
         requestMessages = withAttachedImageNotice(requestMessages, turnImages);
+        // The answer is in the language of the question, named — see
+        // reply-language.js. Not for a system override (utility calls).
+        const askedLanguage = systemOverride
+          ? null
+          : detectLanguage(originalMessage);
+        requestMessages = withReplyLanguage(requestMessages, askedLanguage);
         for (let round = 0; ; round += 1) {
           // Per-round parser state: peel a leading <thought>/<think> reasoning
           // block off this round's content stream and route it to the thinking
@@ -2629,7 +2688,10 @@ module.exports = function createChatDomain(deps) {
             ...requestMessages,
             {
               role: "user",
-              content: `[TOOL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this tool result, write your complete final answer to the user's question now. Do not repeat this tool call.`,
+              content: withLanguageReminder(
+                `[TOOL RESULT: ${toolCall.function.name}]\n\n${result}\n\nUsing this tool result, write your complete final answer to the user's question now. Do not repeat this tool call.`,
+                askedLanguage,
+              ),
             },
           ];
           // Reset the accumulated text so the final reply is ONLY what the model
@@ -2652,6 +2714,30 @@ module.exports = function createChatDomain(deps) {
         // Final safety net: never let raw skill-call syntax reach the bubble, even
         // if a call was malformed or emitted while skills were disabled (DB on).
         output = stripLeakedSkillCalls(output);
+
+        // Still in another language: rewrite it once in the question's.
+        const rewriteTo = systemOverride
+          ? null
+          : needsRewrite(originalMessage, output);
+        if (rewriteTo) {
+          output = await rewriteInLanguage(
+            output,
+            rewriteTo,
+            async (messages) => {
+              let raw = "";
+              await streamCloudCompletion({
+                provider,
+                settings,
+                messages,
+                signal: abortController.signal,
+                onDelta: (delta) => {
+                  raw += delta;
+                },
+              });
+              return splitLeadingThought(raw).answer;
+            },
+          );
+        }
         emit({ type: "delta", delta: "", response: output });
 
         if (emittedThinkingStart) {
@@ -2990,6 +3076,45 @@ module.exports = function createChatDomain(deps) {
             ? clampNumber(body.agentMaxRounds, 1, 50, 25)
             : 10;
         let budgetExhausted = false;
+        // The answer is in the language of the question, named — see
+        // reply-language.js.
+        const askedLanguage = detectLanguage(originalMessage);
+        {
+          const named = withReplyLanguage(messages, askedLanguage);
+          messages.length = 0;
+          messages.push(...named);
+        }
+        // One reply from Ollama without tools or streaming, for the rewrite.
+        const ollamaOnce = (oneShotMessages) =>
+          new Promise((resolve, reject) => {
+            const payload = JSON.stringify({
+              model,
+              messages: sanitizeModelMessages(oneShotMessages),
+              stream: false,
+              ...(safeOptions ? { options: safeOptions } : {}),
+            });
+            const once = http.request(opts, (onceRes) => {
+              let data = "";
+              onceRes.on("data", (c) => (data += c));
+              onceRes.on("end", () => {
+                try {
+                  resolve(String(JSON.parse(data)?.message?.content || ""));
+                } catch (e) {
+                  reject(e);
+                }
+              });
+            });
+            once.on("error", reject);
+            once.end(payload);
+          });
+        // An answer still in another language is rewritten once before it is
+        // saved and the turn is closed.
+        const settleAnswerLanguage = async () => {
+          const rewriteTo = needsRewrite(originalMessage, output);
+          if (!rewriteTo) return;
+          output = await rewriteInLanguage(output, rewriteTo, ollamaOnce);
+          emit({ type: "delta", delta: "", response: output });
+        };
         const startStream = (depth = 0) => {
           if (depth > maxOllamaDepth && !budgetExhausted) {
             // End with an answer instead of an error: stop accepting tool calls
@@ -3204,7 +3329,10 @@ module.exports = function createChatDomain(deps) {
 
                         messages.push({
                           role: "user",
-                          content: `[TOOL RESULT: ${tc.function.name}]\n\n${result}\n\nPlease continue your response based on this result.`,
+                          content: withLanguageReminder(
+                            `[TOOL RESULT: ${tc.function.name}]\n\n${result}\n\nPlease continue your response based on this result.`,
+                            askedLanguage,
+                          ),
                         });
 
                         const endMsg = `[Finished tool: ${tc.function.name}]\n`;
@@ -3233,28 +3361,34 @@ module.exports = function createChatDomain(deps) {
                   if (finished) return;
                   finished = true;
                   if (clientGone) return;
-                  upsertConversation(
-                    saveConv,
-                    convTitle,
-                    originalMessage,
-                    storedMessages,
-                    output,
-                    mode,
-                    {
-                      librarySources: librarySourceResults,
-                      passages: libraryPassages,
-                      thinking,
-                      traceEvents,
-                    },
-                  );
-                  emit({
-                    type: "done",
-                    response: output,
-                    thinking,
-                    promptTokens: promptEvalCount,
-                    evalTokens: evalCount,
-                  });
-                  if (!res.writableEnded) res.end();
+                  void settleAnswerLanguage()
+                    .catch(() => {
+                      /* the answer stands as written */
+                    })
+                    .then(() => {
+                      upsertConversation(
+                        saveConv,
+                        convTitle,
+                        originalMessage,
+                        storedMessages,
+                        output,
+                        mode,
+                        {
+                          librarySources: librarySourceResults,
+                          passages: libraryPassages,
+                          thinking,
+                          traceEvents,
+                        },
+                      );
+                      emit({
+                        type: "done",
+                        response: output,
+                        thinking,
+                        promptTokens: promptEvalCount,
+                        evalTokens: evalCount,
+                      });
+                      if (!res.writableEnded) res.end();
+                    });
                 }
               }
             });
@@ -3263,22 +3397,28 @@ module.exports = function createChatDomain(deps) {
               if (!finished && outputToolCalls.length === 0) {
                 finished = true;
                 if (clientGone) return;
-                upsertConversation(
-                  saveConv,
-                  convTitle,
-                  originalMessage,
-                  storedMessages,
-                  output,
-                  mode,
-                  {
-                    librarySources: librarySourceResults,
-                    passages: libraryPassages,
-                    thinking,
-                    traceEvents,
-                  },
-                );
-                emit({ type: "done", response: output, thinking });
-                if (!res.writableEnded) res.end();
+                void settleAnswerLanguage()
+                  .catch(() => {
+                    /* the answer stands as written */
+                  })
+                  .then(() => {
+                    upsertConversation(
+                      saveConv,
+                      convTitle,
+                      originalMessage,
+                      storedMessages,
+                      output,
+                      mode,
+                      {
+                        librarySources: librarySourceResults,
+                        passages: libraryPassages,
+                        thinking,
+                        traceEvents,
+                      },
+                    );
+                    emit({ type: "done", response: output, thinking });
+                    if (!res.writableEnded) res.end();
+                  });
               }
             });
 

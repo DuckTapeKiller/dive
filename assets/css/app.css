@@ -3738,6 +3738,16 @@ a:hover {
 .gallery-preview-card[hidden] {
   display: none;
 }
+/* The highest-definition images: an inset accent line, so it reads apart from
+   the border a selected card gets, and both can show at once. */
+.gallery-preview-card.highest {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.gallery-preview-badge.gallery-preview-highest {
+  color: var(--bg-primary);
+  background: var(--accent);
+  font-weight: 700;
+}
 .gallery-preview-card-top {
   display: flex;
   justify-content: space-between;

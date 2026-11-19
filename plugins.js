@@ -29,6 +29,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { PLUGINS_DIR } = require("./data-dir.js");
+const { renderPage } = require("./skills/render-page.js");
 const SKILL_NAME_RE = /^[a-z][a-z0-9_]*$/i;
 const EXECUTE_TIMEOUT_MS = 60 * 1000;
 const MIN_TIMEOUT_MS = 1000;
@@ -285,6 +286,12 @@ async function executePluginSkill(name, args, context = {}) {
   for (const key of PLUGIN_CONTEXT_KEYS) {
     if (context[key] !== undefined) pluginContext[key] = context[key];
   }
+  // A capability rather than request state: render a web page in Dive's own
+  // browser engine and get its HTML (see skills/render-page.js). A plugin that
+  // reads pages — gallery-dl's preview — uses it for sites that refuse a plain
+  // download or draw their content with JavaScript. Without the desktop app
+  // it answers { ok: false } at once.
+  pluginContext.renderPage = (url) => renderPage(String(url || ""));
   try {
     const result = await Promise.race([
       Promise.resolve(skill.execute(args || {}, pluginContext)),

@@ -1682,6 +1682,25 @@ function addThinking(initialSnapshot = {}) {
       const candidates = preview.candidates;
       const selected = new Set();
       const cards = [];
+      // The highest-definition images: those with the most pixels (within 5%,
+      // so the same picture at a hair's difference counts). Marked only when
+      // some measured image is smaller — when every one is the same size there
+      // is nothing to point out.
+      const pixelsOf = (item) => {
+        const d = item?.metadata?.dimensions;
+        return d && d.widthPx > 0 && d.heightPx > 0
+          ? d.widthPx * d.heightPx
+          : 0;
+      };
+      const measured = candidates.map(pixelsOf).filter((n) => n > 0);
+      const maxPixels = measured.length ? Math.max(...measured) : 0;
+      const highest = new Set(
+        measured.some((n) => n < maxPixels * 0.95)
+          ? candidates
+              .filter((item) => pixelsOf(item) >= maxPixels * 0.95)
+              .map((item) => item.index)
+          : [],
+      );
       const panel = document.createElement("section");
       panel.className = "gallery-preview";
       panel.setAttribute("aria-label", "Gallery preview");
@@ -1714,7 +1733,14 @@ function addThinking(initialSnapshot = {}) {
       clear.type = "button";
       clear.className = "gallery-preview-tool-button";
       clear.textContent = "Clear";
-      toolbar.append(search, selectAll, clear);
+      toolbar.append(search, selectAll);
+      const selectHighest = document.createElement("button");
+      selectHighest.type = "button";
+      selectHighest.className = "gallery-preview-tool-button";
+      selectHighest.textContent = "Select highest";
+      selectHighest.title = "Select the highest-definition images";
+      if (highest.size) toolbar.appendChild(selectHighest);
+      toolbar.appendChild(clear);
       header.appendChild(toolbar);
       panel.appendChild(header);
 
@@ -1723,7 +1749,8 @@ function addThinking(initialSnapshot = {}) {
 
       const formatBytes = (value) => {
         const bytes = Number(value);
-        if (!Number.isFinite(bytes) || bytes < 0) return "Size unavailable";
+        // 0 is what an image server that does not say its size comes back as.
+        if (!Number.isFinite(bytes) || bytes <= 0) return "Size unavailable";
         if (bytes < 1024) return `${bytes} B`;
         const units = ["KB", "MB", "GB", "TB"];
         let amount = bytes;
@@ -1756,6 +1783,7 @@ function addThinking(initialSnapshot = {}) {
       for (const item of candidates) {
         const card = document.createElement("article");
         card.className = "gallery-preview-card";
+        if (highest.has(item.index)) card.classList.add("highest");
         card.tabIndex = 0;
         card.dataset.filename = String(item.displayName || "").toLowerCase();
         const top = document.createElement("div");
@@ -1776,7 +1804,9 @@ function addThinking(initialSnapshot = {}) {
         if (item.url) {
           const image = document.createElement("img");
           image.className = "gallery-preview-image";
-          image.src = item.url;
+          // A thumbnail when the plugin has one: the full image can be tens of
+          // megapixels, too heavy to draw dozens of in a panel.
+          image.src = item.thumbnailUrl || item.url;
           image.alt = item.displayName || `Image ${item.index}`;
           image.loading = "lazy";
           image.referrerPolicy = "no-referrer";
@@ -1818,10 +1848,20 @@ function addThinking(initialSnapshot = {}) {
               .replace(/^image\//i, "")
               .toUpperCase()
           : "Format unavailable";
+        const pixels = pixelsOf(item);
+        const megapixels = pixels
+          ? ` (${(pixels / 1e6).toFixed(pixels >= 1e7 ? 0 : 1)} MP)`
+          : "";
         const meta = document.createElement("div");
         meta.className = "gallery-preview-meta";
-        meta.textContent = `${dimensions} · ${formatBytes(metadata.sizeBytes)} · ${format}`;
+        meta.textContent = `${dimensions}${megapixels} · ${formatBytes(metadata.sizeBytes)} · ${format}`;
         card.appendChild(meta);
+        if (highest.has(item.index)) {
+          const best = document.createElement("div");
+          best.className = "gallery-preview-badge gallery-preview-highest";
+          best.textContent = "Highest definition";
+          card.appendChild(best);
+        }
 
         if (item.duplicateOf) {
           const duplicate = document.createElement("div");
@@ -1883,6 +1923,11 @@ function addThinking(initialSnapshot = {}) {
           candidates.forEach((item) => selected.add(item.index));
         updateSelection();
       });
+      selectHighest.addEventListener("click", () => {
+        selected.clear();
+        highest.forEach((index) => selected.add(index));
+        updateSelection();
+      });
       clear.addEventListener("click", () => {
         selected.clear();
         updateSelection();
@@ -1892,8 +1937,15 @@ function addThinking(initialSnapshot = {}) {
         if (!indices.length) return;
         download.disabled = true;
         download.textContent = "Preparing download…";
+        // When the turn ends — download started, refused, its approval
+        // expired or it failed — the button comes back, so the user can try
+        // again instead of facing "Preparing download…" for good.
         if (typeof sendGallerySelection === "function") {
-          sendGallerySelection(preview, indices);
+          Promise.resolve(sendGallerySelection(preview, indices))
+            .catch(() => {})
+            .finally(updateSelection);
+        } else {
+          updateSelection();
         }
       });
       updateSelection();
@@ -2157,7 +2209,11 @@ function addThinking(initialSnapshot = {}) {
         download.disabled = true;
         download.textContent = "Preparing download…";
         if (typeof sendMediaSelection === "function") {
-          sendMediaSelection(preview, indices, candidates);
+          Promise.resolve(sendMediaSelection(preview, indices, candidates))
+            .catch(() => {})
+            .finally(updateSelection);
+        } else {
+          updateSelection();
         }
       });
       updateSelection();
@@ -4638,7 +4694,8 @@ function sendGallerySelection(preview, indices) {
   };
   inputEl.value = `/gallery-download ${JSON.stringify(payload)}`;
   if (typeof autoResizeInput === "function") autoResizeInput();
-  if (typeof sendMessage === "function") sendMessage();
+  // The turn's promise, so the panel knows when it is over.
+  return typeof sendMessage === "function" ? sendMessage() : undefined;
 }
 
 function sendMediaSelection(preview, indices, candidates = []) {
@@ -4670,7 +4727,7 @@ function sendMediaSelection(preview, indices, candidates = []) {
   };
   inputEl.value = `/mediadownload ${JSON.stringify(payload)}`;
   if (typeof autoResizeInput === "function") autoResizeInput();
-  if (typeof sendMessage === "function") sendMessage();
+  return typeof sendMessage === "function" ? sendMessage() : undefined;
 }
 
 function captureLibrarySources(evt, state, assistantDiv) {
