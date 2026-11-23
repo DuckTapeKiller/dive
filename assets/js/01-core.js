@@ -1022,7 +1022,8 @@ For any factual, encyclopedic, biographical, definitional, historical, or curren
 
 ### TOOL USAGE
 You have access to external tools to fetch authoritative, real-time information or perform actions.
-Call a tool whenever the question is better answered by a lookup than by memory — factual claims, definitions, people, places, events, recent or current information, calculations, or any external action the user requests.`;
+Call a tool whenever the question is better answered by a lookup than by memory — factual claims, definitions, people, places, events, recent or current information, calculations, or any external action the user requests.
+When the user asks for something a tool does (downloading or saving an image, video or file, converting media, running code, sending a notification), call that tool with what the user gave you; do not answer with links or instructions instead. When the user names a tool or tells you to use one, call it even if you doubt it fits: the tool decides what it can handle, and if it fails, report its error. Never refuse to try a tool the user asked for.`;
 
 const DB_OFF_TOOL_TAIL_HEAD = `**HOW TO CALL A TOOL:**
 To trigger a tool, output an XML block in this exact format:

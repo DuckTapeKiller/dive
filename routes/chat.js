@@ -40,6 +40,7 @@ const {
 } = require("../mcp.js");
 const {
   getPluginToolDefs,
+  getPluginToolRules,
   getPluginSkillSnapshot,
   getPluginCommandSnapshot,
 } = require("../plugins.js");
@@ -54,6 +55,49 @@ const {
 const { requireNonPiMode } = require("../mode-state.js");
 const { DIVE_SKILL_MODE_IDS } = require("../assets/js/00-modes.js");
 const { extractWebSources } = require("./web-sources.js");
+
+// A model asked to "download this image" answered with links nine times, and
+// each time the user ordered it to use the image tool it explained why the tool
+// did not fit. The tool decides what it can do; the model's job is to call it.
+const ACTION_TOOL_RULE =
+  "When the user asks for something a tool does (downloading or saving an image, video or file, converting media, running code, sending a notification), call that tool with what the user gave you; do not answer with links or instructions instead. When the user names a tool or tells you to use one, call it even if you doubt it fits: the tool decides what it can handle, and if it fails, report its error. Never refuse to try a tool the user asked for.";
+
+// The rules enabled plugin tools give for when they MUST be called (see
+// getPluginToolRules in plugins.js), as one block for the system prompt, or ""
+// when no enabled tool has one.
+function pluginRoutingRulesText(modeContext) {
+  const skillsConfig = modeContext?.skillsConfig || {};
+  const rules = getPluginToolRules(modeContext?.pluginSkills).filter(
+    (entry) => skillsConfig[entry.name] !== false,
+  );
+  if (!rules.length) return "";
+  return [
+    "MANDATORY TOOL ROUTING — these rules come before every other instruction:",
+    ...rules.map((entry) => `- ${entry.rule}`),
+  ].join("\n");
+}
+
+// Text added to the last of the leading system messages (where chat templates
+// accept a system message), or a new one at the top when there is none.
+function withLeadingSystemText(messages, text) {
+  if (!text || !Array.isArray(messages)) return messages;
+  let last = -1;
+  for (
+    let i = 0;
+    i < messages.length && messages[i]?.role === "system";
+    i += 1
+  ) {
+    last = i;
+  }
+  if (last === -1) return [{ role: "system", content: text }, ...messages];
+  if (typeof messages[last].content !== "string") return messages;
+  const copy = messages.slice();
+  copy[last] = {
+    ...messages[last],
+    content: `${messages[last].content}\n\n${text}`,
+  };
+  return copy;
+}
 
 // Skills the exact-repeat loop guard must not block: agent sessions
 // legitimately call these many times with identical arguments (plan updates,
@@ -1241,6 +1285,15 @@ module.exports = function createChatDomain(deps) {
     const isMediaPreview =
       toolCall.function.name === "download_media_with_ytdlp" &&
       isMediaPreviewRequestArgs(mediaSelection);
+    // Approval is skipped only because this call lists entries; the plugin is
+    // told so, and lists them. Without it, a BBC /programmes/ episode link
+    // that looked like a list here was downloaded at once, never approved.
+    if (isMediaPreview && mediaSelection && mediaSelection.preview !== true) {
+      toolCall.function.arguments = JSON.stringify({
+        ...mediaSelection,
+        preview: true,
+      });
+    }
     const requiresShellConfirmation =
       isGalleryPreview || isMediaPreview
         ? false
@@ -1356,7 +1409,23 @@ module.exports = function createChatDomain(deps) {
         const destination = payload.destinationPath || "~/Downloads";
         const mode = payload.mode === "video" ? "video" : "audio";
         if (!selected.length) {
-          return "The media preview is ready. No files will be downloaded until entries are selected.";
+          // Said as it is: a single BBC episode was approved under "The media
+          // preview is ready. No files will be downloaded…" and was then
+          // downloaded at once.
+          const urls = Array.isArray(payload.urls)
+            ? payload.urls.filter((u) => typeof u === "string").slice(0, 3)
+            : [];
+          const where = urls.length ? urls.join(", ") : "the address given";
+          if (isMediaPreviewRequestArgs(payload)) {
+            return `List the entries at ${where} so you can choose what to download? Nothing is downloaded yet.`;
+          }
+          const what =
+            payload.mode === "video"
+              ? "video"
+              : payload.mode === "audio"
+                ? "audio"
+                : "media";
+          return `Download ${what} from ${where} to ${destination}? If the address is a list or a series, its entries are shown first and nothing is downloaded until you choose.`;
         }
         return `Download ${selected.length} selected ${mode} ${selected.length === 1 ? "entry" : "entries"} (${selected.length === 1 ? "entry" : "entries"} ${selected.join(", ")}) to ${destination}?`;
       } catch (_error) {
@@ -1624,10 +1693,15 @@ module.exports = function createChatDomain(deps) {
     )
       return "";
 
+    const routingRules = pluginRoutingRulesText({
+      skillsConfig,
+      pluginSkills: modeContext.pluginSkills,
+    });
     const lines = [
       "### TOOL USAGE (MANDATORY)",
       "You have access to external tools that fetch live, verifiable information or perform local actions. Tool results are your primary source of truth.",
       "",
+      ...(routingRules ? [routingRules, ""] : []),
       "RULES:",
       "1. If Database Context/local library passages are provided in the current turn, the local database has priority. Answer from those passages first and call tools only if they are insufficient or the user explicitly requested a specific tool.",
       "2. Otherwise, for ANY question involving facts, people, places, events, news, dates, definitions, word origins, calculations, unit conversions, the current time or date, or the content of a URL, you MUST call the relevant tool BEFORE answering, even if you believe you already know the answer.",
@@ -1635,6 +1709,7 @@ module.exports = function createChatDomain(deps) {
       agentSkillsPrompt
         ? "4. Purely creative, conversational, or text-transformation requests (rewriting, translating, proofreading, or summarizing text the user provided) do not require lookup tools. When one of the AGENT SKILLS listed below matches such a request, load it with activate_skill first and follow it."
         : "4. Purely creative, conversational, or text-transformation requests (rewriting, translating, proofreading, or summarizing text the user provided) do not require tools.",
+      `5. ${ACTION_TOOL_RULE}`,
       "",
     ];
     if (nativeToolCalling) {
@@ -3080,7 +3155,22 @@ module.exports = function createChatDomain(deps) {
         // reply-language.js.
         const askedLanguage = detectLanguage(originalMessage);
         {
-          const named = withReplyLanguage(messages, askedLanguage);
+          // The client builds Ollama's tool prompt and knows nothing of plugin
+          // tools, which travel natively; their mandatory rules are added here
+          // whenever those tools are offered.
+          const offersPluginTools =
+            body.nativeTools !== false &&
+            !isDatabaseSlashCommand(slashCommand) &&
+            !databasePriorityForLibraryTurn;
+          const named = withReplyLanguage(
+            offersPluginTools
+              ? withLeadingSystemText(
+                  messages,
+                  pluginRoutingRulesText(modeContext),
+                )
+              : messages,
+            askedLanguage,
+          );
           messages.length = 0;
           messages.push(...named);
         }

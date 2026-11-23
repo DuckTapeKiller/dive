@@ -1685,18 +1685,20 @@ function addThinking(initialSnapshot = {}) {
       // The highest-definition images: those with the most pixels (within 5%,
       // so the same picture at a hair's difference counts). Marked only when
       // some measured image is smaller — when every one is the same size there
-      // is nothing to point out.
+      // is nothing to point out. A duplicate is never marked: Select highest
+      // once picked thirteen copies of one picture.
       const pixelsOf = (item) => {
         const d = item?.metadata?.dimensions;
         return d && d.widthPx > 0 && d.heightPx > 0
           ? d.widthPx * d.heightPx
           : 0;
       };
-      const measured = candidates.map(pixelsOf).filter((n) => n > 0);
+      const originals = candidates.filter((item) => item && !item.duplicateOf);
+      const measured = originals.map(pixelsOf).filter((n) => n > 0);
       const maxPixels = measured.length ? Math.max(...measured) : 0;
       const highest = new Set(
         measured.some((n) => n < maxPixels * 0.95)
-          ? candidates
+          ? originals
               .filter((item) => pixelsOf(item) >= maxPixels * 0.95)
               .map((item) => item.index)
           : [],

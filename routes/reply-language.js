@@ -20,9 +20,9 @@
 // languages share ("de", "la", "en", "que", "a", "no") count for none.
 const MARKERS = {
   English:
-    /\b(the|and|what|how|which|who|whom|when|where|why|my|is|are|was|were|of|to|about|does|did|do|show|tell|write|find|search|this|that|there|many|from|in|on|an|it|for|with|please|explain|give|me|old|time|wrote|written|his|her|their|would|could|should|have|has|had|been|be|which|than|then|you|your|we|our|they|them|its|into|over|after|before|because|also|but|or|not|only|very|between)\b/gi,
+    /\b(the|and|what|how|which|who|whom|when|where|why|my|is|are|was|were|of|to|about|does|did|do|show|tell|write|find|search|this|that|there|many|from|in|on|an|it|for|with|please|explain|give|me|old|time|wrote|written|his|her|their|would|could|should|have|has|had|been|be|which|than|then|you|your|we|our|they|them|its|into|over|after|before|because|also|but|or|not|only|very|between|download|save|picture|pictures|episodes)\b/gi,
   Spanish:
-    /[¿¡ñ]|\b(qué|cómo|cuál|cuáles|cuántos|cuántas|cuántos|cuándo|dónde|quién|quiénes|según|mis|sobre|el|los|las|del|es|son|para|con|una|por|está|están|estaba|hay|tengo|esta|este|estos|estas|y|años|año|tenía|tenia|cuando|escribió|escribio|hora|también|pero|muy|como|fue|era|ha|han|su|sus|al|lo|nos|les|le|ese|esa|eso|dame|busca|explica|resume|cuantos|cuanto|dime|puedo|puede|ver|aquí|aqui|imágenes|imagenes|descargar|usa|quiero|necesito|hazme|muéstrame|dónde|qué|cómo)\b/giu,
+    /[¿¡ñ]|\b(qué|cómo|cuál|cuáles|cuántos|cuántas|cuántos|cuándo|dónde|quién|quiénes|según|mis|sobre|el|los|las|del|es|son|para|con|una|por|está|están|estaba|hay|tengo|esta|este|estos|estas|y|años|año|tenía|tenia|cuando|escribió|escribio|hora|también|pero|muy|como|fue|era|ha|han|su|sus|al|lo|nos|les|le|ese|esa|eso|dame|busca|explica|resume|cuantos|cuanto|dime|puedo|puede|ver|aquí|aqui|imágenes|imagenes|descargar|usa|quiero|necesito|hazme|muéstrame|dónde|qué|cómo|descarga|descárgame|descargame|bájame|bajame|imagen|episodios|guárdame|guardame)\b/giu,
   French:
     /\b(le|les|des|du|une|est|sont|était|étaient|avait|avaient|il|elle|ils|elles|nous|vous|je|tu|pas|pour|avec|dans|sur|qui|lorsqu|lorsque|quand|ans|heure|cette|ces|aux|au|où|été|être|fait|très|mais|ou|aussi|leur|leurs|son|sa|ses|ce|ça|c'est|qu'il|n'est|actuelle|écrit|écrivit)\b/giu,
   Portuguese:

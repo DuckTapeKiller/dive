@@ -71,6 +71,12 @@ plugin's `text` comes before `voice_sample`, so `/humanise some text` fills
 Before this rule existed, every plugin command failed with "Unsupported slash
 command", because only native tools had an argument mapping.
 
+## Routing rules
+
+A plugin tool may export `rule`, one sentence that says when the model must call it. Dive gathers the rules of the enabled plugin tools under "MANDATORY TOOL ROUTING", ahead of the general tool rules (`pluginRoutingRulesText` in `routes/chat.js`); for Ollama, whose tool prompt the client builds, the server adds them to the system message. Rules stay out of the tool schema sent to the model server. `test/plugin_rules.test.js` covers loading and the snapshot.
+
+The gallery-dl and yt-dlp plugins carry one each. Without them gemma E2B, asked to "descarga esta imagen https://…", answered with links and refused the gallery tool every time the user insisted.
+
 ## Confirmation
 
 A plugin tool can require confirmation. `skillRequiresShellConfirmation` honours

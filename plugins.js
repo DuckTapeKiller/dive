@@ -131,6 +131,7 @@ function loadOnePlugin(entryPath, fallbackName) {
         execute: raw.execute,
         requiresConfirmation: raw.requiresConfirmation === true,
         timeoutMs: normalizeTimeoutMs(raw.timeoutMs),
+        rule: normalizeRule(raw.rule),
         def: {
           type: "function",
           function: {
@@ -229,6 +230,7 @@ function getPluginSkillSnapshot() {
         execute: skill.execute,
         requiresConfirmation: skill.requiresConfirmation === true,
         timeoutMs: skill.timeoutMs,
+        rule: skill.rule || "",
         def,
       };
     })
@@ -243,6 +245,25 @@ function snapshotSkill(snapshot, name) {
 function getPluginToolDefs(snapshot = null) {
   const skills = Array.isArray(snapshot) ? snapshot : getPluginSkillSnapshot();
   return skills.map((skill) => skill.def).filter(Boolean);
+}
+
+// A plugin skill may export `rule`: one sentence that says when the model MUST
+// call it. A tool description is read only once a model is weighing that tool;
+// a small model asked to "download this image" never gets that far, decides it
+// cannot download files and answers with links. Dive puts these rules among
+// its mandatory tool instructions, only while the skill is enabled.
+const MAX_RULE_CHARS = 1200;
+
+function normalizeRule(rule) {
+  if (typeof rule !== "string") return "";
+  return rule.replace(/\s+/g, " ").trim().slice(0, MAX_RULE_CHARS);
+}
+
+function getPluginToolRules(snapshot = null) {
+  const skills = Array.isArray(snapshot) ? snapshot : getPluginSkillSnapshot();
+  return skills
+    .filter((skill) => skill && skill.def && skill.rule)
+    .map((skill) => ({ name: skill.name, rule: skill.rule }));
 }
 
 function getPluginSkill(name, snapshot = null) {
@@ -316,6 +337,7 @@ module.exports = {
   loadPlugins,
   listPlugins,
   getPluginToolDefs,
+  getPluginToolRules,
   getPluginCommandSnapshot,
   pluginSkillRequiresConfirmation,
   getPluginSkillSnapshot,

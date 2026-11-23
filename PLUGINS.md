@@ -45,6 +45,13 @@ module.exports = {
       name: "my_skill",
       // Tell the model when to call it — this is the most important line.
       description: "Fetches X. Use when the user asks about X.",
+      // Optional: one sentence saying when the model MUST call this tool.
+      // Dive puts it under "MANDATORY TOOL ROUTING" in the model's tool
+      // instructions while the tool is enabled. Small models act on a user's
+      // words before they read a tool's description: asked to "download this
+      // image https://…", one answered with links nine times. Up to 1,200
+      // characters; Dive before 5.0.16 ignores it.
+      rule: "X: When the user asks about X, you MUST call my_skill first.",
       // JSON Schema for the arguments (OpenAI tool format).
       parameters: {
         type: "object",
@@ -88,6 +95,8 @@ module.exports = {
   (plugins are also loaded fresh on every app start).
 - `execute(args, context)` receives `context.dataDir` (the `~/dive` data
   directory) among other fields; treat everything else as internal.
+- `context.renderPage(url)` renders a page in Dive's own browser engine and resolves to `{ ok, url, title, html }` or `{ ok: false, error }`: for pages that draw their content with JavaScript or refuse a plain download. It needs the desktop app; elsewhere it answers `{ ok: false }` at once.
+- Keep `rule` for actions the model might otherwise refuse or answer in words (downloading, saving, converting). A rule on every tool drowns the ones that matter.
 
 ## Example
 

@@ -171,3 +171,20 @@ test("accented words count, and tool names do not", () => {
     "French",
   );
 });
+
+test("short download requests name their language", () => {
+  // "descarga esta imagen" was unnamed, and the reply came back in the
+  // tool's English.
+  for (const text of [
+    "descarga esta imagen https://wellcomecollection.org/works/r95ccgus/images?id=uj5wxepv",
+    "descarga esta imagenhttps://artvee.com/dl/struggle-for-the-guidon-2#00b",
+    "descarga los episodios de Night Tracks https://www.bbc.co.uk/sounds/brand/m0008w2m",
+    "bájame las fotos de https://example.org/gallery",
+  ]) {
+    assert.strictEqual(detectLanguage(text), "Spanish", text);
+  }
+  assert.strictEqual(
+    detectLanguage("download this image https://artvee.com/dl/x"),
+    "English",
+  );
+});
