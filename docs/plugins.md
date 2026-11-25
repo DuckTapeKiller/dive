@@ -43,6 +43,18 @@ and it is deliberately manual.
 Plugins are discovered at startup and on `POST /api/plugins/reload`, so you can
 iterate without restarting. `GET /api/plugins` lists what loaded and what failed.
 
+## Updating from GitHub
+
+A plugin folder that is a clone of a git repository can be updated without a new Dive (`plugin-sources.js`). Settings → Tools → External tools shows where each plugin comes from; CHECK FOR UPDATES fetches each repository and lists the new version and its commits; UPDATE fast-forwards that one plugin and reloads the plugins. ADD FROM GITHUB clones `https://github.com/owner/repo` into the plugins folder and keeps it only if it has an `index.js`.
+
+Nothing happens on its own: plugin code runs with full local access, so every update and every addition waits for the user and says where the code comes from. An update only fast-forwards. A folder with local edits, or with commits the repository does not have, is left alone and the user is told why; untracked files such as `.DS_Store` do not count. Git runs without a shell and never prompts for a password. Only https GitHub addresses of the form owner/repo are accepted. `test/plugin_sources.test.js` covers each case against a real local repository.
+
+| Endpoint                          | Purpose                                 |
+| --------------------------------- | --------------------------------------- |
+| `POST /api/plugins/check-updates` | What is new in each plugin's repository |
+| `POST /api/plugins/update`        | Fast-forward one plugin (`{ name }`)    |
+| `POST /api/plugins/install`       | Clone a GitHub repository (`{ url }`)   |
+
 ## Mode scoping
 
 Plugin tools are subject to the same per-mode configuration as built-in ones,

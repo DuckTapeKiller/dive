@@ -6,6 +6,41 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { PLUGINS_DIR, listPlugins, loadPlugins } = require("../plugins.js");
+const {
+  checkForUpdate,
+  installPlugin,
+  pluginSource,
+  updatePlugin,
+} = require("../plugin-sources.js");
+
+// The plugins as listed, each with where it comes from (`origin`: the
+// repository its folder is a clone of, or null). Local only, no network.
+async function pluginsWithSources() {
+  return Promise.all(
+    listPlugins().map(async (plugin) => ({
+      ...plugin,
+      origin: pluginFolder(plugin) ? await pluginSource(plugin.source) : null,
+    })),
+  );
+}
+
+// A plugin's folder when it is one directly inside the plugins directory, or
+// "" (a single-file plugin, or anything that is not where it should be).
+function pluginFolder(plugin) {
+  const source =
+    plugin && typeof plugin.source === "string" ? plugin.source : "";
+  if (!source) return "";
+  const resolved = path.resolve(source);
+  return path.dirname(resolved) === path.resolve(PLUGINS_DIR) &&
+    fs.existsSync(resolved) &&
+    fs.statSync(resolved).isDirectory()
+    ? resolved
+    : "";
+}
+
+function findPluginByName(name) {
+  return listPlugins().find((plugin) => plugin.name === name) || null;
+}
 const { requireNonPiMode } = require("../mode-state.js");
 const { INPUT_SKILL_NAMES } = require("../slash_commands.js");
 const {
@@ -40,7 +75,11 @@ module.exports = function createSkillsDomain(deps) {
     if (req.method === "GET" && urlPath === "/api/plugins") {
       try {
         const mode = requestMode(ctx);
-        send(200, { mode, directory: PLUGINS_DIR, plugins: listPlugins() });
+        send(200, {
+          mode,
+          directory: PLUGINS_DIR,
+          plugins: await pluginsWithSources(),
+        });
       } catch (e) {
         send(e.statusCode || 400, { error: e.message });
       }
@@ -51,8 +90,82 @@ module.exports = function createSkillsDomain(deps) {
       try {
         const body = await parseJsonBody(req);
         const mode = requestMode(ctx, body);
-        const plugins = loadPlugins();
-        send(200, { ok: true, mode, directory: PLUGINS_DIR, plugins });
+        loadPlugins();
+        send(200, {
+          ok: true,
+          mode,
+          directory: PLUGINS_DIR,
+          plugins: await pluginsWithSources(),
+        });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
+    // Plugins installed from a repository can be brought up to date without a
+    // new Dive (see plugin-sources.js). Each step is the user's: CHECK asks the
+    // repositories what is new, UPDATE fast-forwards one plugin, ADD clones a
+    // GitHub repository into the plugins directory. Nothing runs on its own.
+    if (req.method === "POST" && urlPath === "/api/plugins/check-updates") {
+      try {
+        const body = await parseJsonBody(req);
+        const only = typeof body?.name === "string" ? body.name : "";
+        const results = {};
+        await Promise.all(
+          listPlugins()
+            .filter((plugin) => !only || plugin.name === only)
+            .map(async (plugin) => {
+              const folder = pluginFolder(plugin);
+              results[plugin.name] = folder
+                ? await checkForUpdate(folder)
+                : {
+                    status: "no-source",
+                    message:
+                      "Not installed from a repository, so there is nothing to check.",
+                  };
+            }),
+        );
+        send(200, { results });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && urlPath === "/api/plugins/update") {
+      try {
+        const body = await parseJsonBody(req);
+        const plugin = findPluginByName(String(body?.name || ""));
+        const folder = plugin ? pluginFolder(plugin) : "";
+        if (!folder) {
+          send(404, { error: "No plugin folder by that name." });
+          return true;
+        }
+        const result = await updatePlugin(folder);
+        if (result.ok) loadPlugins();
+        send(result.ok ? 200 : 409, {
+          result,
+          plugins: await pluginsWithSources(),
+        });
+      } catch (e) {
+        send(e.statusCode || 500, { error: e.message });
+      }
+      return true;
+    }
+
+    if (req.method === "POST" && urlPath === "/api/plugins/install") {
+      try {
+        const body = await parseJsonBody(req);
+        const result = await installPlugin(
+          String(body?.url || ""),
+          PLUGINS_DIR,
+        );
+        if (result.ok) loadPlugins();
+        send(result.ok ? 200 : 400, {
+          result,
+          plugins: await pluginsWithSources(),
+        });
       } catch (e) {
         send(e.statusCode || 500, { error: e.message });
       }

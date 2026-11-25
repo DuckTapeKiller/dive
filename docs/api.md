@@ -109,6 +109,9 @@ returns **502** rather than an ungrounded answer that looks grounded.
 | GET/POST | `/api/custom-skills`                | User-defined custom tools                                  |
 | GET      | `/api/plugins`                      | Installed plugins                                          |
 | POST     | `/api/plugins/reload`               | Reload from disk                                           |
+| POST     | `/api/plugins/check-updates`        | Ask each plugin's repository what is new                   |
+| POST     | `/api/plugins/update`               | Fast-forward one plugin to its repository (`{ name }`)     |
+| POST     | `/api/plugins/install`              | Clone a GitHub repository into the plugins folder          |
 | GET      | `/api/plugins/drafts`               | Drafts proposed by a model                                 |
 | POST     | `/api/plugins/drafts/approve`       | Approve a draft into the live directory                    |
 | POST     | `/api/plugins/drafts/delete`        | Discard a draft                                            |

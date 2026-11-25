@@ -3519,7 +3519,10 @@
             <label>EXTERNAL TOOLS</label>
             <div class="setting-help">
               Tools you install yourself. Drop plugin folders into the plugins
-              directory to add new tools and slash commands. Plugins are plain
+              directory, or add one from GitHub below, to add new tools and
+              slash commands. A plugin added from GitHub can be updated here,
+              without a new Dive: CHECK FOR UPDATES shows what changed, and
+              nothing is updated until you press UPDATE. Plugins are plain
               Node.js modules with full local access: only install code you
               trust. A broken plugin is listed with its error and never affects
               the rest of the app.
@@ -3529,13 +3532,14 @@
               id="pluginsDirHint"
               style="user-select: text"
             ></div>
-            <button
-              id="pluginsReloadBtn"
-              class="settings-action-btn"
-              style="margin-top: 6px"
-            >
-              RELOAD EXTERNAL TOOLS
-            </button>
+            <div style="display: flex; gap: 6px; margin-top: 6px">
+              <button id="pluginsReloadBtn" class="settings-action-btn">
+                RELOAD EXTERNAL TOOLS
+              </button>
+              <button id="pluginsCheckUpdatesBtn" class="settings-action-btn">
+                CHECK FOR UPDATES
+              </button>
+            </div>
             <div
               id="pluginsList"
               style="
@@ -3545,6 +3549,26 @@
                 margin-top: 8px;
               "
             ></div>
+            <div style="margin-top: 10px">
+              <label for="pluginsInstallUrl">ADD FROM GITHUB</label>
+              <div style="display: flex; gap: 6px; margin-top: 4px">
+                <input
+                  type="text"
+                  id="pluginsInstallUrl"
+                  placeholder="https://github.com/owner/repo"
+                  spellcheck="false"
+                  autocomplete="off"
+                  style="flex: 1; min-width: 0"
+                />
+                <button
+                  id="pluginsInstallBtn"
+                  class="settings-action-btn"
+                  style="flex: 0 0 auto; width: auto"
+                >
+                  ADD
+                </button>
+              </div>
+            </div>
             <div id="pluginDraftsWrap" style="display: none; margin-top: 10px">
               <label>DRAFTS AWAITING YOUR APPROVAL</label>
               <div class="setting-help">

@@ -3280,16 +3280,186 @@ function renderPluginsList() {
     const errorRow = plugin.error
       ? `<div style="font-size: calc(11px * var(--font-scale, 1)); margin-top: 6px; color: var(--error-color, #b33);">Error: ${esc(plugin.error)}</div>`
       : "";
+    // Where the plugin comes from: the repository its folder is a clone of,
+    // which CHECK FOR UPDATES asks, or a plain local folder. A check reads the
+    // folder afresh, so its commit and local changes win over the list's.
+    const update = plugin.origin ? pluginUpdateResults[plugin.name] : null;
+    const origin = update?.source || plugin.origin;
+    const sourceRow = origin
+      ? `<div class="plugin-source" style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px; user-select: text;">From ${esc(String(origin.repo || "").replace(/^https:\/\//, ""))}${origin.commit ? ` · ${esc(origin.commit)}` : ""}${origin.localChanges ? " · has local changes" : ""}</div>`
+      : `<div class="plugin-source" style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.6; margin-top: 4px;">Local folder, not installed from a repository.</div>`;
+    let updateRow = "";
+    if (update) {
+      const versions =
+        update.status === "available" &&
+        update.currentVersion &&
+        update.latestVersion
+          ? ` ${esc(update.currentVersion)} → ${esc(update.latestVersion)}.`
+          : "";
+      const changes = (
+        update.status === "available" ? update.changes || [] : []
+      )
+        .slice(0, 8)
+        .map((change) => `<li>${esc(change.subject)}</li>`)
+        .join("");
+      const button =
+        update.status === "available"
+          ? `<button class="settings-action-btn plugin-update-btn" data-plugin="${esc(plugin.name)}" style="margin-top: 6px;">UPDATE</button>`
+          : "";
+      const color =
+        update.status === "error" || update.status === "blocked"
+          ? "color: var(--error-color, #b33);"
+          : "";
+      updateRow = `
+              <div class="plugin-update-status" data-status="${esc(update.status)}" style="font-size: calc(11px * var(--font-scale, 1)); margin-top: 6px; ${color}">
+                ${esc(update.message)}${versions}
+                ${changes ? `<ul style="margin: 4px 0 0 16px; padding: 0;">${changes}</ul>` : ""}
+                ${button}
+              </div>`;
+    }
     html += `
-            <div style="background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
+            <div class="plugin-entry" data-plugin="${esc(plugin.name)}" style="background: var(--bg-primary); color: var(--text-normal); padding: 8px; border: var(--border-width) solid var(--border-color); margin-bottom: calc(var(--border-width) * -1);">
               <strong>${esc(humanizeSkillLabel(plugin.name))}${version}</strong>
               <div style="font-size: calc(11px * var(--font-scale, 1)); opacity: 0.8; margin-top: 4px;">${esc(plugin.description || "No description.")}${esc(commandText)}</div>
+              ${sourceRow}
               ${errorRow}
+              ${updateRow}
               ${skillRows}
             </div>
           `;
   }
   list.innerHTML = html;
+}
+
+// What the last CHECK FOR UPDATES found, by plugin name.
+let pluginUpdateResults = {};
+
+async function checkPluginUpdates() {
+  const btn = document.getElementById("pluginsCheckUpdatesBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "CHECKING…";
+  }
+  try {
+    const res = await fetch(apiUrl("/api/plugins/check-updates"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const payload = await readJsonResponse(res, "Check plugin updates");
+    pluginUpdateResults = payload?.results || {};
+  } catch (error) {
+    console.error("Could not check plugin updates", error);
+    await appAlert(error.message || "Could not check for updates.", "Plugins");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "CHECK FOR UPDATES";
+    }
+  }
+  renderPluginsList();
+}
+
+// New plugin code runs with full local access, so an update is said in full
+// — from where, which versions, what changed — and waits for the user.
+async function updatePluginFromSource(name) {
+  const check = pluginUpdateResults[name];
+  if (!check || check.status !== "available") return;
+  const versions =
+    check.currentVersion && check.latestVersion
+      ? ` from ${check.currentVersion} to ${check.latestVersion}`
+      : "";
+  const changes = (check.changes || [])
+    .map((change) => `• ${change.subject}`)
+    .join("\n");
+  if (
+    !(await appConfirm(
+      `Update "${name}"${versions}? The new code from ${check.source?.repo || "its repository"} will run inside Dive with full local access.${changes ? `\n\nWhat changed:\n${changes}` : ""}`,
+      "Plugins — update",
+      { confirmLabel: "Update", danger: true },
+    ))
+  ) {
+    return;
+  }
+  try {
+    const res = await fetch(apiUrl("/api/plugins/update"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (Array.isArray(payload?.plugins)) {
+      loadedPluginsPayload = {
+        ...(loadedPluginsPayload || {}),
+        plugins: payload.plugins,
+      };
+    }
+    pluginUpdateResults[name] = payload?.result || {
+      status: "error",
+      message: payload?.error || "The update failed.",
+    };
+  } catch (error) {
+    console.error("Could not update plugin", error);
+    pluginUpdateResults[name] = {
+      status: "error",
+      message: error.message || "The update failed.",
+    };
+  }
+  renderPluginsList();
+}
+
+async function installPluginFromGithub() {
+  const input = document.getElementById("pluginsInstallUrl");
+  const url = input ? input.value.trim() : "";
+  if (!url) return;
+  if (
+    !(await appConfirm(
+      `Add the plugin from ${url}? It is downloaded into the plugins directory, and its code runs inside Dive with full local access. Only add plugins you trust.`,
+      "Plugins — add from GitHub",
+      { confirmLabel: "Add", danger: true },
+    ))
+  ) {
+    return;
+  }
+  const btn = document.getElementById("pluginsInstallBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(apiUrl("/api/plugins/install"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (Array.isArray(payload?.plugins)) {
+      loadedPluginsPayload = {
+        ...(loadedPluginsPayload || {}),
+        plugins: payload.plugins,
+      };
+    }
+    renderPluginsList();
+    if (payload?.result?.ok) {
+      if (input) input.value = "";
+      await appAlert(
+        `Added ${payload.result.folder}. Its tools are listed above; switch them on or off there.`,
+        "Plugins",
+      );
+    } else {
+      await appAlert(
+        payload?.result?.message ||
+          payload?.error ||
+          "The plugin could not be added.",
+        "Plugins",
+      );
+    }
+  } catch (error) {
+    console.error("Could not add plugin", error);
+    await appAlert(
+      error.message || "The plugin could not be added.",
+      "Plugins",
+    );
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function loadPluginsUi() {
@@ -3298,6 +3468,31 @@ async function loadPluginsUi() {
     reloadBtn.dataset.wired = "1";
     reloadBtn.addEventListener("click", () => {
       reloadPlugins().catch(uiRefreshFailed("plugin reload"));
+    });
+  }
+  const checkBtn = document.getElementById("pluginsCheckUpdatesBtn");
+  if (checkBtn && !checkBtn.dataset.wired) {
+    checkBtn.dataset.wired = "1";
+    checkBtn.addEventListener("click", () => {
+      checkPluginUpdates().catch(uiRefreshFailed("plugin update check"));
+    });
+  }
+  const installBtn = document.getElementById("pluginsInstallBtn");
+  if (installBtn && !installBtn.dataset.wired) {
+    installBtn.dataset.wired = "1";
+    installBtn.addEventListener("click", () => {
+      installPluginFromGithub().catch(uiRefreshFailed("plugin install"));
+    });
+  }
+  const list = document.getElementById("pluginsList");
+  if (list && !list.dataset.updateWired) {
+    list.dataset.updateWired = "1";
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest?.(".plugin-update-btn");
+      if (!button) return;
+      updatePluginFromSource(button.dataset.plugin).catch(
+        uiRefreshFailed("plugin update"),
+      );
     });
   }
   try {

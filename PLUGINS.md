@@ -97,6 +97,7 @@ module.exports = {
   directory) among other fields; treat everything else as internal.
 - `context.renderPage(url)` renders a page in Dive's own browser engine and resolves to `{ ok, url, title, html }` or `{ ok: false, error }`: for pages that draw their content with JavaScript or refuse a plain download. It needs the desktop app; elsewhere it answers `{ ok: false }` at once.
 - Keep `rule` for actions the model might otherwise refuse or answer in words (downloading, saving, converting). A rule on every tool drowns the ones that matter.
+- Publish a plugin as a GitHub repository with `index.js` (and `plugin.json`) at its top, and users can add it from Settings → Tools → External tools → ADD FROM GITHUB and update it there with CHECK FOR UPDATES, without a new Dive. Raise `version` in both files with every change: it is what the update shows.
 
 ## Example
 
